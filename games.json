@@ -7,5 +7,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-15T19:32:19.599Z",
     "updatedAt": "2026-07-15T19:32:19.599Z"
+  },
+  {
+    "slug": "burger-vs-fork",
+    "title": "Burger vs Fork 🍔",
+    "description": "a game where your a burger and you are fighting a fork",
+    "creator": "burger778",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-15T21:15:06.442Z",
+    "updatedAt": "2026-07-15T21:15:06.442Z"
   }
 ]
