@@ -16,5 +16,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-15T21:15:06.442Z",
     "updatedAt": "2026-07-15T21:15:06.442Z"
+  },
+  {
+    "slug": "glutton-blob-eat-grow",
+    "title": "🍽️ Glutton Blob - Eat & Grow!",
+    "description": "a game where you are eating lots of food to grow and get bigger make it very fun",
+    "creator": "burger778",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-15T23:07:49.625Z",
+    "updatedAt": "2026-07-15T23:07:49.625Z"
   }
 ]
