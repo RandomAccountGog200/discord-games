@@ -1,1 +1,11 @@
-[]
+[
+  {
+    "slug": "you-re-the-food",
+    "title": "🐍 You're The Food!",
+    "description": "a snake game but your the food and the snake is a ai and the game gets progressifly harder",
+    "creator": "burger778",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-15T19:32:19.599Z",
+    "updatedAt": "2026-07-15T19:32:19.599Z"
+  }
+]
