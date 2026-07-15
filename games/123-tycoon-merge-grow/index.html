@@ -1,0 +1,1259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>123 Tycoon - Merge & Grow</title>
+    <style>
+        :root {
+            --bg: #0f0f1a;
+            --surface: #1a1a2e;
+            --surface2: #222240;
+            --text: #e0e0e0;
+            --gold: #ffd740;
+            --accent: #6c63ff;
+            --accent2: #ff6e40;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Segoe UI', 'Inter', system-ui, sans-serif;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-user-select: none;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        .game-container {
+            background: var(--surface);
+            border-radius: 20px;
+            padding: 20px;
+            max-width: 520px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 80px rgba(108, 99, 255, 0.15);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .title {
+            font-size: 28px;
+            font-weight: 800;
+            background: linear-gradient(135deg, #ffd740, #ff8a65, #ff6e40);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -0.5px;
+            text-align: center;
+        }
+
+        .stats-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+            width: 100%;
+        }
+
+        .stat {
+            background: var(--surface2);
+            border-radius: 12px;
+            padding: 10px 14px;
+            text-align: center;
+            min-width: 80px;
+            flex: 1;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .stat-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: #fff;
+            white-space: nowrap;
+        }
+        .stat-value.gold {
+            color: var(--gold);
+        }
+        .stat-label {
+            font-size: 11px;
+            color: #999;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-top: 2px;
+        }
+
+        .canvas-wrapper {
+            position: relative;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            background: var(--surface2);
+            border-radius: 16px;
+            padding: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        canvas {
+            display: block;
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+
+        .shop-section {
+            width: 100%;
+        }
+        .shop-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: #ccc;
+            margin-bottom: 8px;
+            text-align: center;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+        .shop-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: center;
+        }
+        .shop-btn {
+            background: var(--surface2);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 12px;
+            padding: 12px 14px;
+            cursor: pointer;
+            color: #ddd;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.2s;
+            min-width: 140px;
+            flex: 1;
+            max-width: 240px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        .shop-btn:hover:not(.disabled):not(.maxed) {
+            border-color: var(--accent);
+            box-shadow: 0 0 20px rgba(108, 99, 255, 0.3);
+            transform: translateY(-2px);
+            background: #2a2a48;
+        }
+        .shop-btn:active:not(.disabled):not(.maxed) {
+            transform: scale(0.96);
+        }
+        .shop-btn.disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+            filter: grayscale(30%);
+        }
+        .shop-btn.maxed {
+            border-color: var(--gold);
+            opacity: 0.85;
+            cursor: default;
+            background: #1e1e35;
+        }
+        .shop-btn-name {
+            font-size: 14px;
+            font-weight: 700;
+            margin-bottom: 3px;
+        }
+        .shop-btn-effect {
+            font-size: 11px;
+            color: #aaa;
+            margin-bottom: 4px;
+        }
+        .shop-btn-cost {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--gold);
+        }
+        .shop-btn.maxed .shop-btn-cost {
+            color: #8bc34a;
+        }
+        .shop-btn-lvl {
+            font-size: 10px;
+            color: #888;
+            margin-top: 2px;
+        }
+
+        .overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.75);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            animation: fadeIn 0.3s;
+        }
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+        .overlay-box {
+            background: var(--surface);
+            border-radius: 20px;
+            padding: 30px;
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .overlay-box h2 {
+            font-size: 24px;
+            color: #ff6e40;
+            margin-bottom: 12px;
+        }
+        .overlay-box p {
+            color: #bbb;
+            margin-bottom: 20px;
+            line-height: 1.5;
+        }
+        .overlay-btn {
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            padding: 12px 28px;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            margin: 6px;
+            transition: all 0.2s;
+            letter-spacing: 0.5px;
+        }
+        .overlay-btn:hover {
+            background: #7d75ff;
+            box-shadow: 0 8px 25px rgba(108, 99, 255, 0.4);
+        }
+        .overlay-btn.secondary {
+            background: #444;
+        }
+        .overlay-btn.secondary:hover {
+            background: #555;
+        }
+
+        .instruction-hint {
+            font-size: 12px;
+            color: #777;
+            text-align: center;
+            margin-top: -4px;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%,
+            100% {
+                opacity: 0.5;
+            }
+            50% {
+                opacity: 1;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .game-container {
+                padding: 12px;
+                gap: 10px;
+                border-radius: 14px;
+            }
+            .title {
+                font-size: 22px;
+            }
+            .stat {
+                padding: 8px 10px;
+                min-width: 60px;
+            }
+            .stat-value {
+                font-size: 16px;
+            }
+            .shop-btn {
+                padding: 10px;
+                min-width: 120px;
+                font-size: 11px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <div class="title">🔢 123 TYCOON</div>
+
+        <div class="stats-bar">
+            <div class="stat">
+                <div class="stat-value gold" id="coinDisplay">0</div>
+                <div class="stat-label">💰 Coins</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="incomeDisplay">0/s</div>
+                <div class="stat-label">📈 Income</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="highestDisplay">-</div>
+                <div class="stat-label">🏆 Best Tile</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="gridSizeDisplay">4×4</div>
+                <div class="stat-label">📐 Grid</div>
+            </div>
+        </div>
+
+        <div class="canvas-wrapper">
+            <canvas id="gameCanvas"></canvas>
+        </div>
+        <div class="instruction-hint" id="hint">👆 Tap empty cells to spawn tiles · Match neighbors to merge!</div>
+
+        <div class="shop-section">
+            <div class="shop-title">🛒 Upgrades</div>
+            <div class="shop-grid" id="shopGrid"></div>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            // ─────────────────────────────────────
+            // DOM ELEMENTS
+            // ─────────────────────────────────────
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+            const coinDisplay = document.getElementById('coinDisplay');
+            const incomeDisplay = document.getElementById('incomeDisplay');
+            const highestDisplay = document.getElementById('highestDisplay');
+            const gridSizeDisplay = document.getElementById('gridSizeDisplay');
+            const shopGrid = document.getElementById('shopGrid');
+            const hint = document.getElementById('hint');
+
+            // ─────────────────────────────────────
+            // AUDIO SYSTEM (Web Audio API)
+            // ─────────────────────────────────────
+            let audioCtx = null;
+
+            function getAudioCtx() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                return audioCtx;
+            }
+
+            function playSound(freq, type, duration, vol = 0.08, glideTo = null) {
+                try {
+                    const ctx = getAudioCtx();
+                    const t = ctx.currentTime;
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (glideTo) osc.frequency.linearRampToValueAtTime(glideTo, t + duration);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) {
+                    // Silently fail
+                }
+            }
+
+            function sfxPop() { playSound(600, 'sine', 0.08, 0.06);
+                playSound(900, 'sine', 0.05, 0.04, 1200); }
+
+            function sfxMerge(level) {
+                const baseFreq = 200 + level * 80;
+                playSound(baseFreq, 'triangle', 0.12, 0.08, baseFreq * 1.6);
+                if (level >= 5) playSound(baseFreq * 2, 'sine', 0.06, 0.1, baseFreq * 2.5);
+            }
+
+            function sfxBuy() { playSound(800, 'sine', 0.07, 0.06);
+                playSound(1200, 'sine', 0.05, 0.05, 1600);
+                playSound(1000, 'triangle', 0.04, 0.08); }
+
+            function sfxError() { playSound(150, 'square', 0.04, 0.15); }
+
+            // ─────────────────────────────────────
+            // GAME STATE
+            // ─────────────────────────────────────
+            let grid = []; // 2D array: grid[row][col] = level (0 = empty)
+            let gridSize = 4;
+            const MAX_GRID_SIZE = 6;
+            let cellSize = 70;
+            const gap = 5;
+            const padding = 22;
+            let coins = 0;
+            let incomeMultiplier = 1;
+            let spawnCooldown = 1.5; // seconds between manual spawns
+            let lastManualSpawnTime = -10;
+            let autoSpawnInterval = 0; // 0 = off, else seconds
+            let autoSpawnTimer = 0;
+            let luckySpawnChance = 0; // 0 to 1
+            let highestTileEver = 0;
+            let totalCoinsEarned = 0;
+            let particles = [];
+            let animatingTiles = []; // {row, col, startTime, duration}
+            let gridlockActive = false;
+            let gameStartTime = performance.now();
+
+            // Upgrade levels
+            let upgrades = {
+                expandGrid: 0, // 0=4x4, 1=5x5, 2=6x6
+                spawnSpeed: 0, // 0=1.5s, 1=1.0s, 2=0.5s, 3=0.2s
+                autoSpawner: 0, // 0=off, 1=10s, 2=5s, 3=2s
+                luckySpawn: 0, // 0=0%, 1=10%
+                incomeBoost: 0, // 0=1x, 1=2x, 2=4x, 3=8x
+            };
+
+            const UPGRADE_DEFS = [{
+                key: 'expandGrid',
+                name: '📐 Expand Grid',
+                maxLevel: 2,
+                costs: [200, 1000],
+                effectText: ['4×4 → 5×5', '5×5 → 6×6'],
+                getEffect: (lvl) => lvl === 1 ? '4×4 → 5×5' : '5×5 → 6×6',
+                getLevelLabel: (lvl) => `${4+lvl}×${4+lvl}`,
+            }, {
+                key: 'spawnSpeed',
+                name: '⚡ Spawn Speed',
+                maxLevel: 3,
+                costs: [150, 500, 2000],
+                cooldowns: [1.5, 1.0, 0.5, 0.2],
+                effectText: ['1.5s → 1.0s', '1.0s → 0.5s', '0.5s → 0.2s'],
+                getEffect: (lvl) => `Cooldown: ${[1.5,1.0,0.5,0.2][lvl]}s → ${[1.0,0.5,0.2,0.1][lvl]||'MAX'}s`,
+                getLevelLabel: (lvl) => `${[1.5,1.0,0.5,0.2][lvl]}s`,
+            }, {
+                key: 'autoSpawner',
+                name: '🤖 Auto Spawner',
+                maxLevel: 3,
+                costs: [300, 1000, 4000],
+                intervals: [0, 10, 5, 2],
+                effectText: ['Off → 10s', '10s → 5s', '5s → 2s'],
+                getEffect: (lvl) => lvl === 0 ? 'Turns on auto-spawn' : `Interval: ${[10,5,2][lvl-1]}s → ${[5,2,1][lvl-1]||'MAX'}s`,
+                getLevelLabel: (lvl) => lvl === 0 ? 'OFF' : `${[10,5,2][lvl-1]}s`,
+            }, {
+                key: 'luckySpawn',
+                name: '🍀 Lucky Spawn',
+                maxLevel: 1,
+                costs: [400],
+                effectText: ['10% chance to spawn level 2'],
+                getEffect: () => '10% chance for Lv.2',
+                getLevelLabel: (lvl) => lvl === 0 ? '0%' : '10%',
+            }, {
+                key: 'incomeBoost',
+                name: '💎 Income Boost',
+                maxLevel: 3,
+                costs: [600, 2500, 10000],
+                multipliers: [1, 2, 4, 8],
+                effectText: ['1× → 2×', '2× → 4×', '4× → 8×'],
+                getEffect: (lvl) => `Multiplier: ${[1,2,4,8][lvl]}× → ${[2,4,8,16][lvl]||'MAX'}×`,
+                getLevelLabel: (lvl) => `${[1,2,4,8][lvl]}×`,
+            }, ];
+
+            function getUpgradeDef(key) {
+                return UPGRADE_DEFS.find(d => d.key === key);
+            }
+
+            function getUpgradeCost(key) {
+                const def = getUpgradeDef(key);
+                const lvl = upgrades[key];
+                if (lvl >= def.maxLevel) return Infinity;
+                return def.costs[lvl];
+            }
+
+            function getSpawnCooldown() {
+                const def = getUpgradeDef('spawnSpeed');
+                return def.cooldowns[upgrades.spawnSpeed];
+            }
+
+            function getAutoSpawnInterval() {
+                const def = getUpgradeDef('autoSpawner');
+                return def.intervals[upgrades.autoSpawner];
+            }
+
+            function getIncomeMultiplier() {
+                const def = getUpgradeDef('incomeBoost');
+                return def.multipliers[upgrades.incomeBoost];
+            }
+
+            function getLuckyChance() {
+                return upgrades.luckySpawn > 0 ? 0.1 : 0;
+            }
+
+            // ─────────────────────────────────────
+            // GRID FUNCTIONS
+            // ─────────────────────────────────────
+            function initGrid(newSize) {
+                const size = newSize || gridSize;
+                const newGrid = [];
+                for (let r = 0; r < size; r++) {
+                    newGrid[r] = [];
+                    for (let c = 0; c < size; c++) {
+                        if (r < grid.length && c < (grid[0] ? grid[0].length : 0)) {
+                            newGrid[r][c] = grid[r][c];
+                        } else {
+                            newGrid[r][c] = 0;
+                        }
+                    }
+                }
+                grid = newGrid;
+                gridSize = size;
+                updateCanvasSize();
+                updateGridSizeDisplay();
+            }
+
+            function updateCanvasSize() {
+                const totalWidth = gridSize * cellSize + (gridSize + 1) * gap + padding * 2;
+                const totalHeight = totalWidth; // square board
+                canvas.width = totalWidth;
+                canvas.height = totalHeight;
+            }
+
+            function getCellBounds(row, col) {
+                const x = padding + col * (cellSize + gap) + gap;
+                const y = padding + row * (cellSize + gap) + gap;
+                return { x, y, w: cellSize, h: cellSize };
+            }
+
+            function getGridCellFromCanvas(cx, cy) {
+                for (let r = 0; r < gridSize; r++) {
+                    for (let c = 0; c < gridSize; c++) {
+                        const b = getCellBounds(r, c);
+                        if (cx >= b.x && cx <= b.x + b.w && cy >= b.y && cy <= b.y + b.h) {
+                            return { row: r, col: c };
+                        }
+                    }
+                }
+                return null;
+            }
+
+            function countEmptyCells() {
+                let count = 0;
+                for (let r = 0; r < gridSize; r++)
+                    for (let c = 0; c < gridSize; c++)
+                        if (grid[r][c] === 0) count++;
+                return count;
+            }
+
+            function getRandomEmptyCell() {
+                const empties = [];
+                for (let r = 0; r < gridSize; r++)
+                    for (let c = 0; c < gridSize; c++)
+                        if (grid[r][c] === 0) empties.push({ row: r, col: c });
+                if (empties.length === 0) return null;
+                return empties[Math.floor(Math.random() * empties.length)];
+            }
+
+            function isGridFull() {
+                return countEmptyCells() === 0;
+            }
+
+            function hasAnyMergePossible() {
+                for (let r = 0; r < gridSize; r++) {
+                    for (let c = 0; c < gridSize; c++) {
+                        if (grid[r][c] === 0) continue;
+                        // Check right
+                        if (c + 1 < gridSize && grid[r][c + 1] === grid[r][c]) return true;
+                        // Check down
+                        if (r + 1 < gridSize && grid[r + 1][c] === grid[r][c]) return true;
+                    }
+                }
+                return false;
+            }
+
+            function checkGridlock() {
+                if (isGridFull() && !hasAnyMergePossible()) {
+                    gridlockActive = true;
+                    showGridlockOverlay();
+                }
+            }
+
+            // ─────────────────────────────────────
+            // MERGE CASCADE
+            // ─────────────────────────────────────
+            function runCascade() {
+                let merges = [];
+                let hadMerge = true;
+                let iterations = 0;
+                const maxIterations = 50; // safety
+
+                while (hadMerge && iterations < maxIterations) {
+                    hadMerge = false;
+                    iterations++;
+                    for (let r = 0; r < gridSize; r++) {
+                        for (let c = 0; c < gridSize; c++) {
+                            if (grid[r][c] === 0) continue;
+                            const lvl = grid[r][c];
+                            // Check right neighbor
+                            if (c + 1 < gridSize && grid[r][c + 1] === lvl) {
+                                grid[r][c] = lvl + 1;
+                                grid[r][c + 1] = 0;
+                                merges.push({ row: r, col: c, fromLevel: lvl, toLevel: lvl + 1 });
+                                hadMerge = true;
+                                addTileAnimation(r, c);
+                            }
+                            // Check down neighbor
+                            if (r + 1 < gridSize && grid[r + 1][c] === lvl && grid[r][c] === lvl + 1 === false &&
+                                grid[r][c] !== 0) {
+                                // Re-check since right merge might have changed this cell
+                            }
+                            if (r + 1 < gridSize && grid[r + 1][c] === lvl && grid[r][c] === lvl) {
+                                grid[r][c] = lvl + 1;
+                                grid[r + 1][c] = 0;
+                                merges.push({ row: r, col: c, fromLevel: lvl, toLevel: lvl + 1 });
+                                hadMerge = true;
+                                addTileAnimation(r, c);
+                            }
+                        }
+                    }
+                }
+
+                // Process merges for particles & sound
+                for (const m of merges) {
+                    spawnMergeParticles(m.row, m.col, m.toLevel);
+                    sfxMerge(m.toLevel);
+                    if (m.toLevel > highestTileEver) {
+                        highestTileEver = m.toLevel;
+                        updateHighestDisplay();
+                    }
+                }
+
+                // Check gridlock after cascade
+                if (merges.length > 0) {
+                    checkGridlock();
+                }
+
+                return merges.length;
+            }
+
+            function addTileAnimation(row, col) {
+                // Remove any existing animation for this cell
+                animatingTiles = animatingTiles.filter(a => !(a.row === row && a.col === col));
+                animatingTiles.push({ row, col, startTime: performance.now(), duration: 300 });
+            }
+
+            function placeTile(row, col, level) {
+                if (grid[row][col] !== 0) return false;
+                grid[row][col] = level;
+                addTileAnimation(row, col);
+                if (level > highestTileEver) {
+                    highestTileEver = level;
+                    updateHighestDisplay();
+                }
+                runCascade();
+                return true;
+            }
+
+            function spawnTile(row, col) {
+                if (grid[row][col] !== 0) return false;
+                let level = 1;
+                if (Math.random() < getLuckyChance()) {
+                    level = 2;
+                }
+                const success = placeTile(row, col, level);
+                if (success) {
+                    sfxPop();
+                    spawnSpawnParticles(row, col, level);
+                }
+                return success;
+            }
+
+            // ─────────────────────────────────────
+            // PARTICLES
+            // ─────────────────────────────────────
+            function spawnMergeParticles(row, col, level) {
+                const b = getCellBounds(row, col);
+                const cx = b.x + b.w / 2;
+                const cy = b.y + b.h / 2;
+                const count = 8 + Math.min(level * 3, 20);
+                const hueBase = (level * 40) % 360;
+                for (let i = 0; i < count; i++) {
+                    const angle = (Math.PI * 2 * i) / count + Math.random() * 0.3;
+                    const speed = 60 + Math.random() * 180 + level * 15;
+                    particles.push({
+                        x: cx,
+                        y: cy,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        life: 0.35 + Math.random() * 0.4,
+                        maxLife: 0.35 + Math.random() * 0.4,
+                        size: 2 + Math.random() * 4 + level * 0.5,
+                        color: `hsl(${hueBase + Math.random()*40}, 80%, ${55+Math.random()*30}%)`,
+                    });
+                }
+            }
+
+            function spawnSpawnParticles(row, col, level) {
+                const b = getCellBounds(row, col);
+                const cx = b.x + b.w / 2;
+                const cy = b.y + b.h / 2;
+                const count = 4;
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 30 + Math.random() * 70;
+                    particles.push({
+                        x: cx,
+                        y: cy,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        life: 0.2 + Math.random() * 0.25,
+                        maxLife: 0.2 + Math.random() * 0.25,
+                        size: 1.5 + Math.random() * 3,
+                        color: level === 2 ? '#ffd740' : '#81d4fa',
+                    });
+                }
+            }
+
+            function updateParticles(dt) {
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.life -= dt;
+                    if (p.life <= 0) {
+                        particles.splice(i, 1);
+                    }
+                }
+            }
+
+            function renderParticles(ctx) {
+                for (const p of particles) {
+                    const alpha = Math.max(0, p.life / p.maxLife);
+                    const size = p.size * alpha;
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = p.color;
+                    ctx.shadowColor = p.color;
+                    ctx.shadowBlur = size * 2;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+            }
+
+            // ─────────────────────────────────────
+            // RENDERING
+            // ─────────────────────────────────────
+            function getTileColor(level) {
+                const colors = [
+                    '#3a3a55', // empty (not used for tiles)
+                    '#4FC3F7', // 1 - light blue
+                    '#81C784', // 2 - green
+                    '#FFD54F', // 3 - amber
+                    '#FF8A65', // 4 - orange
+                    '#E57373', // 5 - red
+                    '#BA68C8', // 6 - purple
+                    '#F06292', // 7 - pink
+                    '#FFD740', // 8 - gold
+                    '#4DD0E1', // 9 - cyan
+                    '#FF6E40', // 10 - deep orange
+                ];
+                if (level < colors.length) return colors[level];
+                // For higher levels, cycle through vibrant hues
+                const hue = (level * 47 + 180) % 360;
+                return `hsl(${hue}, 70%, 55%)`;
+            }
+
+            function getTileTextColor(level) {
+                return (level >= 3 && level <= 5) ? '#1a1a1a' : '#fff';
+            }
+
+            function renderGrid(ctx) {
+                const now = performance.now();
+                // Board background
+                const boardX = padding;
+                const boardY = padding;
+                const boardW = gridSize * cellSize + (gridSize + 1) * gap;
+                const boardH = boardW;
+                ctx.fillStyle = '#15152a';
+                ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+                ctx.lineWidth = 1;
+                roundRect(ctx, boardX, boardY, boardW, boardH, 10, true, true);
+
+                // Draw cells
+                for (let r = 0; r < gridSize; r++) {
+                    for (let c = 0; c < gridSize; c++) {
+                        const b = getCellBounds(r, c);
+                        const level = grid[r][c];
+
+                        // Cell background
+                        if (level === 0) {
+                            ctx.fillStyle = '#1e1e3a';
+                            ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+                            ctx.lineWidth = 1;
+                            roundRect(ctx, b.x, b.y, b.w, b.h, 8, true, true);
+                        } else {
+                            // Check for animation
+                            let scale = 1;
+                            const anim = animatingTiles.find(a => a.row === r && a.col === c);
+                            if (anim) {
+                                const elapsed = now - anim.startTime;
+                                const progress = Math.min(1, elapsed / anim.duration);
+                                // Ease out back
+                                const t = progress;
+                                scale = 1 + (1 - t) * (1 - t) * 0.35;
+                                if (progress >= 1) {
+                                    // Remove animation
+                                    animatingTiles = animatingTiles.filter(a => a !== anim);
+                                }
+                            }
+
+                            const cx = b.x + b.w / 2;
+                            const cy = b.y + b.h / 2;
+                            const sw = b.w * scale;
+                            const sh = b.h * scale;
+                            const sx = cx - sw / 2;
+                            const sy = cy - sh / 2;
+
+                            ctx.save();
+                            // Glow for high levels
+                            if (level >= 7) {
+                                ctx.shadowColor = getTileColor(level);
+                                ctx.shadowBlur = 10 + level * 2;
+                            }
+                            // Gradient fill
+                            const baseColor = getTileColor(level);
+                            const grad = ctx.createLinearGradient(sx, sy, sx + sw, sy + sh);
+                            grad.addColorStop(0, lightenColor(baseColor, 30));
+                            grad.addColorStop(1, darkenColor(baseColor, 20));
+                            ctx.fillStyle = grad;
+                            ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+                            ctx.lineWidth = 2;
+                            roundRect(ctx, sx, sy, sw, sh, 10, true, true);
+                            ctx.restore();
+
+                            // Number text
+                            ctx.save();
+                            ctx.fillStyle = getTileTextColor(level);
+                            ctx.font = `bold ${Math.floor(cellSize*0.45)}px 'Segoe UI', system-ui, sans-serif`;
+                            ctx.textAlign = 'center';
+                            ctx.textBaseline = 'middle';
+                            ctx.shadowColor = 'rgba(0,0,0,0.3)';
+                            ctx.shadowBlur = 3;
+                            ctx.fillText(level, cx, cy);
+                            ctx.restore();
+
+                            // Subtle inner highlight
+                            ctx.save();
+                            ctx.globalAlpha = 0.2;
+                            ctx.fillStyle = '#fff';
+                            roundRect(ctx, sx + 4, sy + 4, sw * 0.5, sh * 0.3, 6, true, false);
+                            ctx.restore();
+                        }
+                    }
+                }
+            }
+
+            function roundRect(ctx, x, y, w, h, r, fill, stroke) {
+                ctx.beginPath();
+                ctx.moveTo(x + r, y);
+                ctx.lineTo(x + w - r, y);
+                ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+                ctx.lineTo(x + w, y + h - r);
+                ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+                ctx.lineTo(x + r, y + h);
+                ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+                ctx.lineTo(x, y + r);
+                ctx.quadraticCurveTo(x, y, x + r, y);
+                ctx.closePath();
+                if (fill) ctx.fill();
+                if (stroke) ctx.stroke();
+            }
+
+            function lightenColor(hex, percent) {
+                const num = parseInt(hex.replace('#', ''), 16);
+                const amt = Math.round(2.55 * percent);
+                const R = Math.min(255, (num >> 16) + amt);
+                const G = Math.min(255, ((num >> 8) & 0x00FF00) + amt);
+                const B = Math.min(255, (num & 0x0000FF) + amt);
+                return `rgb(${R},${G},${B})`;
+            }
+
+            function darkenColor(hex, percent) {
+                const num = parseInt(hex.replace('#', ''), 16);
+                const amt = Math.round(2.55 * percent);
+                const R = Math.max(0, (num >> 16) - amt);
+                const G = Math.max(0, ((num >> 8) & 0x00FF00) - amt);
+                const B = Math.max(0, (num & 0x0000FF) - amt);
+                return `rgb(${R},${G},${B})`;
+            }
+
+            function renderAll() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                // Subtle background pattern
+                ctx.fillStyle = '#111128';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                renderGrid(ctx);
+                renderParticles(ctx);
+
+                // Draw subtle corner accents
+                const bw = gridSize * cellSize + (gridSize + 1) * gap;
+                ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(padding, padding, bw, bw);
+            }
+
+            // ─────────────────────────────────────
+            // INCOME CALCULATION
+            // ─────────────────────────────────────
+            function calculateIncomeRate() {
+                let rate = 0;
+                for (let r = 0; r < gridSize; r++) {
+                    for (let c = 0; c < gridSize; c++) {
+                        if (grid[r][c] > 0) {
+                            rate += grid[r][c] * grid[r][c] * 0.35;
+                        }
+                    }
+                }
+                return rate * getIncomeMultiplier();
+            }
+
+            // ─────────────────────────────────────
+            // UI UPDATES
+            // ─────────────────────────────────────
+            function updateCoinDisplay() {
+                coinDisplay.textContent = Math.floor(coins).toLocaleString();
+            }
+
+            function updateIncomeDisplay() {
+                const rate = calculateIncomeRate();
+                incomeDisplay.textContent = rate.toFixed(1) + '/s';
+            }
+
+            function updateHighestDisplay() {
+                highestDisplay.textContent = highestTileEver > 0 ? 'Lv.' + highestTileEver : '-';
+                if (highestTileEver >= 8) highestDisplay.style.color = '#ffd740';
+                else if (highestTileEver >= 5) highestDisplay.style.color = '#ff8a65';
+                else highestDisplay.style.color = '#fff';
+            }
+
+            function updateGridSizeDisplay() {
+                gridSizeDisplay.textContent = gridSize + '×' + gridSize;
+            }
+
+            function updateShopButtons() {
+                shopGrid.innerHTML = '';
+                for (const def of UPGRADE_DEFS) {
+                    const lvl = upgrades[def.key];
+                    const maxed = lvl >= def.maxLevel;
+                    const cost = maxed ? Infinity : def.costs[lvl];
+                    const canAfford = coins >= cost && !maxed;
+
+                    const btn = document.createElement('div');
+                    btn.className = 'shop-btn';
+                    if (!canAfford && !maxed) btn.classList.add('disabled');
+                    if (maxed) btn.classList.add('maxed');
+
+                    btn.innerHTML = `
+                <div class="shop-btn-name">${def.name}</div>
+                <div class="shop-btn-effect">${def.getEffect(lvl)}</div>
+                <div class="shop-btn-cost">${maxed ? '✅ MAXED' : '💰 ' + cost.toLocaleString()}</div>
+                <div class="shop-btn-lvl">Level: ${def.getLevelLabel(lvl)}</div>
+              `;
+
+                    if (!maxed && canAfford) {
+                        btn.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            purchaseUpgrade(def.key);
+                        });
+                        btn.style.cursor = 'pointer';
+                    } else if (maxed) {
+                        btn.style.cursor = 'default';
+                    } else {
+                        btn.style.cursor = 'not-allowed';
+                        btn.addEventListener('click', () => sfxError());
+                    }
+
+                    shopGrid.appendChild(btn);
+                }
+            }
+
+            function updateAllUI() {
+                updateCoinDisplay();
+                updateIncomeDisplay();
+                updateHighestDisplay();
+                updateGridSizeDisplay();
+                updateShopButtons();
+            }
+
+            // ─────────────────────────────────────
+            // UPGRADE PURCHASE
+            // ─────────────────────────────────────
+            function purchaseUpgrade(key) {
+                const def = getUpgradeDef(key);
+                const lvl = upgrades[key];
+                if (lvl >= def.maxLevel) return false;
+                const cost = def.costs[lvl];
+                if (coins < cost) return false;
+
+                coins -= cost;
+                upgrades[key]++;
+
+                // Apply effects
+                if (key === 'expandGrid') {
+                    const newSize = 4 + upgrades.expandGrid;
+                    initGrid(newSize);
+                }
+                if (key === 'spawnSpeed') {
+                    spawnCooldown = getSpawnCooldown();
+                }
+                if (key === 'autoSpawner') {
+                    autoSpawnInterval = getAutoSpawnInterval();
+                    autoSpawnTimer = 0;
+                }
+                if (key === 'luckySpawn') {
+                    luckySpawnChance = getLuckyChance();
+                }
+                if (key === 'incomeBoost') {
+                    incomeMultiplier = getIncomeMultiplier();
+                }
+
+                sfxBuy();
+                updateAllUI();
+                return true;
+            }
+
+            // ─────────────────────────────────────
+            // GAME OVER / GRIDLOCK
+            // ─────────────────────────────────────
+            function showGridlockOverlay() {
+                const overlay = document.createElement('div');
+                overlay.className = 'overlay';
+                overlay.id = 'gridlockOverlay';
+                overlay.innerHTML = `
+              <div class="overlay-box">
+                <h2>🔒 Gridlock!</h2>
+                <p>No empty cells and no possible merges.<br>Your grid is stuck!</p>
+                <p style="color:#ffd740;">🏆 Best tile: <b>Lv.${highestTileEver}</b> | 💰 Coins: <b>${Math.floor(coins).toLocaleString()}</b></p>
+                <button class="overlay-btn" id="clearGridBtn">🧹 Clear Grid (Keep Coins)</button>
+                <button class="overlay-btn secondary" id="fullResetBtn">🔄 Full Reset</button>
+              </div>
+            `;
+                document.body.appendChild(overlay);
+
+                document.getElementById('clearGridBtn').addEventListener('click', () => {
+                    clearGrid();
+                    document.body.removeChild(overlay);
+                    gridlockActive = false;
+                });
+                document.getElementById('fullResetBtn').addEventListener('click', () => {
+                    fullReset();
+                    document.body.removeChild(overlay);
+                    gridlockActive = false;
+                });
+            }
+
+            function clearGrid() {
+                for (let r = 0; r < gridSize; r++)
+                    for (let c = 0; c < gridSize; c++)
+                        grid[r][c] = 0;
+                particles = [];
+                animatingTiles = [];
+                lastManualSpawnTime = performance.now() / 1000 - spawnCooldown;
+                updateAllUI();
+            }
+
+            function fullReset() {
+                grid = [];
+                gridSize = 4;
+                initGrid(4);
+                coins = 0;
+                incomeMultiplier = 1;
+                spawnCooldown = 1.5;
+                lastManualSpawnTime = -10;
+                autoSpawnInterval = 0;
+                autoSpawnTimer = 0;
+                luckySpawnChance = 0;
+                highestTileEver = 0;
+                totalCoinsEarned = 0;
+                particles = [];
+                animatingTiles = [];
+                gridlockActive = false;
+                upgrades = {
+                    expandGrid: 0,
+                    spawnSpeed: 0,
+                    autoSpawner: 0,
+                    luckySpawn: 0,
+                    incomeBoost: 0,
+                };
+                gameStartTime = performance.now();
+                updateAllUI();
+            }
+
+            // ─────────────────────────────────────
+            // INPUT HANDLING
+            // ─────────────────────────────────────
+            function getCanvasPos(e) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                return {
+                    x: (clientX - rect.left) * scaleX,
+                    y: (clientY - rect.top) * scaleY,
+                };
+            }
+
+            function handleCanvasClick(e) {
+                if (gridlockActive) return;
+                e.preventDefault();
+                const pos = getCanvasPos(e);
+                const cell = getGridCellFromCanvas(pos.x, pos.y);
+                if (!cell) return;
+
+                const now = performance.now() / 1000;
+                if (now - lastManualSpawnTime < spawnCooldown) {
+                    sfxError();
+                    // Visual feedback: brief red flash handled by cooldown skip
+                    return;
+                }
+
+                if (grid[cell.row][cell.col] !== 0) {
+                    sfxError();
+                    return;
+                }
+
+                const success = spawnTile(cell.row, cell.col);
+                if (success) {
+                    lastManualSpawnTime = now;
+                    // Hide hint after first few spawns
+                    if (totalCoinsEarned > 5 && hint.style.opacity !== '0') {
+                        hint.style.transition = 'opacity 1s';
+                        hint.style.opacity = '0';
+                        setTimeout(() => { hint.textContent = ''; }, 1000);
+                    }
+                }
+                updateAllUI();
+            }
+
+            canvas.addEventListener('pointerdown', handleCanvasClick);
+            canvas.addEventListener('touchstart', function(e) {
+                if (e.touches.length === 1) {
+                    handleCanvasClick(e);
+                }
+            }, { passive: false });
+
+            // Prevent double-tap zoom on canvas
+            canvas.addEventListener('touchstart', function(e) {
+                if (e.touches.length > 1) e.preventDefault();
+            }, { passive: false });
+
+            // ─────────────────────────────────────
+            // GAME LOOP
+            // ─────────────────────────────────────
+            let lastFrameTime = performance.now();
+            let uiUpdateTimer = 0;
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastFrameTime) / 1000;
+                lastFrameTime = timestamp;
+
+                // Clamp dt to avoid huge jumps
+                if (dt > 0.5) dt = 0.5;
+                if (dt <= 0) dt = 0.016;
+
+                if (!gridlockActive) {
+                    // Income
+                    const incomeRate = calculateIncomeRate();
+                    const incomeThisFrame = incomeRate * dt;
+                    coins += incomeThisFrame;
+                    totalCoinsEarned += incomeThisFrame;
+
+                    // Auto-spawner
+                    if (autoSpawnInterval > 0 && !gridlockActive) {
+                        autoSpawnTimer += dt;
+                        if (autoSpawnTimer >= autoSpawnInterval) {
+                            autoSpawnTimer -= autoSpawnInterval;
+                            const emptyCell = getRandomEmptyCell();
+                            if (emptyCell) {
+                                let lvl = 1;
+                                if (Math.random() < getLuckyChance()) lvl = 2;
+                                placeTile(emptyCell.row, emptyCell.col, lvl);
+                                sfxPop();
+                                spawnSpawnParticles(emptyCell.row, emptyCell.col, lvl);
+                            }
+                        }
+                    }
+
+                    // Check gridlock periodically
+                    if (isGridFull() && !hasAnyMergePossible() && !gridlockActive) {
+                        gridlockActive = true;
+                        showGridlockOverlay();
+                    }
+                }
+
+                // Update particles
+                updateParticles(dt);
+
+                // Clean up finished animations
+                const now = performance.now();
+                animatingTiles = animatingTiles.filter(a => now - a.startTime < a.duration);
+
+                // Render
+                renderAll();
+
+                // Update UI periodically (every ~200ms for performance)
+                uiUpdateTimer += dt;
+                if (uiUpdateTimer > 0.2) {
+                    uiUpdateTimer = 0;
+                    updateAllUI();
+                }
+
+                requestAnimationFrame(gameLoop);
+            }
+
+            // ─────────────────────────────────────
+            // INITIALIZATION
+            // ─────────────────────────────────────
+            function init() {
+                initGrid(4);
+                coins = 50; // Starting coins
+                lastManualSpawnTime = performance.now() / 1000 - spawnCooldown; // Ready to spawn
+                updateCanvasSize();
+                updateAllUI();
+                hint.textContent = '👆 Tap empty cells to spawn tiles · Match neighbors to merge!';
+                hint.style.opacity = '1';
+                hint.style.transition = 'none';
+                lastFrameTime = performance.now();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // Handle window resize
+            window.addEventListener('resize', () => {
+                updateAllUI();
+            });
+
+            // Start the game
+            init();
+
+            console.log('🚀 123 Tycoon ready! Build your number empire.');
+            console.log('💰 Start with 50 coins. Tap empty cells to spawn tiles.');
+            console.log('🔢 Matching adjacent numbers merge into higher ones!');
+            console.log('🛒 Buy upgrades to expand your grid and boost income.');
+        })();
+    </script>
+</body>
+</html>
