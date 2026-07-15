@@ -34,5 +34,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-15T23:10:10.564Z",
     "updatedAt": "2026-07-15T23:10:10.564Z"
+  },
+  {
+    "slug": "eat-cheese-burger-china-biggy",
+    "title": "Eat Cheese Burger China Biggy",
+    "description": "eat cheese burger china biggy",
+    "creator": "burger778",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-15T23:10:57.697Z",
+    "updatedAt": "2026-07-15T23:10:57.697Z"
   }
 ]
