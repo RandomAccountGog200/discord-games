@@ -25,5 +25,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-15T23:07:49.625Z",
     "updatedAt": "2026-07-15T23:07:49.625Z"
+  },
+  {
+    "slug": "123-tycoon-merge-grow",
+    "title": "123 Tycoon - Merge & Grow",
+    "description": "123 tycoon",
+    "creator": "burger778",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-15T23:10:10.564Z",
+    "updatedAt": "2026-07-15T23:10:10.564Z"
   }
 ]
