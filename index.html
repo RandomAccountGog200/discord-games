@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Game Arcade</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: linear-gradient(160deg, #0f0c29, #302b63, #24243e);
+    min-height: 100vh; color: #eee; padding: 40px 20px;
+  }
+  h1 {
+    text-align: center; font-size: 2.6rem; margin-bottom: 8px;
+    background: linear-gradient(90deg, #ff6ec4, #7873f5, #4ade80);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  p.sub { text-align: center; color: #9ca3af; margin-bottom: 36px; }
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 20px; max-width: 1100px; margin: 0 auto;
+  }
+  a.card {
+    display: block; text-decoration: none; color: inherit;
+    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 16px; padding: 22px; transition: transform .15s, box-shadow .15s;
+  }
+  a.card:hover { transform: translateY(-4px); box-shadow: 0 8px 30px rgba(120,115,245,0.35); }
+  .card h2 { font-size: 1.2rem; margin-bottom: 8px; color: #fff; }
+  .card .desc { font-size: .9rem; color: #b7bcc9; margin-bottom: 12px; min-height: 2.4em; }
+  .card .meta { font-size: .75rem; color: #8b90a0; }
+  .empty { text-align: center; color: #9ca3af; margin-top: 60px; font-size: 1.1rem; }
+</style>
+</head>
+<body>
+<h1>🎮 Game Arcade</h1>
+<p class="sub">Games made with AI on Discord — click one to play!</p>
+<div class="grid" id="grid"></div>
+<div class="empty" id="empty" style="display:none">No games yet. Make one with /makegame in Discord!</div>
+<script>
+fetch('games.json?t=' + Date.now())
+  .then(r => r.json())
+  .then(games => {
+    const grid = document.getElementById('grid');
+    if (!games.length) { document.getElementById('empty').style.display = 'block'; return; }
+    games.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    for (const g of games) {
+      const a = document.createElement('a');
+      a.className = 'card';
+      a.href = 'games/' + g.slug + '/';
+      const h2 = document.createElement('h2'); h2.textContent = g.title || g.slug;
+      const d = document.createElement('div'); d.className = 'desc'; d.textContent = g.description || '';
+      const m = document.createElement('div'); m.className = 'meta';
+      m.textContent = 'by ' + (g.creator || '?') + ' · ' + (g.updatedAt || '').slice(0, 10);
+      a.append(h2, d, m);
+      grid.appendChild(a);
+    }
+  })
+  .catch(() => { document.getElementById('empty').style.display = 'block'; });
+</script>
+</body>
+</html>
