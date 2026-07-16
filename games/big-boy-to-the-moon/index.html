@@ -1,0 +1,1428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Big Boy: To The Moon! 🌙</title>
+    <style>
+        :root {
+            --bg: #0a0a1a;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            height: 100dvh;
+            overflow: hidden;
+            font-family: 'Segoe UI', 'Trebuchet MS', sans-serif;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-touch-callout: none;
+        }
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            height: 100dvh;
+            max-width: 500px;
+            max-height: 850px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        canvas {
+            display: block;
+            border-radius: 16px;
+            box-shadow: 0 0 60px rgba(100, 140, 255, 0.3), 0 0 120px rgba(180, 120, 255, 0.15);
+            max-width: 100%;
+            max-height: 100%;
+            aspect-ratio: 480 / 800;
+            object-fit: contain;
+        }
+        #ui-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            align-items: center;
+            padding: 20px;
+            z-index: 10;
+        }
+        #score-display {
+            color: #fff;
+            font-size: clamp(0.9rem, 2.5vw, 1.2rem);
+            font-weight: 700;
+            text-shadow: 0 0 20px rgba(255, 220, 100, 0.8);
+            letter-spacing: 1px;
+            background: rgba(0, 0, 0, 0.4);
+            padding: 8px 18px;
+            border-radius: 25px;
+            backdrop-filter: blur(4px);
+        }
+        #moon-progress {
+            color: #ffeebb;
+            font-size: clamp(0.7rem, 2vw, 0.9rem);
+            text-shadow: 0 0 12px rgba(255, 200, 150, 0.7);
+            margin-top: 4px;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 4px 14px;
+            border-radius: 20px;
+            letter-spacing: 0.5px;
+        }
+        .btn {
+            pointer-events: all;
+            background: linear-gradient(135deg, #ff7b42, #ff5e62);
+            color: #fff;
+            border: none;
+            padding: 14px 36px;
+            border-radius: 30px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            cursor: pointer;
+            letter-spacing: 1px;
+            box-shadow: 0 8px 30px rgba(255, 100, 60, 0.5);
+            transition: transform 0.15s, box-shadow 0.15s;
+            text-transform: uppercase;
+        }
+        .btn:hover {
+            transform: scale(1.06);
+            box-shadow: 0 12px 38px rgba(255, 100, 60, 0.65);
+        }
+        .btn:active {
+            transform: scale(0.95);
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="game"></canvas>
+    </div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+
+            // Internal resolution
+            const GW = 480;
+            const GH = 800;
+            canvas.width = GW;
+            canvas.height = GH;
+
+            // Responsive scaling
+            function resize() {
+                const container = document.getElementById('game-container');
+                const cw = container.clientWidth;
+                const ch = container.clientHeight;
+                const scale = Math.min(cw / GW, ch / GH);
+                canvas.style.width = (GW * scale) + 'px';
+                canvas.style.height = (GH * scale) + 'px';
+            }
+            window.addEventListener('resize', resize);
+            window.addEventListener('orientationchange', () => setTimeout(resize, 100));
+            resize();
+
+            // ============ AUDIO ENGINE ============
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playSound(freq, type, duration, vol = 0.15, glide = 0) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (glide) osc.frequency.linearRampToValueAtTime(freq + glide, t + duration);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) { /* silent */ }
+            }
+
+            function sfxBounce() { playSound(220, 'triangle', 0.1, 0.12, 180); }
+
+            function sfxSpring() { playSound(180, 'triangle', 0.08, 0.12, 400);
+                playSound(350, 'square', 0.06, 0.1, 500); }
+
+            function sfxCollect() { playSound(600, 'sine', 0.08, 0.15, 300);
+                playSound(900, 'sine', 0.06, 0.1, 200); }
+
+            function sfxHit() { playSound(50, 'sawtooth', 0.2, 0.3, -20);
+                playSound(30, 'triangle', 0.25, 0.35, -10); }
+
+            function sfxMoon() {
+                playSound(330, 'sine', 0.1, 0.3, 0);
+                playSound(440, 'sine', 0.08, 0.25, 0);
+                playSound(550, 'sine', 0.07, 0.2, 0);
+                playSound(660, 'sine', 0.06, 0.35, 0);
+            }
+
+            function sfxGameOver() { playSound(150, 'triangle', 0.18, 0.4, -80);
+                playSound(60, 'sawtooth', 0.22, 0.5, -30); }
+
+            // ============ GAME STATE ============
+            const STATE = {
+                MENU: 'menu',
+                PLAYING: 'playing',
+                GAMEOVER: 'gameover',
+                MOONREACHED: 'moonreached'
+            };
+
+            let gameState = STATE.MENU;
+            let score = 0;
+            let highScore = 0;
+            let snacksCollected = 0;
+            let cameraY = 0;
+            let maxPlayerY = GH - 150;
+            let moonDistance = 100; // percentage, 0 = reached
+            let moonReachedCount = 0;
+            let difficulty = 1;
+            let shakeTimer = 0;
+            let shakeIntensity = 0;
+            let frameCount = 0;
+
+            // Load high score
+            try {
+                const saved = localStorage.getItem('bigboy_moon_hs');
+                if (saved) highScore = parseInt(saved) || 0;
+            } catch (e) { highScore = 0; }
+
+            function saveHighScore() {
+                if (score > highScore) {
+                    highScore = score;
+                    try { localStorage.setItem('bigboy_moon_hs', highScore); } catch (e) {}
+                }
+            }
+
+            // ============ PLAYER ============
+            const player = {
+                x: GW / 2,
+                y: GH - 200,
+                vx: 0,
+                vy: 0,
+                radius: 22,
+                grounded: false,
+                facingRight: true,
+                hairBob: 0,
+            };
+
+            function resetPlayer() {
+                player.x = GW / 2;
+                player.y = GH - 200;
+                player.vx = 0;
+                player.vy = -8;
+                player.grounded = false;
+                player.facingRight = true;
+                player.hairBob = 0;
+            }
+
+            // ============ PLATFORMS ============
+            let platforms = [];
+            const PLATFORM_TYPES = {
+                NORMAL: { color: '#8B5E3C', topColor: '#C4956A', width: 80, height: 14, bounce: -11 },
+                SPRING: { color: '#3CB878', topColor: '#6FE8A0', width: 70, height: 16, bounce: -17, spring: true },
+                CRUMBLY: { color: '#C4A060', topColor: '#E8D090', width: 75, height: 12, bounce: -10, crumble: true },
+                MOVING: { color: '#6B7BD0', topColor: '#9BABF0', width: 85, height: 14, bounce: -11, moving: true },
+            };
+
+            function createPlatform(x, y, typeKey = 'NORMAL') {
+                const type = PLATFORM_TYPES[typeKey];
+                return {
+                    x: x,
+                    y: y,
+                    width: type.width,
+                    height: type.height,
+                    color: type.color,
+                    topColor: type.topColor,
+                    bounce: type.bounce,
+                    isSpring: type.spring || false,
+                    crumble: type.crumble || false,
+                    crumbling: false,
+                    crumbleTimer: 0,
+                    moving: type.moving || false,
+                    moveDir: Math.random() > 0.5 ? 1 : -1,
+                    moveSpeed: 1.2 + Math.random() * 1.5,
+                    moveRange: 60 + Math.random() * 80,
+                    originX: x,
+                    typeKey: typeKey,
+                };
+            }
+
+            function generateInitialPlatforms() {
+                platforms = [];
+                // Starting platform under player
+                platforms.push(createPlatform(GW / 2 - 40, GH - 160, 'NORMAL'));
+                // Generate platforms upward
+                let lastY = GH - 200;
+                for (let i = 0; i < 20; i++) {
+                    lastY -= 55 + Math.random() * 50;
+                    const px = 30 + Math.random() * (GW - 140);
+                    const r = Math.random();
+                    let type = 'NORMAL';
+                    if (r < 0.12) type = 'SPRING';
+                    else if (r < 0.22 && i > 3) type = 'CRUMBLY';
+                    else if (r < 0.32 && i > 5) type = 'MOVING';
+                    platforms.push(createPlatform(px, lastY, type));
+                }
+            }
+
+            function ensurePlatformsAbove() {
+                // Find highest platform (lowest Y value)
+                let minY = Infinity;
+                for (const p of platforms) {
+                    if (p.y < minY) minY = p.y;
+                }
+                // Generate more above if needed
+                const topLimit = cameraY - 300;
+                while (minY > topLimit) {
+                    minY -= 50 + Math.random() * 55;
+                    const px = 25 + Math.random() * (GW - 130);
+                    const r = Math.random();
+                    let type = 'NORMAL';
+                    if (r < 0.10) type = 'SPRING';
+                    else if (r < 0.20) type = 'CRUMBLY';
+                    else if (r < 0.30) type = 'MOVING';
+                    platforms.push(createPlatform(px, minY, type));
+                }
+                // Remove platforms far below
+                const bottomLimit = cameraY + GH + 200;
+                platforms = platforms.filter(p => p.y < bottomLimit);
+                // Keep at least some platforms
+                if (platforms.length < 15) {
+                    let ly = minY;
+                    for (let i = 0; i < 15 - platforms.length; i++) {
+                        ly -= 50 + Math.random() * 55;
+                        platforms.push(createPlatform(25 + Math.random() * (GW - 130), ly, 'NORMAL'));
+                    }
+                }
+            }
+
+            // ============ COLLECTIBLES (SNACKS) ============
+            let collectibles = [];
+            const SNACK_TYPES = [
+                { name: 'slurpee', points: 10, color: '#FF4444', accent: '#FF8888', draw: 'slurpee' },
+                { name: 'donut', points: 15, color: '#FF88BB', accent: '#FFC0D0', draw: 'donut' },
+                { name: 'chips', points: 8, color: '#FFBB33', accent: '#FFDD77', draw: 'chips' },
+                { name: 'golden', points: 50, color: '#FFD700', accent: '#FFF0A0', draw: 'star' },
+            ];
+
+            function spawnCollectible(x, y) {
+                const r = Math.random();
+                let typeIdx = 0;
+                if (r < 0.08) typeIdx = 3; // golden rare
+                else if (r < 0.40) typeIdx = 0; // slurpee
+                else if (r < 0.65) typeIdx = 1; // donut
+                else typeIdx = 2; // chips
+                collectibles.push({
+                    x: x,
+                    y: y,
+                    type: SNACK_TYPES[typeIdx],
+                    radius: 16,
+                    bobOffset: Math.random() * Math.PI * 2,
+                    collected: false,
+                    sparkTimer: 0,
+                });
+            }
+
+            function ensureCollectibles() {
+                const topLimit = cameraY - 250;
+                const bottomLimit = cameraY + GH + 100;
+                // Clean up old
+                collectibles = collectibles.filter(c => c.y < bottomLimit && !c.collected);
+                // Spawn new near platforms
+                for (const p of platforms) {
+                    if (p.y < topLimit || p.y > cameraY + GH) continue;
+                    if (Math.random() < 0.015 && collectibles.length < 20) {
+                        const cx = p.x + p.width / 2 + (Math.random() - 0.5) * 120;
+                        const cy = p.y - 30 - Math.random() * 50;
+                        if (cx > 20 && cx < GW - 20 && cy > topLimit && cy < cameraY + GH) {
+                            spawnCollectible(cx, cy);
+                        }
+                    }
+                }
+                // Ensure minimum collectibles
+                if (collectibles.length < 5 && platforms.length > 0) {
+                    const rp = platforms[Math.floor(Math.random() * platforms.length)];
+                    const cx = rp.x + rp.width / 2 + (Math.random() - 0.5) * 100;
+                    const cy = rp.y - 35 - Math.random() * 40;
+                    if (cx > 25 && cx < GW - 25) spawnCollectible(cx, cy);
+                }
+            }
+
+            // ============ ASTEROIDS (OBSTACLES) ============
+            let asteroids = [];
+
+            function spawnAsteroid() {
+                const topLimit = cameraY - 200;
+                const y = topLimit - Math.random() * 400;
+                const x = Math.random() * GW;
+                const size = 18 + Math.random() * 28;
+                asteroids.push({
+                    x: x,
+                    y: y,
+                    radius: size,
+                    vx: (Math.random() - 0.5) * 3,
+                    vy: 0.3 + Math.random() * 1.2,
+                    rotation: Math.random() * Math.PI * 2,
+                    rotSpeed: (Math.random() - 0.5) * 0.06,
+                    jagged: Array.from({ length: 7 }, () => 0.7 + Math.random() * 0.35),
+                });
+            }
+
+            function ensureAsteroids() {
+                const bottomLimit = cameraY + GH + 150;
+                asteroids = asteroids.filter(a => a.y < bottomLimit);
+                const topLimit = cameraY - 300;
+                const countAbove = asteroids.filter(a => a.y < cameraY + GH && a.y > topLimit).length;
+                const target = 5 + difficulty;
+                for (let i = countAbove; i < target; i++) {
+                    spawnAsteroid();
+                }
+                // Cap total
+                if (asteroids.length > 20) asteroids.splice(0, asteroids.length - 20);
+            }
+
+            // ============ PARTICLES ============
+            let particles = [];
+
+            function spawnParticles(x, y, count, color, spread = 3, life = 25) {
+                for (let i = 0; i < count; i++) {
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: (Math.random() - 0.5) * spread * 2,
+                        vy: (Math.random() - 0.7) * spread * 2,
+                        life: life + Math.random() * 15,
+                        maxLife: life + 15,
+                        color: color,
+                        radius: 1.5 + Math.random() * 3.5,
+                    });
+                }
+            }
+
+            function updateParticles() {
+                for (const p of particles) {
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += 0.08;
+                    p.life--;
+                }
+                particles = particles.filter(p => p.life > 0);
+                if (particles.length > 200) particles.splice(0, particles.length - 200);
+            }
+
+            // ============ STARS ============
+            let stars = [];
+
+            function generateStars() {
+                stars = [];
+                for (let i = 0; i < 150; i++) {
+                    stars.push({
+                        x: Math.random() * GW,
+                        y: Math.random() * GH * 3 - GH,
+                        size: 0.5 + Math.random() * 2.2,
+                        twinkle: Math.random() * Math.PI * 2,
+                        twinkleSpeed: 0.01 + Math.random() * 0.04,
+                        brightness: 0.4 + Math.random() * 0.6,
+                    });
+                }
+            }
+            generateStars();
+
+            // ============ INPUT ============
+            const keys = {};
+            let touchLeft = false;
+            let touchRight = false;
+            let touchActive = false;
+
+            window.addEventListener('keydown', e => {
+                keys[e.key] = true;
+                if (gameState === STATE.MENU) startGame();
+                if (gameState === STATE.GAMEOVER && e.key === ' ' && frameCount > 30) restartGame();
+                initAudio();
+            });
+            window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+            canvas.addEventListener('touchstart', e => {
+                e.preventDefault();
+                initAudio();
+                if (gameState === STATE.MENU) startGame();
+                if (gameState === STATE.GAMEOVER && frameCount > 30) { restartGame(); return; }
+                touchActive = true;
+                handleTouch(e);
+            }, { passive: false });
+            canvas.addEventListener('touchmove', e => {
+                e.preventDefault();
+                handleTouch(e);
+            }, { passive: false });
+            canvas.addEventListener('touchend', e => {
+                e.preventDefault();
+                touchLeft = false;
+                touchRight = false;
+                touchActive = false;
+            });
+            canvas.addEventListener('touchcancel', () => {
+                touchLeft = false;
+                touchRight = false;
+                touchActive = false;
+            });
+
+            canvas.addEventListener('mousedown', e => {
+                initAudio();
+                if (gameState === STATE.MENU) startGame();
+                if (gameState === STATE.GAMEOVER && frameCount > 30) { restartGame(); return; }
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = GW / rect.width;
+                const mx = (e.clientX - rect.left) * scaleX;
+                if (mx < GW / 2) touchLeft = true;
+                else touchRight = true;
+                touchActive = true;
+            });
+            canvas.addEventListener('mousemove', e => {
+                if (!touchActive) return;
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = GW / rect.width;
+                const mx = (e.clientX - rect.left) * scaleX;
+                touchLeft = mx < GW / 2;
+                touchRight = mx >= GW / 2;
+            });
+            canvas.addEventListener('mouseup', () => {
+                touchLeft = false;
+                touchRight = false;
+                touchActive = false;
+            });
+            canvas.addEventListener('mouseleave', () => {
+                touchLeft = false;
+                touchRight = false;
+                touchActive = false;
+            });
+
+            function handleTouch(e) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = GW / rect.width;
+                for (const touch of e.touches) {
+                    const tx = (touch.clientX - rect.left) * scaleX;
+                    if (tx < GW / 2) { touchLeft = true;
+                        touchRight = false; } else { touchRight = true;
+                        touchLeft = false; }
+                    break;
+                }
+            }
+
+            function getInputX() {
+                let dir = 0;
+                if (keys['ArrowLeft'] || keys['KeyA'] || keys['a'] || touchLeft) dir = -1;
+                if (keys['ArrowRight'] || keys['KeyD'] || keys['d'] || touchRight) dir = 1;
+                return dir;
+            }
+
+            // ============ GAME FLOW ============
+            function startGame() {
+                initAudio();
+                gameState = STATE.PLAYING;
+                score = 0;
+                snacksCollected = 0;
+                cameraY = 0;
+                maxPlayerY = GH - 150;
+                moonDistance = 100;
+                moonReachedCount = 0;
+                difficulty = 1;
+                shakeTimer = 0;
+                shakeIntensity = 0;
+                frameCount = 0;
+                platforms = [];
+                collectibles = [];
+                asteroids = [];
+                particles = [];
+                resetPlayer();
+                generateInitialPlatforms();
+                player.y = GH - 200;
+                player.vy = -8;
+                player.x = GW / 2;
+                cameraY = 0;
+                maxPlayerY = player.y;
+                ensureCollectibles();
+                ensureAsteroids();
+                ensurePlatformsAbove();
+            }
+
+            function restartGame() {
+                saveHighScore();
+                startGame();
+            }
+
+            function gameOver() {
+                gameState = STATE.GAMEOVER;
+                saveHighScore();
+                sfxGameOver();
+                shakeIntensity = 12;
+                shakeTimer = 20;
+                spawnParticles(player.x, player.y, 50, '#FF4444', 6, 35);
+                spawnParticles(player.x, player.y, 30, '#FFAA00', 5, 30);
+            }
+
+            function reachMoon() {
+                moonReachedCount++;
+                sfxMoon();
+                score += 1000;
+                snacksCollected += 10;
+                moonDistance = 100;
+                difficulty += 0.5;
+                shakeIntensity = 6;
+                shakeTimer = 15;
+                spawnParticles(GW / 2, cameraY + 80, 80, '#FFD700', 8, 50);
+                spawnParticles(GW / 2, cameraY + 80, 60, '#FFFFFF', 7, 40);
+                // Regenerate platforms further up
+                const topPlatforms = platforms.filter(p => p.y < cameraY - 100);
+                for (const p of topPlatforms) {
+                    p.y -= 2000 + Math.random() * 1000;
+                }
+                // Move asteroids up
+                for (const a of asteroids) {
+                    a.y -= 1500 + Math.random() * 800;
+                }
+            }
+
+            // ============ UPDATE ============
+            function update() {
+                if (gameState !== STATE.PLAYING) {
+                    if (shakeTimer > 0) shakeTimer--;
+                    if (gameState === STATE.GAMEOVER) {
+                        updateParticles();
+                        frameCount++;
+                    }
+                    return;
+                }
+                frameCount++;
+
+                // Input
+                const inputX = getInputX();
+                const speed = 6.5;
+                player.vx = inputX * speed;
+
+                // Physics
+                const gravity = 0.55;
+                player.vy += gravity;
+                player.x += player.vx;
+                player.y += player.vy;
+
+                // Wrap horizontally
+                if (player.x > GW + player.radius) player.x = -player.radius;
+                if (player.x < -player.radius) player.x = GW + player.radius;
+
+                // Hair bob
+                player.hairBob += 0.15;
+                player.grounded = false;
+
+                // Platform collision (only when falling)
+                for (const p of platforms) {
+                    if (p.crumbling) continue;
+                    const px = player.x;
+                    const py = player.y;
+                    const pr = player.radius;
+                    const platLeft = p.x;
+                    const platRight = p.x + p.width;
+                    const platTop = p.y;
+                    const platBot = p.y + p.height;
+
+                    // Check if player is above platform and falling onto it
+                    if (player.vy > 0 &&
+                        px + pr > platLeft &&
+                        px - pr < platRight &&
+                        py + pr >= platTop &&
+                        py + pr <= platBot + 12 &&
+                        py < platTop + 8) {
+
+                        player.y = platTop - pr;
+                        player.vy = p.bounce;
+                        player.grounded = true;
+                        player.hairBob = 0;
+
+                        if (p.isSpring) {
+                            sfxSpring();
+                            spawnParticles(player.x, player.y, 12, '#6FE8A0', 4, 20);
+                        } else if (p.crumble) {
+                            p.crumbling = true;
+                            p.crumbleTimer = 8;
+                            spawnParticles(player.x, player.y, 8, '#E8D090', 3, 15);
+                            sfxBounce();
+                        } else {
+                            sfxBounce();
+                            spawnParticles(player.x, player.y, 5, '#FFF8E0', 2, 12);
+                        }
+
+                        if (p.moving && !p.crumble) {
+                            // Small particle burst for moving platform bounce
+                            spawnParticles(player.x, player.y, 3, '#BBD0FF', 2, 10);
+                        }
+                        break;
+                    }
+                }
+
+                // Handle crumbling platforms
+                for (const p of platforms) {
+                    if (p.crumbling && p.crumbleTimer > 0) {
+                        p.crumbleTimer--;
+                        if (p.crumbleTimer <= 0) {
+                            spawnParticles(p.x + p.width / 2, p.y + p.height / 2, 15, '#C4A060', 5, 25);
+                        }
+                    }
+                }
+                platforms = platforms.filter(p => !(p.crumbling && p.crumbleTimer <= 0));
+
+                // Update moving platforms
+                for (const p of platforms) {
+                    if (p.moving && !p.crumbling) {
+                        p.x += p.moveDir * p.moveSpeed;
+                        if (p.x > p.originX + p.moveRange || p.x < p.originX - p.moveRange) {
+                            p.moveDir *= -1;
+                        }
+                    }
+                }
+
+                // Track max height
+                if (player.y < maxPlayerY) {
+                    maxPlayerY = player.y;
+                    const heightGained = (GH - 150) - maxPlayerY;
+                    const newScore = Math.floor(heightGained / 10);
+                    if (newScore > score) {
+                        score = newScore;
+                    }
+                }
+
+                // Camera follows player upward
+                const targetCamY = player.y - GH * 0.55;
+                if (targetCamY < cameraY) {
+                    cameraY = targetCamY;
+                }
+
+                // Moon distance
+                moonDistance = Math.max(0, 100 - Math.floor(((GH - 150) - maxPlayerY) / 80));
+                if (moonDistance <= 0 && gameState === STATE.PLAYING) {
+                    reachMoon();
+                }
+
+                // Difficulty scaling
+                difficulty = 1 + Math.floor(score / 800);
+
+                // Check fall death
+                if (player.y > cameraY + GH + 80) {
+                    gameOver();
+                    return;
+                }
+
+                // Check asteroid collision
+                for (const a of asteroids) {
+                    const dx = player.x - a.x;
+                    const dy = player.y - a.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < player.radius + a.radius - 4) {
+                        sfxHit();
+                        spawnParticles(player.x, player.y, 30, '#FF6644', 7, 30);
+                        shakeIntensity = 14;
+                        shakeTimer = 18;
+                        gameOver();
+                        return;
+                    }
+                }
+
+                // Update asteroids
+                for (const a of asteroids) {
+                    a.x += a.vx;
+                    a.y += a.vy;
+                    a.rotation += a.rotSpeed;
+                    if (a.x > GW + 60) a.x = -60;
+                    if (a.x < -60) a.x = GW + 60;
+                }
+
+                // Check collectible collisions
+                for (const c of collectibles) {
+                    if (c.collected) continue;
+                    const dx = player.x - c.x;
+                    const dy = player.y - c.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < player.radius + c.radius) {
+                        c.collected = true;
+                        c.sparkTimer = 10;
+                        score += c.type.points;
+                        snacksCollected++;
+                        sfxCollect();
+                        spawnParticles(c.x, c.y, 10, c.type.color, 4, 18);
+                    }
+                }
+                collectibles = collectibles.filter(c => !c.collected || c.sparkTimer > 0);
+                for (const c of collectibles) {
+                    if (c.collected && c.sparkTimer > 0) c.sparkTimer--;
+                }
+                collectibles = collectibles.filter(c => !c.collected);
+
+                // Ensure world content
+                ensurePlatformsAbove();
+                ensureCollectibles();
+                ensureAsteroids();
+                updateParticles();
+
+                // Update shake
+                if (shakeTimer > 0) shakeTimer--;
+                if (shakeTimer <= 0) shakeIntensity *= 0.8;
+                if (shakeIntensity < 0.1) shakeIntensity = 0;
+
+                // Clamp camera
+                if (cameraY > 0) cameraY = 0;
+            }
+
+            // ============ RENDER ============
+            function drawStars() {
+                for (const s of stars) {
+                    const sy = s.y - cameraY * 0.3;
+                    const wrappedY = ((sy % (GH * 3)) + GH * 3) % (GH * 3) - GH;
+                    if (wrappedY < -100 || wrappedY > GH + 100) continue;
+                    s.twinkle += s.twinkleSpeed;
+                    const alpha = s.brightness * (0.55 + 0.45 * Math.sin(s.twinkle));
+                    ctx.fillStyle = `rgba(255,255,240,${alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(s.x, wrappedY, s.size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function drawMoon() {
+                const moonScreenX = GW - 80;
+                const moonScreenY = 90;
+                const baseSize = 40;
+                const progress = Math.max(0, (100 - moonDistance) / 100);
+                const size = baseSize + progress * 55;
+                const glowSize = size + 25 + Math.sin(frameCount * 0.03) * 8;
+
+                // Glow
+                const glowGrad = ctx.createRadialGradient(moonScreenX, moonScreenY, size * 0.4, moonScreenX, moonScreenY,
+                glowSize);
+                glowGrad.addColorStop(0, 'rgba(255,240,210,0.9)');
+                glowGrad.addColorStop(0.4, 'rgba(255,220,180,0.5)');
+                glowGrad.addColorStop(0.7, 'rgba(200,180,220,0.15)');
+                glowGrad.addColorStop(1, 'rgba(100,80,150,0)');
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(moonScreenX, moonScreenY, glowSize, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Moon body
+                const moonGrad = ctx.createRadialGradient(moonScreenX - size * 0.2, moonScreenY - size * 0.2, size * 0.1,
+                    moonScreenX, moonScreenY, size);
+                moonGrad.addColorStop(0, '#FFFEF5');
+                moonGrad.addColorStop(0.5, '#FFF3D6');
+                moonGrad.addColorStop(0.85, '#F5E0B8');
+                moonGrad.addColorStop(1, '#D4C098');
+                ctx.fillStyle = moonGrad;
+                ctx.beginPath();
+                ctx.arc(moonScreenX, moonScreenY, size, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Craters
+                ctx.fillStyle = 'rgba(180,160,140,0.3)';
+                ctx.beginPath();
+                ctx.arc(moonScreenX - size * 0.3, moonScreenY - size * 0.1, size * 0.18, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(moonScreenX + size * 0.2, moonScreenY + size * 0.25, size * 0.12, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(moonScreenX - size * 0.05, moonScreenY + size * 0.3, size * 0.14, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            function drawPlayer() {
+                const px = player.x;
+                const py = player.y;
+                const pr = player.radius;
+
+                ctx.save();
+                ctx.translate(px, py);
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.25)';
+                ctx.beginPath();
+                ctx.ellipse(0, pr + 4, pr * 0.8, pr * 0.3, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body
+                const bodyGrad = ctx.createRadialGradient(-pr * 0.2, -pr * 0.3, pr * 0.1, 0, 0, pr);
+                bodyGrad.addColorStop(0, '#FFE4C4');
+                bodyGrad.addColorStop(0.7, '#F5C5A0');
+                bodyGrad.addColorStop(1, '#D49570');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.arc(0, 0, pr, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Shirt (lower half)
+                ctx.fillStyle = '#FF6B4A';
+                ctx.beginPath();
+                ctx.arc(0, pr * 0.25, pr * 0.95, 0, Math.PI);
+                ctx.fill();
+                ctx.fillStyle = '#FF5A38';
+                ctx.fillRect(-pr * 0.9, pr * 0.2, pr * 1.8, pr * 0.55);
+                ctx.fillStyle = '#FF6B4A';
+                ctx.beginPath();
+                ctx.arc(0, pr * 0.25, pr * 0.9, 0, Math.PI);
+                ctx.fill();
+
+                // Arms
+                const armSwing = Math.sin(frameCount * 0.15) * 0.3;
+                ctx.fillStyle = '#FFE4C4';
+                ctx.save();
+                ctx.rotate(-0.4 + armSwing);
+                ctx.fillRect(-pr * 0.9, -pr * 0.35, pr * 0.5, pr * 0.85);
+                ctx.restore();
+                ctx.save();
+                ctx.rotate(0.4 - armSwing);
+                ctx.fillRect(pr * 0.4, -pr * 0.35, pr * 0.5, pr * 0.85);
+                ctx.restore();
+
+                // HAIR - big poofy amazing hair
+                const hairBobY = Math.sin(player.hairBob * 2) * 2;
+                const hairColors = ['#3D1F00', '#4A2800', '#331800', '#5C3300'];
+                // Big poof
+                for (let i = 0; i < 8; i++) {
+                    const angle = -Math.PI * 0.65 + (i / 7) * Math.PI * 1.3;
+                    const dist = pr * 0.55;
+                    const hx = Math.cos(angle) * dist;
+                    const hy = -pr * 0.55 + Math.sin(angle) * dist * 0.6 + hairBobY;
+                    const hSize = pr * 0.42 + Math.random() * 0.02;
+                    ctx.fillStyle = hairColors[i % 4];
+                    ctx.beginPath();
+                    ctx.arc(hx, hy, hSize, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                // Extra poof on top
+                ctx.fillStyle = '#3D1F00';
+                ctx.beginPath();
+                ctx.arc(0, -pr * 0.7 + hairBobY, pr * 0.48, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#4A2800';
+                ctx.beginPath();
+                ctx.arc(pr * 0.25, -pr * 0.65 + hairBobY, pr * 0.35, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#331800';
+                ctx.beginPath();
+                ctx.arc(-pr * 0.25, -pr * 0.6 + hairBobY, pr * 0.33, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#2D1500';
+                ctx.beginPath();
+                ctx.arc(0, -pr * 0.85 + hairBobY, pr * 0.38, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Face
+                // Eyes
+                ctx.fillStyle = '#FFF';
+                ctx.beginPath();
+                ctx.arc(-pr * 0.3, -pr * 0.15, pr * 0.28, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(pr * 0.3, -pr * 0.15, pr * 0.28, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#111';
+                ctx.beginPath();
+                ctx.arc(-pr * 0.28, -pr * 0.13, pr * 0.14, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(pr * 0.32, -pr * 0.13, pr * 0.14, 0, Math.PI * 2);
+                ctx.fill();
+                // Eye shine
+                ctx.fillStyle = '#FFF';
+                ctx.beginPath();
+                ctx.arc(-pr * 0.33, -pr * 0.2, pr * 0.06, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(pr * 0.27, -pr * 0.2, pr * 0.06, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Mouth
+                ctx.strokeStyle = '#5D3A30';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(0, pr * 0.2, pr * 0.3, 0.2, Math.PI - 0.2);
+                ctx.stroke();
+
+                // Cheeks
+                ctx.fillStyle = 'rgba(255,150,140,0.45)';
+                ctx.beginPath();
+                ctx.arc(-pr * 0.55, pr * 0.05, pr * 0.2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(pr * 0.55, pr * 0.05, pr * 0.2, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.restore();
+            }
+
+            function drawPlatform(p) {
+                const px = p.x;
+                const py = p.y;
+                const pw = p.width;
+                const ph = p.height;
+
+                if (p.crumbling && p.crumbleTimer > 0) {
+                    const alpha = p.crumbleTimer / 8;
+                    ctx.globalAlpha = alpha;
+                }
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.fillRect(px + 2, py + 3, pw, ph);
+
+                // Body
+                const grad = ctx.createLinearGradient(px, py, px, py + ph);
+                grad.addColorStop(0, p.topColor);
+                grad.addColorStop(0.4, p.color);
+                grad.addColorStop(1, '#5D3A25');
+                ctx.fillStyle = grad;
+                ctx.fillRect(px, py, pw, ph);
+
+                // Top highlight
+                ctx.fillStyle = 'rgba(255,255,255,0.35)';
+                ctx.fillRect(px + 3, py + 1, pw - 6, ph * 0.35);
+
+                // Edge detail
+                ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(px, py, pw, ph);
+
+                // Spring indicator
+                if (p.isSpring) {
+                    ctx.fillStyle = '#FFEE00';
+                    ctx.beginPath();
+                    const cx = px + pw / 2;
+                    const cy = py - 6;
+                    // Draw a spring coil
+                    ctx.moveTo(cx - 8, cy);
+                    ctx.lineTo(cx + 8, cy);
+                    ctx.moveTo(cx - 6, cy - 5);
+                    ctx.lineTo(cx + 6, cy - 5);
+                    ctx.moveTo(cx - 4, cy - 10);
+                    ctx.lineTo(cx + 4, cy - 10);
+                    ctx.strokeStyle = '#FFEE00';
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+                    ctx.fillStyle = '#FFDD00';
+                    ctx.beginPath();
+                    ctx.arc(cx, cy - 12, 7, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                if (p.crumbling && p.crumbleTimer > 0) {
+                    ctx.globalAlpha = 1;
+                }
+            }
+
+            function drawCollectible(c) {
+                const cx = c.x;
+                const cy = c.y + Math.sin(frameCount * 0.06 + c.bobOffset) * 5;
+                const r = c.radius;
+
+                // Glow
+                const glowGrad = ctx.createRadialGradient(cx, cy, r * 0.3, cx, cy, r * 1.6);
+                glowGrad.addColorStop(0, 'rgba(255,255,200,0.6)');
+                glowGrad.addColorStop(1, 'rgba(255,200,100,0)');
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(cx, cy, r * 1.6, 0, Math.PI * 2);
+                ctx.fill();
+
+                if (c.type.draw === 'slurpee') {
+                    // Slurpee cup
+                    ctx.fillStyle = c.type.color;
+                    ctx.fillRect(cx - r * 0.5, cy - r * 0.3, r, r * 1.2);
+                    // Dome lid
+                    ctx.fillStyle = c.type.accent;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy - r * 0.35, r * 0.55, Math.PI, 0);
+                    ctx.fill();
+                    // Straw
+                    ctx.strokeStyle = '#FFF';
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.moveTo(cx + r * 0.3, cy - r * 0.7);
+                    ctx.lineTo(cx + r * 0.5, cy - r * 1.4);
+                    ctx.stroke();
+                    // "7" label
+                    ctx.fillStyle = '#FFF';
+                    ctx.font = `${r*0.6}px sans-serif`;
+                    ctx.fontWeight = 'bold';
+                    ctx.fillText('7', cx - r * 0.18, cy + r * 0.5);
+                } else if (c.type.draw === 'donut') {
+                    // Donut
+                    ctx.fillStyle = '#D4956B';
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = c.type.color;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#D4956B';
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, r * 0.4, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Sprinkles
+                    for (let i = 0; i < 6; i++) {
+                        const angle = i * Math.PI / 3 + 0.3;
+                        const sx = cx + Math.cos(angle) * r * 0.6;
+                        const sy = cy + Math.sin(angle) * r * 0.6;
+                        ctx.fillStyle = ['#FFEE00', '#FF4444', '#44FF44', '#FFFFFF'][i % 4];
+                        ctx.fillRect(sx - 2, sy - 2, 4, 4);
+                    }
+                } else if (c.type.draw === 'chips') {
+                    // Chips bag
+                    ctx.fillStyle = c.type.color;
+                    ctx.fillRect(cx - r * 0.6, cy - r * 0.8, r * 1.2, r * 1.6);
+                    ctx.fillStyle = c.type.accent;
+                    ctx.fillRect(cx - r * 0.4, cy - r * 0.6, r * 0.8, r * 1.2);
+                    ctx.fillStyle = '#FFF';
+                    ctx.font = `${r*0.45}px sans-serif`;
+                    ctx.fontWeight = 'bold';
+                    ctx.fillText('CHIPS', cx - r * 0.5, cy + r * 0.2);
+                } else if (c.type.draw === 'star') {
+                    // Golden star
+                    ctx.fillStyle = c.type.color;
+                    ctx.beginPath();
+                    for (let i = 0; i < 5; i++) {
+                        const angle = -Math.PI / 2 + i * Math.PI * 2 / 5;
+                        const innerAngle = angle + Math.PI / 5;
+                        const outerR = r;
+                        const innerR = r * 0.45;
+                        if (i === 0) ctx.moveTo(cx + Math.cos(angle) * outerR, cy + Math.sin(angle) * outerR);
+                        else ctx.lineTo(cx + Math.cos(angle) * outerR, cy + Math.sin(angle) * outerR);
+                        ctx.lineTo(cx + Math.cos(innerAngle) * innerR, cy + Math.sin(innerAngle) * innerR);
+                    }
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.fillStyle = '#FFF8D0';
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, r * 0.3, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function drawAsteroid(a) {
+                ctx.save();
+                ctx.translate(a.x, a.y);
+                ctx.rotate(a.rotation);
+                // Draw jagged asteroid
+                ctx.fillStyle = '#6B6B7B';
+                ctx.beginPath();
+                const segments = a.jagged.length;
+                for (let i = 0; i < segments; i++) {
+                    const angle = (i / segments) * Math.PI * 2;
+                    const r = a.radius * a.jagged[i];
+                    const sx = Math.cos(angle) * r;
+                    const sy = Math.sin(angle) * r;
+                    if (i === 0) ctx.moveTo(sx, sy);
+                    else ctx.lineTo(sx, sy);
+                }
+                ctx.closePath();
+                ctx.fill();
+                ctx.fillStyle = '#555565';
+                ctx.beginPath();
+                ctx.arc(0, 0, a.radius * 0.55, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#888898';
+                ctx.beginPath();
+                ctx.arc(-a.radius * 0.25, -a.radius * 0.25, a.radius * 0.3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            function drawParticles() {
+                for (const p of particles) {
+                    const alpha = p.life / p.maxLife;
+                    ctx.fillStyle = p.color.replace(')', `,${alpha})`).replace('rgb',
+                        'rgba').replace('rgbaa', 'rgba');
+                    if (p.color.startsWith('#')) {
+                        const hex = p.color;
+                        const r = parseInt(hex.slice(1, 3), 16);
+                        const g = parseInt(hex.slice(3, 5), 16);
+                        const b = parseInt(hex.slice(5, 7), 16);
+                        ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+                    }
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.radius * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function drawBackground() {
+                // Sky gradient
+                const skyGrad = ctx.createLinearGradient(0, 0, 0, GH);
+                skyGrad.addColorStop(0, '#0B0B30');
+                skyGrad.addColorStop(0.4, '#151550');
+                skyGrad.addColorStop(0.7, '#1A1A60');
+                skyGrad.addColorStop(1, '#0D0D35');
+                ctx.fillStyle = skyGrad;
+                ctx.fillRect(0, 0, GW, GH);
+
+                // Distant nebula/cloud glow
+                const nebulaGrad = ctx.createRadialGradient(GW * 0.3, GH * 0.25, 50, GW * 0.3, GH * 0.25, 350);
+                nebulaGrad.addColorStop(0, 'rgba(80,40,140,0.25)');
+                nebulaGrad.addColorStop(0.5, 'rgba(40,20,100,0.1)');
+                nebulaGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = nebulaGrad;
+                ctx.fillRect(0, 0, GW, GH);
+
+                const nebulaGrad2 = ctx.createRadialGradient(GW * 0.7, GH * 0.4, 40, GW * 0.7, GH * 0.4, 280);
+                nebulaGrad2.addColorStop(0, 'rgba(100,30,80,0.2)');
+                nebulaGrad2.addColorStop(0.5, 'rgba(60,15,50,0.08)');
+                nebulaGrad2.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = nebulaGrad2;
+                ctx.fillRect(0, 0, GW, GH);
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, GW, GH);
+
+                // Screen shake
+                let shakeX = 0,
+                    shakeY = 0;
+                if (shakeIntensity > 0.1) {
+                    shakeX = (Math.random() - 0.5) * shakeIntensity;
+                    shakeY = (Math.random() - 0.5) * shakeIntensity;
+                }
+
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                drawBackground();
+                drawStars();
+                drawMoon();
+
+                // Transform for camera
+                ctx.save();
+                ctx.translate(0, -cameraY);
+
+                // Draw platforms
+                for (const p of platforms) {
+                    if (p.y > cameraY - 50 && p.y < cameraY + GH + 50) {
+                        drawPlatform(p);
+                    }
+                }
+
+                // Draw collectibles
+                for (const c of collectibles) {
+                    if (!c.collected && c.y > cameraY - 60 && c.y < cameraY + GH + 60) {
+                        drawCollectible(c);
+                    }
+                }
+                // Draw sparking collected ones
+                for (const c of collectibles) {
+                    if (c.collected && c.sparkTimer > 0 && c.y > cameraY - 60 && c.y < cameraY + GH + 60) {
+                        const alpha = c.sparkTimer / 10;
+                        ctx.fillStyle = `rgba(255,255,200,${alpha})`;
+                        ctx.beginPath();
+                        ctx.arc(c.x, c.y, c.radius * 1.5, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+
+                // Draw asteroids
+                for (const a of asteroids) {
+                    if (a.y > cameraY - 80 && a.y < cameraY + GH + 80) {
+                        drawAsteroid(a);
+                    }
+                }
+
+                // Draw player
+                if (gameState === STATE.PLAYING || gameState === STATE.MENU) {
+                    drawPlayer();
+                } else if (gameState === STATE.GAMEOVER && shakeTimer > 0) {
+                    drawPlayer();
+                }
+
+                // Draw particles (some in world space)
+                for (const p of particles) {
+                    if (p.y > cameraY - 50 && p.y < cameraY + GH + 50) {
+                        const alpha = p.life / p.maxLife;
+                        const r = parseInt(p.color.slice(1, 3), 16) || 255;
+                        const g = parseInt(p.color.slice(3, 5), 16) || 200;
+                        const b = parseInt(p.color.slice(5, 7), 16) || 100;
+                        ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, p.radius * alpha, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+
+                ctx.restore(); // camera transform
+
+                // Screen-space particles (for game over effects etc.)
+                for (const p of particles) {
+                    if (p.y <= cameraY - 50 || p.y >= cameraY + GH + 50) {
+                        const alpha = p.life / p.maxLife;
+                        const screenY = p.y - cameraY;
+                        if (screenY > -20 && screenY < GH + 20) {
+                            const r = parseInt(p.color.slice(1, 3), 16) || 255;
+                            const g = parseInt(p.color.slice(3, 5), 16) || 200;
+                            const b = parseInt(p.color.slice(5, 7), 16) || 100;
+                            ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+                            ctx.beginPath();
+                            ctx.arc(p.x, screenY, p.radius * alpha, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                    }
+                }
+
+                ctx.restore(); // shake transform
+
+                // UI overlays (screen space)
+                drawUI();
+            }
+
+            function drawUI() {
+                // Score
+                ctx.fillStyle = '#FFF';
+                ctx.font = 'bold 20px "Segoe UI", "Trebuchet MS", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = 'rgba(255,200,80,0.7)';
+                ctx.shadowBlur = 16;
+                ctx.fillText(`🍩 ${score}`, GW / 2, 42);
+                ctx.shadowBlur = 0;
+
+                // High score
+                ctx.fillStyle = '#FFDD99';
+                ctx.font = '12px "Segoe UI", "Trebuchet MS", sans-serif';
+                ctx.fillText(`Best: ${highScore}`, GW / 2, 62);
+
+                // Moon progress
+                const moonPct = Math.max(0, Math.floor((100 - moonDistance)));
+                ctx.fillStyle = '#FFEECC';
+                ctx.font = '11px "Segoe UI", "Trebuchet MS", sans-serif';
+                ctx.fillText(`🌙 Moon: ${moonPct}%`, GW / 2, 80);
+
+                // Snacks count
+                ctx.fillStyle = '#FFCCAA';
+                ctx.font = '10px "Segoe UI", "Trebuchet MS", sans-serif';
+                ctx.fillText(`Snacks: ${snacksCollected}`, GW / 2, 96);
+
+                // Instructions (menu)
+                if (gameState === STATE.MENU) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                    ctx.fillRect(0, GH - 280, GW, 220);
+                    ctx.fillStyle = '#FFF';
+                    ctx.font = 'bold 26px "Segoe UI", "Trebuchet MS", sans-serif';
+                    ctx.fillText('Big Boy: To The Moon! 🌙', GW / 2, GH - 220);
+                    ctx.fillStyle = '#FFEECC';
+                    ctx.font = '15px "Segoe UI", "Trebuchet MS", sans-serif';
+                    ctx.fillText('Collect 7-Eleven snacks 🍩🥤', GW / 2, GH - 185);
+                    ctx.fillText('Avoid asteroids ☄️', GW / 2, GH - 162);
+                    ctx.fillText('Reach the moon for bonus! 🌕', GW / 2, GH - 139);
+                    ctx.fillStyle = '#FFF';
+                    ctx.font = 'bold 18px "Segoe UI", "Trebuchet MS", sans-serif';
+                    const pulse = 1 + Math.sin(Date.now() * 0.005) * 0.15;
+                    ctx.fillText('TAP OR PRESS ANY KEY TO START', GW / 2, GH - 95);
+                    ctx.fillStyle = '#CCC';
+                    ctx.font = '13px "Segoe UI", "Trebuchet MS", sans-serif';
+                    ctx.fillText('Arrow Keys / Touch sides to move', GW / 2, GH - 65);
+                }
+
+                // Game over
+                if (gameState === STATE.GAMEOVER && shakeTimer < 12) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                    ctx.fillRect(0, GH / 2 - 140, GW, 240);
+                    ctx.fillStyle = '#FF6B6B';
+                    ctx.font = 'bold 30px "Segoe UI", "Trebuchet MS", sans-serif';
+                    ctx.fillText('Game Over! 💫', GW / 2, GH / 2 - 85);
+                    ctx.fillStyle = '#FFF';
+                    ctx.font = '18px "Segoe UI", "Trebuchet MS", sans-serif';
+                    ctx.fillText(`Score: ${score}`, GW / 2, GH / 2 - 42);
+                    ctx.fillText(`Snacks: ${snacksCollected}`, GW / 2, GH / 2 - 16);
+                    ctx.fillText(`Moon: ${Math.floor((100-moonDistance))}% reached`, GW / 2, GH / 2 + 10);
+                    if (score >= highScore && score > 0) {
+                        ctx.fillStyle = '#FFD700';
+                        ctx.font = 'bold 16px "Segoe UI", "Trebuchet MS", sans-serif';
+                        ctx.fillText('🏆 NEW HIGH SCORE! 🏆', GW / 2, GH / 2 + 38);
+                    }
+                    ctx.fillStyle = '#FFF';
+                    ctx.font = 'bold 16px "Segoe UI", "Trebuchet MS", sans-serif';
+                    const pulse2 = 1 + Math.sin(Date.now() * 0.005) * 0.12;
+                    ctx.fillText('TAP TO RESTART', GW / 2, GH / 2 + 70);
+                }
+
+                // Moon reached celebration
+                if (gameState === STATE.PLAYING && moonReachedCount > 0 && frameCount < 180) {
+                    const alpha = Math.max(0, 1 - frameCount / 180);
+                    ctx.fillStyle = `rgba(255,215,0,${alpha})`;
+                    ctx.font = 'bold 28px "Segoe UI", "Trebuchet MS", sans-serif';
+                    ctx.fillText('🌕 MOON REACHED! +1000 🌕', GW / 2, GH / 2 - 30);
+                }
+            }
+
+            // ============ GAME LOOP ============
+            function gameLoop() {
+                update();
+                render();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // ============ INIT ============
+            function init() {
+                resetPlayer();
+                generateInitialPlatforms();
+                cameraY = 0;
+                maxPlayerY = player.y;
+                score = 0;
+                snacksCollected = 0;
+                moonDistance = 100;
+                moonReachedCount = 0;
+                difficulty = 1;
+                gameState = STATE.MENU;
+                platforms = [];
+                collectibles = [];
+                asteroids = [];
+                particles = [];
+                generateInitialPlatforms();
+                ensureCollectibles();
+                ensureAsteroids();
+                ensurePlatformsAbove();
+                player.y = GH - 200;
+                player.vy = 0;
+                player.x = GW / 2;
+                cameraY = 0;
+                maxPlayerY = player.y;
+            }
+
+            init();
+            gameLoop();
+
+            console.log('🌙 Big Boy: To The Moon! Ready!');
+            console.log('🍩 Collect 7-Eleven snacks!');
+            console.log('☄️ Avoid asteroids!');
+            console.log('🌕 Reach the moon!');
+            console.log('👦 That hair is magnificent!');
+        })();
+    </script>
+</body>
+</html>
