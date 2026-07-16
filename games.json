@@ -259,5 +259,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T04:52:39.708Z",
     "updatedAt": "2026-07-16T04:52:39.708Z"
+  },
+  {
+    "slug": "indian-car-vs-chai-center",
+    "title": "Indian Car vs Chai Center",
+    "description": "Indian car vs cai center",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T04:55:53.338Z",
+    "updatedAt": "2026-07-16T04:55:53.338Z"
   }
 ]
