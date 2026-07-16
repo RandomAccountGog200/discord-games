@@ -1,0 +1,1384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>WHY DO YU ChANjw fart?!</title>
+    <style>
+        :root {
+            --bg: #1a1a2e;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Segoe UI', 'Comic Sans MS', sans-serif;
+            touch-action: manipulation;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        canvas {
+            display: block;
+            border-radius: 16px;
+            box-shadow: 0 0 40px rgba(100, 200, 100, 0.3), 0 0 80px rgba(100, 180, 100, 0.15);
+            max-width: 100vw;
+            max-height: 100vh;
+            image-rendering: auto;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+
+            // Internal resolution
+            const W = 640;
+            const H = 480;
+            canvas.width = W;
+            canvas.height = H;
+
+            // Scale to fit
+            function resize() {
+                const scale = Math.min(window.innerWidth / W, window.innerHeight / H);
+                canvas.style.width = (W * scale) + 'px';
+                canvas.style.height = (H * scale) + 'px';
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            // --- AUDIO ENGINE ---
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playFartSound(intensity = 0.5) {
+                if (!audioCtx) return;
+                try {
+                    const now = audioCtx.currentTime;
+                    const dur = 0.25 + intensity * 0.5;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    const filter = audioCtx.createBiquadFilter();
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(180 + intensity * 60, now);
+                    osc.frequency.exponentialRampToValueAtTime(40 + intensity * 40, now + dur);
+                    filter.type = 'lowpass';
+                    filter.frequency.setValueAtTime(600 + intensity * 400, now);
+                    filter.frequency.exponentialRampToValueAtTime(80, now + dur);
+                    filter.Q.value = 3;
+                    gain.gain.setValueAtTime(0.08 + intensity * 0.14, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+                    osc.connect(filter);
+                    filter.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(now);
+                    osc.stop(now + dur + 0.05);
+
+                    // Add noise burst
+                    const bufSize = Math.floor(audioCtx.sampleRate * dur);
+                    const buffer = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+                    const data = buffer.getChannelData(0);
+                    for (let i = 0; i < bufSize; i++) {
+                        data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufSize * 0.3));
+                    }
+                    const noise = audioCtx.createBufferSource();
+                    noise.buffer = buffer;
+                    const noiseGain = audioCtx.createGain();
+                    noiseGain.gain.setValueAtTime(0.03 + intensity * 0.06, now);
+                    noiseGain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+                    const noiseFilter = audioCtx.createBiquadFilter();
+                    noiseFilter.type = 'lowpass';
+                    noiseFilter.frequency.setValueAtTime(300, now);
+                    noiseFilter.frequency.exponentialRampToValueAtTime(60, now + dur);
+                    noise.connect(noiseFilter);
+                    noiseFilter.connect(noiseGain);
+                    noiseGain.connect(audioCtx.destination);
+                    noise.start(now);
+                    noise.stop(now + dur + 0.05);
+                } catch (e) {}
+            }
+
+            function playPopSound() {
+                if (!audioCtx) return;
+                try {
+                    const now = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(300, now);
+                    osc.frequency.exponentialRampToValueAtTime(80, now + 0.1);
+                    gain.gain.setValueAtTime(0.06, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(now);
+                    osc.stop(now + 0.15);
+                } catch (e) {}
+            }
+
+            function playMegaSound() {
+                if (!audioCtx) return;
+                try {
+                    const now = audioCtx.currentTime;
+                    const dur = 0.8;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    const filter = audioCtx.createBiquadFilter();
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(120, now);
+                    osc.frequency.exponentialRampToValueAtTime(25, now + dur);
+                    filter.type = 'lowpass';
+                    filter.frequency.setValueAtTime(500, now);
+                    filter.frequency.exponentialRampToValueAtTime(50, now + dur);
+                    filter.Q.value = 5;
+                    gain.gain.setValueAtTime(0.2, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+                    osc.connect(filter);
+                    filter.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(now);
+                    osc.stop(now + dur + 0.05);
+
+                    // Rumble
+                    const bufSize2 = Math.floor(audioCtx.sampleRate * dur);
+                    const buffer2 = audioCtx.createBuffer(1, bufSize2, audioCtx.sampleRate);
+                    const data2 = buffer2.getChannelData(0);
+                    for (let i = 0; i < bufSize2; i++) {
+                        data2[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufSize2 * 0.4)) * 0.5;
+                    }
+                    const noise2 = audioCtx.createBufferSource();
+                    noise2.buffer = buffer2;
+                    const ng2 = audioCtx.createGain();
+                    ng2.gain.setValueAtTime(0.1, now);
+                    ng2.gain.exponentialRampToValueAtTime(0.001, now + dur);
+                    noise2.connect(ng2);
+                    ng2.connect(audioCtx.destination);
+                    noise2.start(now);
+                    noise2.stop(now + dur + 0.05);
+                } catch (e) {}
+            }
+
+            function playStunSound() {
+                if (!audioCtx) return;
+                try {
+                    const now = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(200, now);
+                    osc.frequency.setValueAtTime(150, now + 0.08);
+                    osc.frequency.setValueAtTime(260, now + 0.16);
+                    gain.gain.setValueAtTime(0.05, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(now);
+                    osc.stop(now + 0.25);
+                } catch (e) {}
+            }
+
+            // --- GAME STATE ---
+            let score = 0;
+            let lives = 3;
+            let pressure = 0; // 0 to 1
+            const PRESSURE_RATE = 0.0035; // fills in ~8 seconds
+            let gameOver = false;
+            let gameStarted = false;
+            let shakeAmount = 0;
+            let comboTimer = 0;
+            let comboCount = 0;
+            let comboText = '';
+            let comboTextTimer = 0;
+            let highScore = parseInt(localStorage.getItem('yuChanJwHighScore') || '0');
+
+            // --- PLAYER ---
+            const player = {
+                x: W / 2,
+                y: H / 2,
+                r: 22,
+                vx: 0,
+                vy: 0,
+                speed: 3.2,
+                facing: 0, // angle
+                bobOffset: 0,
+                bobTimer: 0,
+                farting: false,
+                fartTimer: 0,
+                expression: 'normal', // 'normal', 'relief', 'strain', 'shock'
+                expressionTimer: 0,
+            };
+
+            // --- NPCS ---
+            let npcs = [];
+            const NPC_COLORS = ['#e74c3c', '#3498db', '#9b59b6', '#e67e22', '#1abc9c', '#f39c12', '#2ecc71', '#e91e63',
+                '#00bcd4', '#ff5722', '#795548', '#607d8b'
+            ];
+
+            function spawnNPC() {
+                let x, y;
+                const margin = 50;
+                // Spawn away from player
+                do {
+                    x = margin + Math.random() * (W - margin * 2);
+                    y = margin + Math.random() * (H - margin * 2);
+                } while (Math.hypot(x - player.x, y - player.y) < 120);
+
+                return {
+                    x,
+                    y,
+                    r: 16 + Math.random() * 8,
+                    vx: (Math.random() - 0.5) * 1.5,
+                    vy: (Math.random() - 0.5) * 1.5,
+                    color: NPC_COLORS[Math.floor(Math.random() * NPC_COLORS.length)],
+                    stunned: 0,
+                    stinkLevel: 0,
+                    wanderTimer: 60 + Math.random() * 120,
+                    wanderAngle: Math.random() * Math.PI * 2,
+                    state: 'wander', // 'wander', 'approach', 'stunned', 'flee'
+                    stateTimer: 0,
+                    fleeAngle: 0,
+                };
+            }
+
+            function initNPCs(count) {
+                npcs = [];
+                for (let i = 0; i < count; i++) {
+                    npcs.push(spawnNPC());
+                }
+            }
+            initNPCs(6);
+
+            // --- PARTICLES ---
+            let particles = [];
+
+            function spawnParticles(x, y, count, color, speed, life) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const spd = speed * (0.4 + Math.random() * 0.8);
+                    particles.push({
+                        x,
+                        y,
+                        vx: Math.cos(angle) * spd,
+                        vy: Math.sin(angle) * spd,
+                        life: life * (0.6 + Math.random() * 0.5),
+                        maxLife: life,
+                        color,
+                        r: 1.5 + Math.random() * 3.5,
+                    });
+                }
+            }
+
+            // --- FART CLOUD ---
+            let fartCloud = null; // { x, y, radius, maxRadius, alpha, expanding }
+
+            function createFartCloud(x, y, power) {
+                const maxR = 40 + power * 160;
+                fartCloud = {
+                    x,
+                    y,
+                    radius: 10,
+                    maxRadius: maxR,
+                    alpha: 0.75,
+                    expanding: true,
+                    life: 0.6 + power * 0.6,
+                    maxLife: 0.6 + power * 0.6,
+                    power,
+                };
+                // Spawn initial particles
+                const pCount = Math.floor(20 + power * 50);
+                spawnParticles(x, y, pCount, '#8bc34a', 3 + power * 6, 0.5 + power * 1.2);
+                spawnParticles(x, y, Math.floor(pCount * 0.6), '#cddc39', 2 + power * 5, 0.4 + power * 1);
+                spawnParticles(x, y, Math.floor(pCount * 0.3), '#795548', 1.5 + power * 4, 0.3 + power * 0.8);
+                player.farting = true;
+                player.fartTimer = 0.3;
+                player.expression = 'relief';
+                player.expressionTimer = 0.6;
+                if (power > 0.7) {
+                    shakeAmount = Math.max(shakeAmount, power * 14);
+                }
+            }
+
+            // --- INPUT ---
+            const keys = {};
+            let mouseDown = false;
+            let touchActive = false;
+            let touchMovePos = null;
+            let touchFartPressed = false;
+
+            window.addEventListener('keydown', e => {
+                keys[e.key] = true;
+                if (e.key === ' ' || e.key === 'Spacebar') {
+                    e.preventDefault();
+                    initAudio();
+                    if (!gameStarted && !gameOver) gameStarted = true;
+                    if (!gameOver) triggerFart();
+                }
+                if (!gameStarted && !gameOver) gameStarted = true;
+            });
+            window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+            canvas.addEventListener('mousedown', e => {
+                initAudio();
+                if (!gameStarted && !gameOver) gameStarted = true;
+                if (gameOver) { restartGame(); return; }
+                const rect = canvas.getBoundingClientRect();
+                const sx = (e.clientX - rect.left) / rect.width * W;
+                const sy = (e.clientY - rect.top) / rect.height * H;
+                // Check if clicking fart button area
+                if (sx > W - 80 && sy > H - 80) {
+                    triggerFart();
+                } else {
+                    mouseDown = true;
+                }
+            });
+            canvas.addEventListener('mousemove', e => {
+                if (mouseDown && !gameOver) {
+                    const rect = canvas.getBoundingClientRect();
+                    const sx = (e.clientX - rect.left) / rect.width * W;
+                    const sy = (e.clientY - rect.top) / rect.height * H;
+                    player.x += (sx - player.x) * 0.25;
+                    player.y += (sy - player.y) * 0.25;
+                }
+            });
+            canvas.addEventListener('mouseup', () => { mouseDown = false; });
+            canvas.addEventListener('mouseleave', () => { mouseDown = false; });
+
+            canvas.addEventListener('touchstart', e => {
+                e.preventDefault();
+                initAudio();
+                if (!gameStarted && !gameOver) gameStarted = true;
+                if (gameOver) { restartGame(); return; }
+                const rect = canvas.getBoundingClientRect();
+                for (const touch of e.changedTouches) {
+                    const sx = (touch.clientX - rect.left) / rect.width * W;
+                    const sy = (touch.clientY - rect.top) / rect.height * H;
+                    if (sx > W - 90 && sy > H - 90) {
+                        touchFartPressed = true;
+                        triggerFart();
+                    } else {
+                        touchActive = true;
+                        touchMovePos = { x: sx, y: sy };
+                    }
+                }
+            }, { passive: false });
+            canvas.addEventListener('touchmove', e => {
+                e.preventDefault();
+                if (gameOver) return;
+                const rect = canvas.getBoundingClientRect();
+                for (const touch of e.changedTouches) {
+                    const sx = (touch.clientX - rect.left) / rect.width * W;
+                    const sy = (touch.clientY - rect.top) / rect.height * H;
+                    if (!(sx > W - 90 && sy > H - 90)) {
+                        touchMovePos = { x: sx, y: sy };
+                    }
+                }
+            }, { passive: false });
+            canvas.addEventListener('touchend', e => {
+                e.preventDefault();
+                touchFartPressed = false;
+                // Check if all touches ended
+                if (e.touches.length === 0) {
+                    touchActive = false;
+                    touchMovePos = null;
+                }
+            }, { passive: false });
+
+            function triggerFart() {
+                if (gameOver) return;
+                if (fartCloud && fartCloud.expanding && fartCloud.life > fartCloud.maxLife * 0.5) return; // still
+                // in active fart
+                const power = Math.max(0.1, pressure);
+                createFartCloud(player.x, player.y, power);
+                if (power >= 0.95) {
+                    // Mega fart!
+                    playMegaSound();
+                    lives--;
+                    shakeAmount = 18;
+                    spawnParticles(player.x, player.y, 80, '#ff9800', 8, 1.5);
+                    spawnParticles(player.x, player.y, 60, '#f44336', 6, 1.2);
+                    comboCount = 0;
+                    if (lives <= 0) {
+                        gameOver = true;
+                        if (score > highScore) {
+                            highScore = score;
+                            localStorage.setItem('yuChanJwHighScore', highScore);
+                        }
+                    }
+                } else if (power > 0.6) {
+                    playFartSound(0.8);
+                } else if (power > 0.25) {
+                    playFartSound(0.5);
+                } else {
+                    playFartSound(0.25);
+                }
+                pressure = 0;
+                comboCount = 0;
+                comboTimer = 90;
+            }
+
+            function restartGame() {
+                score = 0;
+                lives = 3;
+                pressure = 0;
+                gameOver = false;
+                gameStarted = true;
+                player.x = W / 2;
+                player.y = H / 2;
+                player.vx = 0;
+                player.vy = 0;
+                player.expression = 'normal';
+                player.expressionTimer = 0;
+                player.farting = false;
+                player.fartTimer = 0;
+                fartCloud = null;
+                particles = [];
+                shakeAmount = 0;
+                comboCount = 0;
+                comboTimer = 0;
+                comboText = '';
+                comboTextTimer = 0;
+                initNPCs(6);
+            }
+
+            // --- UPDATE ---
+            function update() {
+                if (gameOver) return;
+                if (!gameStarted) return;
+
+                // Player movement
+                let mx = 0,
+                    my = 0;
+                if (keys['ArrowLeft'] || keys['a'] || keys['A']) mx -= 1;
+                if (keys['ArrowRight'] || keys['d'] || keys['D']) mx += 1;
+                if (keys['ArrowUp'] || keys['w'] || keys['W']) my -= 1;
+                if (keys['ArrowDown'] || keys['s'] || keys['S']) my += 1;
+
+                // Touch movement
+                if (touchActive && touchMovePos && !gameOver) {
+                    const dx = touchMovePos.x - player.x;
+                    const dy = touchMovePos.y - player.y;
+                    const dist = Math.hypot(dx, dy);
+                    if (dist > 3) {
+                        const spd = Math.min(player.speed, dist * 0.2);
+                        mx = (dx / dist) * (spd / player.speed);
+                        my = (dy / dist) * (spd / player.speed);
+                    }
+                }
+
+                if (mx !== 0 || my !== 0) {
+                    const mag = Math.hypot(mx, my);
+                    if (mag > 1) { mx /= mag;
+                        my /= mag; }
+                    player.vx = mx * player.speed;
+                    player.vy = my * player.speed;
+                    player.facing = Math.atan2(my, mx);
+                } else {
+                    player.vx *= 0.85;
+                    player.vy *= 0.85;
+                }
+
+                player.x += player.vx;
+                player.y += player.vy;
+                const margin = player.r + 10;
+                player.x = Math.max(margin, Math.min(W - margin, player.x));
+                player.y = Math.max(margin + 30, Math.min(H - margin, player.y));
+
+                // Bob animation
+                player.bobTimer += 0.06;
+                player.bobOffset = Math.sin(player.bobTimer) * 2.5;
+                if (Math.abs(player.vx) < 0.3 && Math.abs(player.vy) < 0.3) {
+                    player.bobOffset *= 0.5;
+                }
+
+                // Expression timer
+                if (player.expressionTimer > 0) {
+                    player.expressionTimer -= 0.016;
+                    if (player.expressionTimer <= 0 && player.expression === 'relief') {
+                        player.expression = 'normal';
+                    }
+                }
+
+                // Fart timer
+                if (player.fartTimer > 0) {
+                    player.fartTimer -= 0.016;
+                    if (player.fartTimer <= 0) player.farting = false;
+                }
+
+                // Pressure
+                if (!fartCloud || !fartCloud.expanding || fartCloud.life < fartCloud.maxLife * 0.3) {
+                    pressure += PRESSURE_RATE;
+                    if (pressure >= 1.0) {
+                        pressure = 1.0;
+                        // Auto mega-fart
+                        triggerFart();
+                    }
+                }
+
+                // Combo timer
+                if (comboTimer > 0) {
+                    comboTimer--;
+                    if (comboTimer <= 0) comboCount = 0;
+                }
+
+                // Combo text timer
+                if (comboTextTimer > 0) comboTextTimer--;
+
+                // Shake
+                if (shakeAmount > 0) shakeAmount *= 0.85;
+                if (shakeAmount < 0.3) shakeAmount = 0;
+
+                // Update fart cloud
+                if (fartCloud) {
+                    if (fartCloud.expanding) {
+                        fartCloud.radius += (fartCloud.maxRadius - fartCloud.radius) * 0.3;
+                        if (fartCloud.radius >= fartCloud.maxRadius * 0.95) {
+                            fartCloud.radius = fartCloud.maxRadius;
+                            fartCloud.expanding = false;
+                        }
+                    }
+                    fartCloud.life -= 0.016;
+                    if (fartCloud.life <= 0) {
+                        fartCloud = null;
+                    } else {
+                        fartCloud.alpha = Math.max(0, fartCloud.life / fartCloud.maxLife * 0.7);
+                    }
+                    // Check NPCs in cloud
+                    if (fartCloud.expanding || fartCloud.life > fartCloud.maxLife * 0.4) {
+                        for (const npc of npcs) {
+                            const dist = Math.hypot(npc.x - fartCloud.x, npc.y - fartCloud.y);
+                            if (dist < fartCloud.radius + npc.r && npc.stunned <= 0 && npc.state !== 'stunned') {
+                                npc.stunned = 1.5 + fartCloud.power * 2.5;
+                                npc.state = 'stunned';
+                                npc.stinkLevel = 1;
+                                npc.stateTimer = npc.stunned;
+                                comboCount++;
+                                score += 10 * comboCount;
+                                playStunSound();
+                                if (comboCount >= 3 && comboTextTimer <= 0) {
+                                    comboText = comboCount >= 6 ? 'MEGA COMBO!!' : comboCount >= 4 ? 'SUPER COMBO!' :
+                                        'COMBO!';
+                                    comboTextTimer = 90;
+                                    spawnParticles(npc.x, npc.y, 15, '#ffeb3b', 3, 0.6);
+                                }
+                                spawnParticles(npc.x, npc.y, 8, '#8bc34a', 2, 0.4);
+                            }
+                        }
+                    }
+                }
+
+                // Update NPCs
+                const targetNPCcount = 5 + Math.floor(score / 120);
+                const maxNPCs = Math.min(14, targetNPCcount);
+                while (npcs.length < maxNPCs) {
+                    npcs.push(spawnNPC());
+                }
+                // Remove excess if needed (rare)
+                while (npcs.length > maxNPCs + 2) {
+                    npcs.pop();
+                }
+
+                for (const npc of npcs) {
+                    if (npc.stunned > 0) {
+                        npc.stunned -= 0.016;
+                        npc.stinkLevel = Math.max(0, npc.stunned / (1.5 + 2.5));
+                        if (npc.stunned <= 0) {
+                            npc.stunned = 0;
+                            npc.state = 'flee';
+                            npc.stateTimer = 2 + Math.random() * 2;
+                            npc.fleeAngle = Math.atan2(npc.y - player.y, npc.x - player.x);
+                            npc.stinkLevel = 0;
+                        }
+                    } else {
+                        npc.stinkLevel = Math.max(0, npc.stinkLevel - 0.02);
+                    }
+
+                    // State machine
+                    if (npc.state === 'stunned') {
+                        npc.vx *= 0.8;
+                        npc.vy *= 0.8;
+                    } else if (npc.state === 'flee') {
+                        npc.stateTimer -= 0.016;
+                        const fleeSpeed = 2.5;
+                        npc.vx += Math.cos(npc.fleeAngle) * fleeSpeed * 0.15;
+                        npc.vy += Math.sin(npc.fleeAngle) * fleeSpeed * 0.15;
+                        npc.vx *= 0.92;
+                        npc.vy *= 0.92;
+                        if (npc.stateTimer <= 0) {
+                            npc.state = 'wander';
+                            npc.wanderTimer = 60 + Math.random() * 120;
+                        }
+                    } else if (npc.state === 'wander') {
+                        npc.wanderTimer--;
+                        const distToPlayer = Math.hypot(npc.x - player.x, npc.y - player.y);
+                        if (distToPlayer < 250 && Math.random() < 0.008) {
+                            npc.state = 'approach';
+                            npc.stateTimer = 80 + Math.random() * 100;
+                        }
+                        if (npc.wanderTimer <= 0) {
+                            npc.wanderAngle = Math.random() * Math.PI * 2;
+                            npc.wanderTimer = 60 + Math.random() * 150;
+                        }
+                        const wanderSpeed = 0.6;
+                        npc.vx += Math.cos(npc.wanderAngle) * wanderSpeed * 0.08;
+                        npc.vy += Math.sin(npc.wanderAngle) * wanderSpeed * 0.08;
+                        npc.vx *= 0.94;
+                        npc.vy *= 0.94;
+                    } else if (npc.state === 'approach') {
+                        npc.stateTimer--;
+                        const dx = player.x - npc.x;
+                        const dy = player.y - npc.y;
+                        const dist = Math.hypot(dx, dy) || 1;
+                        const approachSpeed = 1.2;
+                        npc.vx += (dx / dist) * approachSpeed * 0.06;
+                        npc.vy += (dy / dist) * approachSpeed * 0.06;
+                        npc.vx *= 0.93;
+                        npc.vy *= 0.93;
+                        if (npc.stateTimer <= 0 || dist < 40) {
+                            npc.state = 'wander';
+                            npc.wanderTimer = 40 + Math.random() * 80;
+                            if (dist < 40) npc.wanderAngle = Math.atan2(npc.y - player.y, npc.x - player.x);
+                        }
+                    }
+
+                    // Apply velocity
+                    npc.x += npc.vx;
+                    npc.y += npc.vy;
+                    const nm = npc.r + 8;
+                    npc.x = Math.max(nm, Math.min(W - nm, npc.x));
+                    npc.y = Math.max(nm + 30, Math.min(H - nm, npc.y));
+
+                    // Bounce off walls
+                    if (npc.x <= nm || npc.x >= W - nm) npc.vx *= -0.7;
+                    if (npc.y <= nm + 30 || npc.y >= H - nm) npc.vy *= -0.7;
+
+                    // Check collision with player
+                    const pDist = Math.hypot(npc.x - player.x, npc.y - player.y);
+                    if (pDist < player.r + npc.r - 4 && npc.state !== 'stunned') {
+                        // Push player and NPC apart
+                        const angle = Math.atan2(player.y - npc.y, player.x - npc.x);
+                        const overlap = (player.r + npc.r - 4) - pDist;
+                        player.x += Math.cos(angle) * overlap * 0.6;
+                        player.y += Math.sin(angle) * overlap * 0.6;
+                        npc.x -= Math.cos(angle) * overlap * 0.4;
+                        npc.y -= Math.sin(angle) * overlap * 0.4;
+                        // Increase pressure slightly (nervousness)
+                        pressure = Math.min(1, pressure + 0.004);
+                        if (npc.state === 'approach') {
+                            npc.state = 'flee';
+                            npc.stateTimer = 1.5;
+                            npc.fleeAngle = angle + Math.PI;
+                        }
+                    }
+                }
+
+                // Update particles
+                for (const p of particles) {
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.life -= 0.016;
+                    p.vx *= 0.97;
+                    p.vy *= 0.97;
+                    p.vy += 0.05; // slight gravity
+                }
+                particles = particles.filter(p => p.life > 0);
+
+                // Clamp player again after collisions
+                player.x = Math.max(margin, Math.min(W - margin, player.x));
+                player.y = Math.max(margin + 30, Math.min(H - margin, player.y));
+            }
+
+            // --- RENDER ---
+            function drawPlayer() {
+                ctx.save();
+                const px = player.x;
+                const py = player.y + player.bobOffset;
+                const r = player.r;
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                ctx.beginPath();
+                ctx.ellipse(px, py + r * 0.7, r * 0.7, r * 0.25, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body
+                const bodyGrad = ctx.createRadialGradient(px - r * 0.3, py - r * 0.3, r * 0.1, px, py, r);
+                bodyGrad.addColorStop(0, '#ffcc80');
+                bodyGrad.addColorStop(0.7, '#ff9800');
+                bodyGrad.addColorStop(1, '#e65100');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.arc(px, py, r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#bf360c';
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+
+                // Highlight
+                ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                ctx.beginPath();
+                ctx.arc(px - r * 0.3, py - r * 0.35, r * 0.35, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Face - depends on expression
+                const eyeY = py - r * 0.2;
+                const eyeSpacing = r * 0.45;
+
+                // Eyes
+                if (player.expression === 'relief') {
+                    // Happy/relieved eyes (curved)
+                    ctx.strokeStyle = '#3e2723';
+                    ctx.lineWidth = 2.5;
+                    ctx.lineCap = 'round';
+                    ctx.beginPath();
+                    ctx.arc(px - eyeSpacing, eyeY, r * 0.15, Math.PI * 0.1, Math.PI * 0.9);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.arc(px + eyeSpacing, eyeY, r * 0.15, Math.PI * 0.1, Math.PI * 0.9);
+                    ctx.stroke();
+                } else if (player.expression === 'strain') {
+                    // Squeezed eyes
+                    ctx.strokeStyle = '#3e2723';
+                    ctx.lineWidth = 2;
+                    ctx.lineCap = 'round';
+                    ctx.beginPath();
+                    ctx.moveTo(px - eyeSpacing - r * 0.1, eyeY - r * 0.08);
+                    ctx.lineTo(px - eyeSpacing + r * 0.1, eyeY + r * 0.08);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(px + eyeSpacing - r * 0.1, eyeY + r * 0.08);
+                    ctx.lineTo(px + eyeSpacing + r * 0.1, eyeY - r * 0.08);
+                    ctx.stroke();
+                } else if (player.expression === 'shock') {
+                    // Wide eyes
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(px - eyeSpacing, eyeY, r * 0.2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(px + eyeSpacing, eyeY, r * 0.2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#111';
+                    ctx.beginPath();
+                    ctx.arc(px - eyeSpacing, eyeY, r * 0.08, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(px + eyeSpacing, eyeY, r * 0.08, 0, Math.PI * 2);
+                    ctx.fill();
+                } else {
+                    // Normal eyes
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(px - eyeSpacing, eyeY, r * 0.18, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(px + eyeSpacing, eyeY, r * 0.18, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#111';
+                    ctx.beginPath();
+                    ctx.arc(px - eyeSpacing + r * 0.04, eyeY, r * 0.07, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(px + eyeSpacing + r * 0.04, eyeY, r * 0.07, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Mouth
+                const mouthY = py + r * 0.3;
+                ctx.strokeStyle = '#3e2723';
+                ctx.lineWidth = 2;
+                ctx.lineCap = 'round';
+                if (player.expression === 'relief') {
+                    ctx.beginPath();
+                    ctx.arc(px, mouthY - r * 0.1, r * 0.22, 0, Math.PI);
+                    ctx.stroke();
+                } else if (player.expression === 'strain') {
+                    ctx.beginPath();
+                    ctx.moveTo(px - r * 0.15, mouthY);
+                    ctx.lineTo(px + r * 0.15, mouthY);
+                    ctx.stroke();
+                } else if (player.expression === 'shock') {
+                    ctx.beginPath();
+                    ctx.arc(px, mouthY + r * 0.1, r * 0.16, 0, Math.PI * 2);
+                    ctx.fillStyle = '#3e2723';
+                    ctx.fill();
+                } else {
+                    ctx.beginPath();
+                    ctx.arc(px, mouthY - r * 0.05, r * 0.12, 0.05, Math.PI - 0.05);
+                    ctx.stroke();
+                }
+
+                // Blush
+                if (player.expression === 'relief' || player.farting) {
+                    ctx.fillStyle = 'rgba(255,150,150,0.5)';
+                    ctx.beginPath();
+                    ctx.ellipse(px - r * 0.7, py + r * 0.1, r * 0.2, r * 0.12, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.ellipse(px + r * 0.7, py + r * 0.1, r * 0.2, r * 0.12, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Fart visual (small puff near bottom when farting)
+                if (player.farting && player.fartTimer > 0.1) {
+                    const puffY = py + r + 4;
+                    ctx.fillStyle = 'rgba(180,220,140,0.7)';
+                    ctx.beginPath();
+                    ctx.arc(px - 6, puffY, 10 + Math.random() * 4, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(px + 6, puffY + 3, 8 + Math.random() * 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = 'rgba(200,230,160,0.5)';
+                    ctx.beginPath();
+                    ctx.arc(px, puffY - 2, 12 + Math.random() * 5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                ctx.restore();
+            }
+
+            function drawNPC(npc) {
+                ctx.save();
+                const x = npc.x;
+                const y = npc.y;
+                const r = npc.r;
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.15)';
+                ctx.beginPath();
+                ctx.ellipse(x, y + r * 0.6, r * 0.6, r * 0.2, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body color (green if stunned/stinky)
+                let bodyColor = npc.color;
+                if (npc.stinkLevel > 0.1) {
+                    const t = npc.stinkLevel;
+                    const orig = hexToRgb(npc.color);
+                    const green = { r: 139, g: 195, b: 74 };
+                    const r2 = Math.round(orig.r + (green.r - orig.r) * t);
+                    const g2 = Math.round(orig.g + (green.g - orig.g) * t);
+                    const b2 = Math.round(orig.b + (green.b - orig.b) * t);
+                    bodyColor = `rgb(${r2},${g2},${b2})`;
+                }
+
+                const bodyGrad = ctx.createRadialGradient(x - r * 0.25, y - r * 0.25, r * 0.05, x, y, r);
+                bodyGrad.addColorStop(0, lightenColor(bodyColor, 30));
+                bodyGrad.addColorStop(1, bodyColor);
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.arc(x, y, r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Eyes
+                const eyeY = y - r * 0.2;
+                const eyeSp = r * 0.4;
+                if (npc.stunned > 0) {
+                    // X eyes
+                    ctx.strokeStyle = '#333';
+                    ctx.lineWidth = 2;
+                    ctx.lineCap = 'round';
+                    const s = r * 0.12;
+                    ctx.beginPath();
+                    ctx.moveTo(x - eyeSp - s, eyeY - s);
+                    ctx.lineTo(x - eyeSp + s, eyeY + s);
+                    ctx.moveTo(x - eyeSp + s, eyeY - s);
+                    ctx.lineTo(x - eyeSp - s, eyeY + s);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(x + eyeSp - s, eyeY - s);
+                    ctx.lineTo(x + eyeSp + s, eyeY + s);
+                    ctx.moveTo(x + eyeSp + s, eyeY - s);
+                    ctx.lineTo(x + eyeSp - s, eyeY + s);
+                    ctx.stroke();
+                } else {
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(x - eyeSp, eyeY, r * 0.2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(x + eyeSp, eyeY, r * 0.2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#222';
+                    ctx.beginPath();
+                    ctx.arc(x - eyeSp + r * 0.03, eyeY, r * 0.07, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(x + eyeSp + r * 0.03, eyeY, r * 0.07, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Mouth
+                const mouthY = y + r * 0.25;
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 1.5;
+                ctx.lineCap = 'round';
+                if (npc.stunned > 0) {
+                    // Wavy mouth
+                    ctx.beginPath();
+                    ctx.moveTo(x - r * 0.2, mouthY);
+                    ctx.quadraticCurveTo(x - r * 0.1, mouthY + r * 0.15, x, mouthY);
+                    ctx.quadraticCurveTo(x + r * 0.1, mouthY - r * 0.15, x + r * 0.2, mouthY);
+                    ctx.stroke();
+                } else {
+                    ctx.beginPath();
+                    ctx.arc(x, mouthY, r * 0.1, 0, Math.PI);
+                    ctx.stroke();
+                }
+
+                // Stink lines
+                if (npc.stinkLevel > 0.05) {
+                    ctx.strokeStyle = `rgba(120,160,60,${npc.stinkLevel})`;
+                    ctx.lineWidth = 2;
+                    ctx.lineCap = 'round';
+                    const lineCount = Math.floor(npc.stinkLevel * 5);
+                    for (let i = 0; i < lineCount; i++) {
+                        const sx = x - r * 0.5 + i * r * 0.3;
+                        const sy = y - r - 5;
+                        const wave = Math.sin(Date.now() / 150 + i + npc.x) * 6;
+                        ctx.beginPath();
+                        ctx.moveTo(sx, sy);
+                        ctx.quadraticCurveTo(sx + wave, sy - 10, sx + wave * 0.5, sy - 18);
+                        ctx.stroke();
+                    }
+                }
+
+                ctx.restore();
+            }
+
+            function hexToRgb(hex) {
+                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                return result ? {
+                    r: parseInt(result[1], 16),
+                    g: parseInt(result[2], 16),
+                    b: parseInt(result[3], 16)
+                } : { r: 128, g: 128, b: 128 };
+            }
+
+            function lightenColor(hex, percent) {
+                const { r, g, b } = hexToRgb(hex);
+                const lighten = (c) => Math.min(255, c + Math.floor((255 - c) * percent / 100));
+                return `rgb(${lighten(r)},${lighten(g)},${lighten(b)})`;
+            }
+
+            function drawFartCloud() {
+                if (!fartCloud) return;
+                const { x, y, radius, alpha, life, maxLife, power } = fartCloud;
+                const progress = 1 - (life / maxLife);
+
+                // Main cloud
+                const grad = ctx.createRadialGradient(x, y, radius * 0.3, x, y, radius);
+                const alphaStr = alpha;
+                grad.addColorStop(0, `rgba(200,230,150,${alphaStr * 0.9})`);
+                grad.addColorStop(0.5, `rgba(160,210,100,${alphaStr * 0.6})`);
+                grad.addColorStop(0.8, `rgba(120,170,60,${alphaStr * 0.3})`);
+                grad.addColorStop(1, `rgba(100,140,40,0)`);
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                // Wavy edge
+                const waveCount = Math.floor(radius / 12);
+                const waveAmp = radius * 0.08;
+                for (let i = 0; i < waveCount * 2; i++) {
+                    const angle = (i / (waveCount * 2)) * Math.PI * 2;
+                    const r = radius + Math.sin(angle * waveCount + Date.now() * 0.003) * waveAmp;
+                    const px = x + Math.cos(angle) * r;
+                    const py = y + Math.sin(angle) * r;
+                    if (i === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                }
+                ctx.closePath();
+                ctx.fill();
+
+                // Inner bright core
+                if (life > maxLife * 0.2) {
+                    const coreGrad = ctx.createRadialGradient(x, y, 0, x, y, radius * 0.5);
+                    coreGrad.addColorStop(0, `rgba(230,255,180,${alphaStr * 0.7})`);
+                    coreGrad.addColorStop(1, `rgba(180,220,130,0)`);
+                    ctx.fillStyle = coreGrad;
+                    ctx.beginPath();
+                    ctx.arc(x, y, radius * 0.5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function drawParticles() {
+                for (const p of particles) {
+                    const alpha = p.life / p.maxLife;
+                    ctx.fillStyle = p.color.replace(')', `,${alpha})`).replace('rgb',
+                        'rgba');
+                    if (p.color.startsWith('#')) {
+                        ctx.fillStyle = p.color;
+                        ctx.globalAlpha = alpha;
+                    }
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.r * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+            }
+
+            function drawPressureMeter() {
+                const barX = 20;
+                const barY = 12;
+                const barW = W - 40;
+                const barH = 16;
+                const borderRadius = 8;
+
+                // Background
+                ctx.fillStyle = 'rgba(0,0,0,0.4)';
+                ctx.beginPath();
+                ctx.roundRect(barX - 2, barY - 2, barW + 4, barH + 4, borderRadius + 2);
+                ctx.fill();
+
+                // Empty bar
+                ctx.fillStyle = '#333';
+                ctx.beginPath();
+                ctx.roundRect(barX, barY, barW, barH, borderRadius);
+                ctx.fill();
+
+                // Fill
+                const fillW = barW * pressure;
+                if (fillW > 2) {
+                    let fillGrad;
+                    if (pressure < 0.4) {
+                        fillGrad = ctx.createLinearGradient(barX, 0, barX + barW * 0.4, 0);
+                        fillGrad.addColorStop(0, '#4caf50');
+                        fillGrad.addColorStop(1, '#8bc34a');
+                    } else if (pressure < 0.7) {
+                        fillGrad = ctx.createLinearGradient(barX + barW * 0.3, 0, barX + barW * 0.7, 0);
+                        fillGrad.addColorStop(0, '#ffc107');
+                        fillGrad.addColorStop(1, '#ff9800');
+                    } else if (pressure < 0.95) {
+                        fillGrad = ctx.createLinearGradient(barX + barW * 0.6, 0, barX + barW, 0);
+                        fillGrad.addColorStop(0, '#ff5722');
+                        fillGrad.addColorStop(1, '#f44336');
+                    } else {
+                        fillGrad = ctx.createLinearGradient(barX + barW * 0.7, 0, barX + barW, 0);
+                        fillGrad.addColorStop(0, '#f44336');
+                        fillGrad.addColorStop(1, '#d32f2f');
+                    }
+                    ctx.fillStyle = fillGrad;
+                    ctx.beginPath();
+                    ctx.roundRect(barX, barY, fillW, barH, borderRadius);
+                    ctx.fill();
+
+                    // Pulse at high pressure
+                    if (pressure > 0.85) {
+                        const pulse = Math.sin(Date.now() * 0.015) * 0.3 + 0.7;
+                        ctx.fillStyle = `rgba(255,255,200,${pulse * 0.5})`;
+                        ctx.beginPath();
+                        ctx.roundRect(barX, barY, fillW, barH, borderRadius);
+                        ctx.fill();
+                    }
+                }
+
+                // Label
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 10px "Segoe UI", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('FART PRESSURE', barX + barW / 2, barY + barH / 2 + 3.5);
+                ctx.textAlign = 'start';
+
+                // Warning at high pressure
+                if (pressure > 0.85) {
+                    const pulseAlpha = Math.sin(Date.now() * 0.02) * 0.4 + 0.6;
+                    ctx.fillStyle = `rgba(255,60,60,${pulseAlpha})`;
+                    ctx.font = 'bold 11px "Segoe UI", sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('⚠ DANGER! ⚠', barX + barW / 2, barY - 6);
+                    ctx.textAlign = 'start';
+                }
+            }
+
+            function drawUI() {
+                // Score
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 20px "Segoe UI", "Comic Sans MS", sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText(`Score: ${score}`, 20, 58);
+
+                // High score
+                ctx.fillStyle = '#ffd54f';
+                ctx.font = 'bold 13px "Segoe UI", sans-serif';
+                ctx.fillText(`Best: ${highScore}`, 22, 78);
+
+                // Lives
+                ctx.textAlign = 'right';
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 20px "Segoe UI", "Comic Sans MS", sans-serif';
+                let heartsStr = '';
+                for (let i = 0; i < lives; i++) heartsStr += '❤️ ';
+                ctx.fillText(heartsStr.trim(), W - 20, 58);
+                ctx.textAlign = 'start';
+
+                // Combo text
+                if (comboTextTimer > 0) {
+                    const alpha = Math.min(1, comboTextTimer / 40);
+                    const scale = 1 + (1 - alpha) * 0.3;
+                    ctx.save();
+                    ctx.fillStyle = `rgba(255,235,59,${alpha})`;
+                    ctx.font = `bold ${Math.floor(28*scale)}px "Comic Sans MS", "Segoe UI", sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.strokeStyle = `rgba(0,0,0,${alpha*0.5})`;
+                    ctx.lineWidth = 3;
+                    ctx.strokeText(comboText, W / 2, H / 2 - 60);
+                    ctx.fillText(comboText, W / 2, H / 2 - 60);
+                    ctx.textAlign = 'start';
+                    ctx.restore();
+                }
+            }
+
+            function drawFartButton() {
+                const bx = W - 70;
+                const by = H - 70;
+                const br = 32;
+
+                // Glow
+                const glowGrad = ctx.createRadialGradient(bx, by, br * 0.5, bx, by, br * 1.6);
+                glowGrad.addColorStop(0, 'rgba(150,220,100,0.5)');
+                glowGrad.addColorStop(1, 'rgba(150,220,100,0)');
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(bx, by, br * 1.6, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Button
+                const btnGrad = ctx.createRadialGradient(bx - br * 0.2, by - br * 0.3, br * 0.1, bx, by, br);
+                btnGrad.addColorStop(0, '#a5d6a7');
+                btnGrad.addColorStop(0.7, '#4caf50');
+                btnGrad.addColorStop(1, '#2e7d32');
+                ctx.fillStyle = btnGrad;
+                ctx.beginPath();
+                ctx.arc(bx, by, br, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#1b5e20';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+
+                // Text
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 15px "Comic Sans MS", "Segoe UI", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('FART!', bx, by + 5);
+                ctx.textAlign = 'start';
+
+                // Small cloud icon
+                ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                ctx.beginPath();
+                ctx.arc(bx - 10, by - 18, 7, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(bx + 4, by - 22, 9, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(bx + 12, by - 14, 6, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            function drawBackground() {
+                // Room floor
+                const floorY = H - 40;
+                ctx.fillStyle = '#e8dcc8';
+                ctx.fillRect(0, 0, W, H);
+
+                // Floor boards
+                ctx.fillStyle = '#d4c4a8';
+                ctx.fillRect(0, floorY, W, H - floorY);
+                ctx.strokeStyle = '#c4b498';
+                ctx.lineWidth = 1;
+                for (let i = 0; i < W; i += 45) {
+                    ctx.beginPath();
+                    ctx.moveTo(i, floorY);
+                    ctx.lineTo(i, H);
+                    ctx.stroke();
+                }
+                ctx.strokeStyle = '#bfae90';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, floorY);
+                ctx.lineTo(W, floorY);
+                ctx.stroke();
+
+                // Wall baseboard
+                ctx.fillStyle = '#c9b896';
+                ctx.fillRect(0, floorY - 8, W, 8);
+
+                // Subtle wall pattern
+                ctx.fillStyle = 'rgba(0,0,0,0.015)';
+                for (let i = 20; i < W; i += 60) {
+                    for (let j = 20; j < floorY - 20; j += 60) {
+                        ctx.fillRect(i, j, 40, 40);
+                    }
+                }
+
+                // Top bar background
+                ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                ctx.fillRect(0, 0, W, 38);
+                ctx.fillStyle = 'rgba(0,0,0,0.35)';
+                ctx.fillRect(0, 38, W, 52);
+            }
+
+            function drawGameOver() {
+                // Overlay
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, W, H);
+
+                // Panel
+                const px = W / 2 - 160;
+                const py = H / 2 - 110;
+                ctx.fillStyle = '#2c2c3e';
+                ctx.strokeStyle = '#ff9800';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.roundRect(px, py, 320, 220, 20);
+                ctx.fill();
+                ctx.stroke();
+
+                // Title
+                ctx.fillStyle = '#ff9800';
+                ctx.font = 'bold 28px "Comic Sans MS", "Segoe UI", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER!', W / 2, py + 45);
+
+                // Score
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 20px "Segoe UI", sans-serif';
+                ctx.fillText(`Score: ${score}`, W / 2, py + 85);
+                if (score >= highScore && score > 0) {
+                    ctx.fillStyle = '#ffd54f';
+                    ctx.font = 'bold 18px "Segoe UI", sans-serif';
+                    ctx.fillText('🏆 NEW HIGH SCORE! 🏆', W / 2, py + 112);
+                } else {
+                    ctx.fillStyle = '#aaa';
+                    ctx.font = '14px "Segoe UI", sans-serif';
+                    ctx.fillText(`High Score: ${highScore}`, W / 2, py + 112);
+                }
+
+                // Restart
+                ctx.fillStyle = '#4caf50';
+                ctx.font = 'bold 18px "Segoe UI", "Comic Sans MS", sans-serif';
+                ctx.fillText('TAP or CLICK to RESTART', W / 2, py + 160);
+
+                // Emoji
+                ctx.font = '40px sans-serif';
+                ctx.fillText('💨😷', W / 2, py + 195);
+                ctx.textAlign = 'start';
+            }
+
+            function drawInstructions() {
+                if (gameStarted || gameOver) return;
+                const alpha = 0.85 + Math.sin(Date.now() * 0.003) * 0.1;
+                ctx.fillStyle = `rgba(0,0,0,${alpha*0.6})`;
+                ctx.fillRect(0, H / 2 - 70, W, 140);
+
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 22px "Comic Sans MS", "Segoe UI", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('WHY DO YU ChANjw fart?!', W / 2, H / 2 - 25);
+                ctx.fillStyle = '#ddd';
+                ctx.font = '15px "Segoe UI", sans-serif';
+                ctx.fillText('Move: Arrow Keys / Drag  |  Fart: SPACE or Button', W / 2, H / 2 + 12);
+                ctx.fillText('Avoid people! Time your farts! 💨', W / 2, H / 2 + 38);
+                ctx.fillText('Tap anywhere to START', W / 2, H / 2 + 65);
+                ctx.textAlign = 'start';
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, W, H);
+
+                // Apply screen shake
+                ctx.save();
+                if (shakeAmount > 0.5) {
+                    const sx = (Math.random() - 0.5) * shakeAmount * 2;
+                    const sy = (Math.random() - 0.5) * shakeAmount * 2;
+                    ctx.translate(sx, sy);
+                }
+
+                drawBackground();
+                drawFartCloud();
+
+                // Draw NPCs (behind player if close, but generally OK)
+                for (const npc of npcs) {
+                    drawNPC(npc);
+                }
+
+                drawParticles();
+                drawPlayer();
+
+                ctx.restore(); // Restore after shake
+
+                // UI elements (not affected by shake)
+                drawPressureMeter();
+                drawUI();
+                drawFartButton();
+                drawInstructions();
+                if (gameOver) drawGameOver();
+
+                // Title at top center
+                if (!gameOver && gameStarted) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+                    ctx.font = 'bold 13px "Comic Sans MS", "Segoe UI", sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('WHY DO YU ChANjw fart?!', W / 2, 100);
+                    ctx.textAlign = 'start';
+                }
+            }
+
+            // --- GAME LOOP ---
+            function gameLoop() {
+                update();
+                render();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // Handle click on game over
+            canvas.addEventListener('click', e => {
+                if (gameOver) {
+                    initAudio();
+                    restartGame();
+                }
+            });
+            canvas.addEventListener('touchstart', e => {
+                if (gameOver) {
+                    e.preventDefault();
+                    initAudio();
+                    restartGame();
+                }
+            }, { passive: false });
+
+            // Initial resize
+            resize();
+            window.addEventListener('resize', resize);
+
+            // Start loop
+            gameLoop();
+
+            // Log
+            console.log('💨 WHY DO YU ChANjw fart?! - Game ready!');
+            console.log('Move with arrow keys or drag, press SPACE or tap FART button to fart!');
+            console.log('Manage your pressure meter and strategically gas the approaching NPCs!');
+        })();
+    </script>
+</body>
+</html>
