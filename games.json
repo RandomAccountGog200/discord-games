@@ -277,5 +277,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T04:57:02.785Z",
     "updatedAt": "2026-07-16T04:57:02.785Z"
+  },
+  {
+    "slug": "ai-balls-fall-on-kai",
+    "title": "AI Balls Fall on Kai",
+    "description": "ai balls fall on kai",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T04:59:12.114Z",
+    "updatedAt": "2026-07-16T04:59:12.114Z"
   }
 ]
