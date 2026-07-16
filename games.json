@@ -43,5 +43,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-15T23:10:57.697Z",
     "updatedAt": "2026-07-15T23:10:57.697Z"
+  },
+  {
+    "slug": "cheese-ballon-dor-37",
+    "title": "🥇 Cheese Ballon Dor 37",
+    "description": "a game where you touch a ballon dor 37 times to make money on the strite because 7000 people want you to eat cheese",
+    "creator": "burger778",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T04:13:30.672Z",
+    "updatedAt": "2026-07-16T04:13:30.672Z"
   }
 ]
