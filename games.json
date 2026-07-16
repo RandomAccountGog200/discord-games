@@ -610,5 +610,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T06:02:51.484Z",
     "updatedAt": "2026-07-16T06:02:51.484Z"
+  },
+  {
+    "slug": "larp-live-action-role-play",
+    "title": "⚔️ LARP - Live Action Role Play",
+    "description": "larp",
+    "creator": "burger778",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T06:05:25.994Z",
+    "updatedAt": "2026-07-16T06:05:25.994Z"
   }
 ]
