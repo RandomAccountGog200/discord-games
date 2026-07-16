@@ -583,5 +583,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T05:56:54.839Z",
     "updatedAt": "2026-07-16T05:56:54.839Z"
+  },
+  {
+    "slug": "messi-vs-poland",
+    "title": "Messi vs Poland ⚽",
+    "description": "MESSI VS POLLAND",
+    "creator": "kaipie16",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T06:01:13.074Z",
+    "updatedAt": "2026-07-16T06:01:13.074Z"
   }
 ]
