@@ -268,5 +268,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T04:55:53.338Z",
     "updatedAt": "2026-07-16T04:55:53.338Z"
+  },
+  {
+    "slug": "currency-catcher",
+    "title": "$$$₽ - Currency Catcher",
+    "description": "$$$$$$$$$$$$$$₽",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T04:57:02.785Z",
+    "updatedAt": "2026-07-16T04:57:02.785Z"
   }
 ]
