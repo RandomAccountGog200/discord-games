@@ -367,5 +367,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T05:10:07.520Z",
     "updatedAt": "2026-07-16T05:10:07.520Z"
+  },
+  {
+    "slug": "the-turns-have-table",
+    "title": "THE TURNS HAVE TABLE",
+    "description": "AAAAAAAHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH SO THE TURNS HAVE TABLE",
+    "creator": "kaipie16",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T05:11:40.976Z",
+    "updatedAt": "2026-07-16T05:11:40.976Z"
   }
 ]
