@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Code Breaker: 28387283727387</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #050515;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Segoe UI', 'Courier New', monospace;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        canvas {
+            display: block;
+            border-radius: 12px;
+            box-shadow: 0 0 60px rgba(100, 80, 255, 0.3), 0 0 120px rgba(0, 180, 255, 0.15);
+            max-width: 100vw;
+            max-height: 100vh;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+
+            // === RESPONSIVE CANVAS ===
+            function resizeCanvas() {
+                const maxW = 600;
+                const maxH = 900;
+                const ratio = Math.min(window.innerWidth / maxW, window.innerHeight / maxH, 1);
+                canvas.width = Math.floor(maxW * ratio);
+                canvas.height = Math.floor(maxH * ratio);
+            }
+            resizeCanvas();
+            window.addEventListener('resize', () => {
+                resizeCanvas();
+                paddleY = canvas.height * 0.84;
+                paddleWidth = Math.max(80, canvas.width * 0.22);
+                paddleHeight = Math.max(14, canvas.height * 0.025);
+                digitRadius = Math.max(18, canvas.width * 0.055);
+            });
+
+            // === AUDIO SYSTEM ===
+            let audioCtx = null;
+
+            function getAudioCtx() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                return audioCtx;
+            }
+
+            function playTone(freq, startTime, duration, type = 'sine', vol = 0.15) {
+                try {
+                    const ctx = getAudioCtx();
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, startTime);
+                    gain.gain.setValueAtTime(vol, startTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.start(startTime);
+                    osc.stop(startTime + duration);
+                } catch (e) { /* silent */ }
+            }
+
+            function sfxCorrect() {
+                const t = getAudioCtx().currentTime;
+                playTone(523, t, 0.1, 'sine', 0.18);
+                playTone(659, t + 0.08, 0.12, 'sine', 0.2);
+                playTone(784, t + 0.15, 0.15, 'triangle', 0.16);
+            }
+
+            function sfxWrong() {
+                const t = getAudioCtx().currentTime;
+                playTone(160, t, 0.18, 'sawtooth', 0.12);
+                playTone(90, t + 0.1, 0.2, 'square', 0.08);
+            }
+
+            function sfxWin() {
+                const t = getAudioCtx().currentTime;
+                [523, 659, 784, 1047].forEach((f, i) => {
+                    playTone(f, t + i * 0.12, 0.2, 'sine', 0.2);
+                });
+            }
+
+            function sfxGameOver() {
+                const t = getAudioCtx().currentTime;
+                [300, 240, 190, 140].forEach((f, i) => {
+                    playTone(f, t + i * 0.15, 0.25, 'triangle', 0.14);
+                });
+            }
+
+            function sfxClick() {
+                const t = getAudioCtx().currentTime;
+                playTone(880, t, 0.06, 'sine', 0.1);
+            }
+
+            // === GAME STATE ===
+            const sequence = [2, 8, 3, 8, 7, 2, 8, 3, 7, 2, 7, 3, 8, 7];
+            let currentIndex = 0;
+            let score = 0;
+            let lives = 3;
+            let gameState = 'playing'; // 'playing' | 'won' | 'lost'
+            let fallingDigits = [];
+            let particles = [];
+            let stars = [];
+            let shakeAmount = 0;
+            let shakeDecay = 0.85;
+            let spawnTimer = 0;
+            let spawnInterval = 1.2;
+            let correctDigitGraceTimer = 0;
+            const correctDigitGraceMax = 3.5;
+            let comboCount = 0;
+            let comboTimer = 0;
+
+            // === PADDLE ===
+            let paddleX = canvas.width / 2;
+            let targetPaddleX = canvas.width / 2;
+            let paddleY = canvas.height * 0.84;
+            let paddleWidth = Math.max(80, canvas.width * 0.22);
+            let paddleHeight = Math.max(14, canvas.height * 0.025);
+            let digitRadius = Math.max(18, canvas.width * 0.055);
+            let paddleTrail = [];
+
+            // === STARS ===
+            function initStars() {
+                stars = [];
+                for (let i = 0; i < 80; i++) {
+                    stars.push({
+                        x: Math.random() * canvas.width,
+                        y: Math.random() * canvas.height,
+                        r: Math.random() * 2 + 0.5,
+                        twinkle: Math.random() * Math.PI * 2,
+                        speed: Math.random() * 0.03 + 0.01,
+                        baseAlpha: Math.random() * 0.6 + 0.4,
+                    });
+                }
+            }
+            initStars();
+
+            // === PARTICLE CLASS ===
+            class Particle {
+                constructor(x, y, color, size, life) {
+                    this.x = x;
+                    this.y = y;
+                    this.color = color;
+                    this.size = size;
+                    this.life = life;
+                    this.maxLife = life;
+                    this.vx = (Math.random() - 0.5) * 300;
+                    this.vy = (Math.random() - 0.5) * 300 - 150;
+                    this.gravity = 400;
+                }
+                update(dt) {
+                    this.x += this.vx * dt;
+                    this.y += this.vy * dt;
+                    this.vy += this.gravity * dt;
+                    this.life -= dt;
+                }
+                get alpha() {
+                    return Math.max(0, this.life / this.maxLife);
+                }
+                get alive() {
+                    return this.life > 0;
+                }
+                draw(ctx) {
+                    const a = this.alpha;
+                    ctx.save();
+                    ctx.globalAlpha = a;
+                    ctx.fillStyle = this.color;
+                    ctx.shadowColor = this.color;
+                    ctx.shadowBlur = this.size * 2;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.size * a, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+            }
+
+            function spawnParticles(x, y, color, count = 20, size = 3, life = 0.7) {
+                for (let i = 0; i < count; i++) {
+                    particles.push(new Particle(x, y, color, size * (0.5 + Math.random()), life * (0.6 + Math.random() *
+                        0.8)));
+                }
+            }
+
+            // === FALLING DIGIT CLASS ===
+            class FallingDigit {
+                constructor(digit, x, y, isCorrect) {
+                    this.digit = digit;
+                    this.x = x;
+                    this.y = y;
+                    this.vy = 180 + Math.random() * 100; // pixels per second
+                    this.isCorrect = isCorrect;
+                    this.radius = digitRadius;
+                    this.wobble = Math.random() * Math.PI * 2;
+                    this.wobbleSpeed = (Math.random() - 0.5) * 2;
+                    this.wobbleAmp = isCorrect ? 0.3 : 0.8;
+                    this.glowPulse = 0;
+                    this.trailPositions = [];
+                }
+                update(dt) {
+                    this.y += this.vy * dt;
+                    this.wobble += this.wobbleSpeed * dt;
+                    this.glowPulse += dt * 4;
+                    const wobX = Math.sin(this.wobble) * this.wobbleAmp * 15;
+                    this.trailPositions.push({ x: this.x + wobX, y: this.y, life: 0.25 });
+                    for (let i = this.trailPositions.length - 1; i >= 0; i--) {
+                        this.trailPositions[i].life -= dt;
+                        if (this.trailPositions[i].life <= 0) this.trailPositions.splice(i, 1);
+                    }
+                    this.displayX = this.x + wobX;
+                }
+                get offScreen() {
+                    return this.y - this.radius > canvas.height + 30;
+                }
+                collidesWithPaddle(paddle) {
+                    const px = this.displayX;
+                    const py = this.y;
+                    const pw = paddle.width;
+                    const ph = paddle.height;
+                    const pLeft = paddle.x - pw / 2;
+                    const pRight = paddle.x + pw / 2;
+                    const pTop = paddle.y - ph / 2;
+                    const pBottom = paddle.y + ph / 2;
+                    const closestX = Math.max(pLeft, Math.min(px, pRight));
+                    const closestY = Math.max(pTop, Math.min(py, pBottom));
+                    const distX = px - closestX;
+                    const distY = py - closestY;
+                    return (distX * distX + distY * distY) < (this.radius * this.radius);
+                }
+                draw(ctx) {
+                    const px = this.displayX;
+                    const py = this.y;
+                    // Trail
+                    for (const t of this.trailPositions) {
+                        const alpha = t.life / 0.25;
+                        ctx.save();
+                        ctx.globalAlpha = alpha * 0.3;
+                        ctx.fillStyle = this.isCorrect ? '#ffd740' : '#aaa';
+                        ctx.beginPath();
+                        ctx.arc(t.x, t.y, this.radius * 0.5 * alpha, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.restore();
+                    }
+                    // Glow
+                    const glowIntensity = 0.5 + Math.sin(this.glowPulse) * 0.3;
+                    ctx.save();
+                    if (this.isCorrect) {
+                        ctx.shadowColor = '#ffd740';
+                        ctx.shadowBlur = 25 * glowIntensity;
+                    } else {
+                        ctx.shadowColor = 'rgba(180,180,200,0.5)';
+                        ctx.shadowBlur = 10;
+                    }
+                    // Main circle
+                    const grad = ctx.createRadialGradient(px - this.radius * 0.3, py - this.radius * 0.3, this.radius * 0.1,
+                        px, py, this.radius);
+                    if (this.isCorrect) {
+                        grad.addColorStop(0, '#fff8c0');
+                        grad.addColorStop(0.5, '#ffd740');
+                        grad.addColorStop(1, '#b8860b');
+                    } else {
+                        const hues = [220, 340, 160, 30, 280];
+                        const h = hues[this.digit % hues.length];
+                        grad.addColorStop(0, `hsl(${h},80%,75%)`);
+                        grad.addColorStop(0.6, `hsl(${h},70%,50%)`);
+                        grad.addColorStop(1, `hsl(${h},60%,25%)`);
+                    }
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.arc(px, py, this.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Border
+                    ctx.strokeStyle = this.isCorrect ? '#ffecb3' : 'rgba(255,255,255,0.5)';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    ctx.restore();
+                    // Digit text
+                    ctx.save();
+                    ctx.fillStyle = this.isCorrect ? '#1a1a00' : '#fff';
+                    ctx.font = `bold ${this.radius*1.1}px 'Segoe UI', 'Courier New', monospace`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                    ctx.shadowBlur = 2;
+                    ctx.fillText(this.digit, px, py + 1);
+                    ctx.restore();
+                }
+            }
+
+            // === SPAWN LOGIC ===
+            function spawnDigit(forceCorrect = false) {
+                const isCorrect = forceCorrect || (Math.random() < 0.38 && correctDigitGraceTimer < correctDigitGraceMax -
+                    0.5);
+                const digit = isCorrect ? sequence[currentIndex] : Math.floor(Math.random() * 10);
+                const x = digitRadius + Math.random() * (canvas.width - digitRadius * 2);
+                const y = -digitRadius - Math.random() * 60;
+                const fd = new FallingDigit(digit, x, y, isCorrect);
+                fallingDigits.push(fd);
+                if (isCorrect) {
+                    correctDigitGraceTimer = 0;
+                }
+            }
+
+            function ensureCorrectDigitSpawns(dt) {
+                correctDigitGraceTimer += dt;
+                if (correctDigitGraceTimer >= correctDigitGraceMax) {
+                    // Check if a correct digit is already falling
+                    const hasCorrect = fallingDigits.some(fd => fd.isCorrect);
+                    if (!hasCorrect) {
+                        spawnDigit(true);
+                    }
+                    correctDigitGraceTimer = 0;
+                }
+            }
+
+            // === GAME FUNCTIONS ===
+            function catchDigit(fd) {
+                if (fd.isCorrect) {
+                    // Correct!
+                    score++;
+                    currentIndex++;
+                    comboCount++;
+                    comboTimer = 1.2;
+                    sfxCorrect();
+                    spawnParticles(fd.displayX, fd.y, '#ffd740', 30 + comboCount * 5, 4, 0.8);
+                    if (currentIndex >= sequence.length) {
+                        gameState = 'won';
+                        sfxWin();
+                        spawnParticles(canvas.width / 2, canvas.height / 2, '#ffd740', 80, 6, 2.5);
+                        spawnParticles(canvas.width / 2, canvas.height / 2, '#ffffff', 60, 4, 2.0);
+                    }
+                } else {
+                    // Wrong!
+                    lives--;
+                    comboCount = 0;
+                    comboTimer = 0;
+                    sfxWrong();
+                    shakeAmount = 12;
+                    spawnParticles(fd.displayX, fd.y, '#ff4444', 25, 3.5, 0.6);
+                    if (lives <= 0) {
+                        gameState = 'lost';
+                        sfxGameOver();
+                        spawnParticles(canvas.width / 2, canvas.height / 2, '#ff2222', 60, 5, 2.0);
+                    }
+                }
+                // Remove the caught digit
+                const idx = fallingDigits.indexOf(fd);
+                if (idx >= 0) fallingDigits.splice(idx, 1);
+                if (fd.isCorrect && gameState === 'playing') {
+                    correctDigitGraceTimer = 0;
+                }
+            }
+
+            function resetGame() {
+                currentIndex = 0;
+                score = 0;
+                lives = 3;
+                gameState = 'playing';
+                fallingDigits = [];
+                particles = [];
+                shakeAmount = 0;
+                spawnTimer = 0;
+                correctDigitGraceTimer = 0;
+                comboCount = 0;
+                comboTimer = 0;
+                paddleX = canvas.width / 2;
+                targetPaddleX = canvas.width / 2;
+                paddleTrail = [];
+                sfxClick();
+            }
+
+            // === INPUT HANDLING ===
+            function handlePointerMove(clientX) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                targetPaddleX = (clientX - rect.left) * scaleX;
+                targetPaddleX = Math.max(paddleWidth / 2, Math.min(canvas.width - paddleWidth / 2, targetPaddleX));
+            }
+
+            canvas.addEventListener('mousemove', (e) => {
+                e.preventDefault();
+                handlePointerMove(e.clientX);
+            });
+
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                if (e.touches.length > 0) {
+                    handlePointerMove(e.touches[0].clientX);
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                if (e.touches.length > 0) {
+                    handlePointerMove(e.touches[0].clientX);
+                }
+                if (gameState !== 'playing') {
+                    resetGame();
+                }
+                getAudioCtx();
+            }, { passive: false });
+
+            canvas.addEventListener('click', (e) => {
+                if (gameState !== 'playing') {
+                    resetGame();
+                }
+                getAudioCtx();
+            });
+
+            // Keyboard support
+            window.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowLeft' || e.key === 'a') {
+                    targetPaddleX -= 40;
+                } else if (e.key === 'ArrowRight' || e.key === 'd') {
+                    targetPaddleX += 40;
+                }
+                targetPaddleX = Math.max(paddleWidth / 2, Math.min(canvas.width - paddleWidth / 2, targetPaddleX));
+                if (e.key === ' ' || e.key === 'Enter') {
+                    if (gameState !== 'playing') resetGame();
+                }
+            });
+
+            // === UPDATE ===
+            function update(dt) {
+                // Clamp dt to avoid huge jumps
+                const clampedDt = Math.min(dt, 0.1);
+
+                // Update paddle
+                paddleX += (targetPaddleX - paddleX) * Math.min(clampedDt * 14, 1);
+                paddleTrail.push({ x: paddleX, y: paddleY, life: 0.2 });
+                for (let i = paddleTrail.length - 1; i >= 0; i--) {
+                    paddleTrail[i].life -= clampedDt;
+                    if (paddleTrail[i].life <= 0) paddleTrail.splice(i, 1);
+                }
+
+                // Shake decay
+                if (shakeAmount > 0.1) {
+                    shakeAmount *= Math.pow(shakeDecay, clampedDt * 60);
+                } else {
+                    shakeAmount = 0;
+                }
+
+                // Combo timer
+                if (comboTimer > 0) {
+                    comboTimer -= clampedDt;
+                    if (comboTimer <= 0) comboCount = 0;
+                }
+
+                if (gameState === 'playing') {
+                    // Spawn timer
+                    spawnTimer += clampedDt;
+                    const currentInterval = spawnInterval - (currentIndex * 0.03);
+                    const minInterval = Math.max(0.55, currentInterval);
+                    if (spawnTimer >= minInterval + Math.random() * 0.6) {
+                        spawnTimer = 0;
+                        const hasCorrect = fallingDigits.some(fd => fd.isCorrect);
+                        if (!hasCorrect && correctDigitGraceTimer > correctDigitGraceMax - 0.8) {
+                            spawnDigit(true);
+                        } else if (fallingDigits.length < 8) {
+                            spawnDigit();
+                        }
+                    }
+
+                    // Ensure correct digit appears
+                    ensureCorrectDigitSpawns(clampedDt);
+
+                    // Update falling digits
+                    for (const fd of fallingDigits) {
+                        fd.update(clampedDt);
+                    }
+
+                    // Check collisions
+                    for (const fd of fallingDigits) {
+                        if (fd.collidesWithPaddle({ x: paddleX, y: paddleY, width: paddleWidth, height: paddleHeight })) {
+                            catchDigit(fd);
+                            break; // Only catch one per frame
+                        }
+                    }
+
+                    // Remove off-screen digits
+                    for (let i = fallingDigits.length - 1; i >= 0; i--) {
+                        if (fallingDigits[i].offScreen) {
+                            if (fallingDigits[i].isCorrect) {
+                                // Correct digit missed - it will respawn via grace timer
+                                correctDigitGraceTimer = Math.max(correctDigitGraceTimer, correctDigitGraceMax - 1.2);
+                                spawnParticles(fallingDigits[i].displayX, canvas.height, '#ffaa00', 10, 2, 0.4);
+                            }
+                            fallingDigits.splice(i, 1);
+                        }
+                    }
+                }
+
+                // Update particles
+                for (const p of particles) {
+                    p.update(clampedDt);
+                }
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    if (!particles[i].alive) particles.splice(i, 1);
+                }
+
+                // Update stars
+                for (const s of stars) {
+                    s.twinkle += s.speed * clampedDt;
+                }
+            }
+
+            // === RENDER ===
+            function drawBackground() {
+                // Gradient sky
+                const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+                grad.addColorStop(0, '#0a0a2e');
+                grad.addColorStop(0.5, '#12103a');
+                grad.addColorStop(1, '#1a1040');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Stars
+                for (const s of stars) {
+                    const alpha = s.baseAlpha * (0.6 + 0.4 * Math.sin(s.twinkle));
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.shadowColor = '#aaccff';
+                    ctx.shadowBlur = s.r * 3;
+                    ctx.beginPath();
+                    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+            }
+
+            function drawPaddle() {
+                // Trail
+                for (const t of paddleTrail) {
+                    const alpha = t.life / 0.2;
+                    ctx.save();
+                    ctx.globalAlpha = alpha * 0.4;
+                    ctx.fillStyle = '#00e5ff';
+                    ctx.shadowColor = '#00e5ff';
+                    ctx.shadowBlur = 15;
+                    const tw = paddleWidth * (0.7 + alpha * 0.3);
+                    const th = paddleHeight * (0.6 + alpha * 0.4);
+                    roundRect(t.x - tw / 2, t.y - th / 2, tw, th, th / 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+
+                // Main paddle
+                ctx.save();
+                const pGrad = ctx.createLinearGradient(paddleX, paddleY - paddleHeight / 2, paddleX, paddleY + paddleHeight /
+                    2);
+                pGrad.addColorStop(0, '#80f0ff');
+                pGrad.addColorStop(0.5, '#00d4ff');
+                pGrad.addColorStop(1, '#0088bb');
+                ctx.fillStyle = pGrad;
+                ctx.shadowColor = '#00e5ff';
+                ctx.shadowBlur = 20;
+                roundRect(paddleX - paddleWidth / 2, paddleY - paddleHeight / 2, paddleWidth, paddleHeight, paddleHeight / 2);
+                ctx.fill();
+                // Highlight
+                ctx.fillStyle = 'rgba(255,255,255,0.35)';
+                ctx.shadowBlur = 0;
+                roundRect(paddleX - paddleWidth / 2 + 4, paddleY - paddleHeight / 2 + 2, paddleWidth - 8, paddleHeight / 3,
+                    paddleHeight / 4);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            function roundRect(x, y, w, h, r) {
+                ctx.beginPath();
+                ctx.moveTo(x + r, y);
+                ctx.lineTo(x + w - r, y);
+                ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+                ctx.lineTo(x + w, y + h - r);
+                ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+                ctx.lineTo(x + r, y + h);
+                ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+                ctx.lineTo(x, y + r);
+                ctx.quadraticCurveTo(x, y, x + r, y);
+                ctx.closePath();
+            }
+
+            function drawUI() {
+                // Target number display at top
+                const topY = Math.max(40, canvas.height * 0.06);
+                const digitSpacing = Math.min(28, canvas.width / 22);
+                const totalWidth = sequence.length * digitSpacing;
+                const startX = canvas.width / 2 - totalWidth / 2;
+
+                // Background panel
+                ctx.save();
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.shadowColor = 'rgba(100,100,255,0.3)';
+                ctx.shadowBlur = 20;
+                roundRect(startX - 20, topY - 24, totalWidth + 40, 48, 16);
+                ctx.fill();
+                ctx.restore();
+
+                // Draw each digit
+                for (let i = 0; i < sequence.length; i++) {
+                    const x = startX + i * digitSpacing + digitSpacing / 2;
+                    const y = topY;
+                    ctx.save();
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    if (i < currentIndex) {
+                        // Caught
+                        ctx.fillStyle = '#4caf50';
+                        ctx.font = `bold ${Math.min(20,canvas.width*0.035)}px 'Segoe UI', 'Courier New', monospace`;
+                        ctx.shadowColor = '#4caf50';
+                        ctx.shadowBlur = 8;
+                    } else if (i === currentIndex && gameState === 'playing') {
+                        // Current target
+                        const pulse = 1 + Math.sin(Date.now() / 300) * 0.25;
+                        ctx.fillStyle = '#ffd740';
+                        ctx.font =
+                            `bold ${Math.min(22,canvas.width*0.038)*pulse}px 'Segoe UI', 'Courier New', monospace`;
+                        ctx.shadowColor = '#ffd740';
+                        ctx.shadowBlur = 16;
+                    } else {
+                        // Future
+                        ctx.fillStyle = 'rgba(200,200,220,0.55)';
+                        ctx.font = `bold ${Math.min(18,canvas.width*0.032)}px 'Segoe UI', 'Courier New', monospace`;
+                        ctx.shadowBlur = 0;
+                    }
+                    ctx.fillText(sequence[i], x, y);
+                    ctx.restore();
+                }
+
+                // Score
+                ctx.save();
+                ctx.fillStyle = '#ffffff';
+                ctx.font = `bold ${Math.min(16,canvas.width*0.03)}px 'Segoe UI', sans-serif`;
+                ctx.textAlign = 'left';
+                ctx.fillText(`Score: ${score}`, 16, topY + 50);
+                ctx.restore();
+
+                // Lives
+                ctx.save();
+                ctx.textAlign = 'right';
+                ctx.fillStyle = '#ffffff';
+                ctx.font = `bold ${Math.min(16,canvas.width*0.03)}px 'Segoe UI', sans-serif`;
+                const heartsStr = '❤️'.repeat(Math.max(0, lives));
+                ctx.fillText(`Lives: ${heartsStr}`, canvas.width - 16, topY + 50);
+                ctx.restore();
+
+                // Combo
+                if (comboCount > 1 && comboTimer > 0) {
+                    ctx.save();
+                    ctx.textAlign = 'center';
+                    ctx.fillStyle = '#ffd740';
+                    ctx.font = `bold ${Math.min(18,canvas.width*0.034)}px 'Segoe UI', sans-serif`;
+                    ctx.shadowColor = '#ffd740';
+                    ctx.shadowBlur = 10;
+                    const comboAlpha = Math.min(1, comboTimer / 0.4);
+                    ctx.globalAlpha = comboAlpha;
+                    ctx.fillText(`🔥 Combo x${comboCount}!`, canvas.width / 2, topY + 75);
+                    ctx.restore();
+                }
+            }
+
+            function drawGameOverOverlay() {
+                ctx.save();
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                const cx = canvas.width / 2;
+                const cy = canvas.height / 2;
+
+                if (gameState === 'won') {
+                    ctx.fillStyle = '#ffd740';
+                    ctx.font = `bold ${Math.min(36,canvas.width*0.07)}px 'Segoe UI', sans-serif`;
+                    ctx.shadowColor = '#ffd740';
+                    ctx.shadowBlur = 20;
+                    ctx.fillText('🎉 CODE CRACKED! 🎉', cx, cy - 50);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = `bold ${Math.min(20,canvas.width*0.04)}px 'Segoe UI', 'Courier New', monospace`;
+                    ctx.shadowBlur = 0;
+                    ctx.fillText('28387283727387', cx, cy + 5);
+                    ctx.fillStyle = '#aaddff';
+                    ctx.font = `${Math.min(16,canvas.width*0.032)}px 'Segoe UI', sans-serif`;
+                    ctx.fillText(`Perfect! All ${sequence.length} digits caught!`, cx, cy + 45);
+                } else if (gameState === 'lost') {
+                    ctx.fillStyle = '#ff5252';
+                    ctx.font = `bold ${Math.min(32,canvas.width*0.065)}px 'Segoe UI', sans-serif`;
+                    ctx.shadowColor = '#ff5252';
+                    ctx.shadowBlur = 16;
+                    ctx.fillText('💥 GAME OVER 💥', cx, cy - 40);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = `${Math.min(18,canvas.width*0.036)}px 'Segoe UI', sans-serif`;
+                    ctx.shadowBlur = 0;
+                    ctx.fillText(`Digits caught: ${score} / ${sequence.length}`, cx, cy + 10);
+                }
+
+                ctx.fillStyle = '#ffffff';
+                ctx.font = `${Math.min(16,canvas.width*0.03)}px 'Segoe UI', sans-serif`;
+                const pulse = 0.7 + 0.3 * Math.sin(Date.now() / 600);
+                ctx.globalAlpha = pulse;
+                ctx.fillText('Tap or click to restart', cx, cy + 55);
+                ctx.restore();
+            }
+
+            function drawInstructions() {
+                if (gameState === 'playing' && score === 0 && fallingDigits.length === 0 && correctDigitGraceTimer < 0.3) {
+                    ctx.save();
+                    ctx.textAlign = 'center';
+                    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+                    ctx.font = `${Math.min(15,canvas.width*0.028)}px 'Segoe UI', sans-serif`;
+                    ctx.fillText('Move the paddle to catch digits in order!',
+                        canvas.width / 2, canvas.height * 0.72);
+                    ctx.fillText('Mouse / Touch / Arrow Keys',
+                        canvas.width / 2, canvas.height * 0.72 + 24);
+                    ctx.restore();
+                }
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                // Apply shake
+                let shakeX = 0;
+                let shakeY = 0;
+                if (shakeAmount > 0.05) {
+                    shakeX = (Math.random() - 0.5) * shakeAmount * 2;
+                    shakeY = (Math.random() - 0.5) * shakeAmount * 2;
+                }
+
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                drawBackground();
+
+                // Draw falling digits
+                for (const fd of fallingDigits) {
+                    fd.draw(ctx);
+                }
+
+                // Draw particles
+                for (const p of particles) {
+                    p.draw(ctx);
+                }
+
+                drawPaddle();
+                ctx.restore();
+
+                // UI (not affected by shake)
+                drawUI();
+                drawInstructions();
+
+                // Game over overlay
+                if (gameState !== 'playing') {
+                    drawGameOverOverlay();
+                }
+            }
+
+            // === GAME LOOP ===
+            let lastTime = performance.now();
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.2) dt = 0.2; // Cap to prevent jumps
+                lastTime = timestamp;
+
+                update(dt);
+                render();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // === INITIALIZATION ===
+            function init() {
+                resizeCanvas();
+                paddleY = canvas.height * 0.84;
+                paddleWidth = Math.max(80, canvas.width * 0.22);
+                paddleHeight = Math.max(14, canvas.height * 0.025);
+                digitRadius = Math.max(18, canvas.width * 0.055);
+                paddleX = canvas.width / 2;
+                targetPaddleX = canvas.width / 2;
+                initStars();
+                resetGame();
+                // Spawn first correct digit quickly
+                setTimeout(() => {
+                    if (gameState === 'playing' && !fallingDigits.some(fd => fd.isCorrect)) {
+                        spawnDigit(true);
+                    }
+                }, 600);
+            }
+
+            init();
+            requestAnimationFrame(gameLoop);
+
+            console.log('🎮 Code Breaker: 28387283727387 - Ready!');
+            console.log('   Catch the digits in order to crack the code!');
+            console.log('   Use mouse, touch, or arrow keys to move the paddle.');
+        })();
+    </script>
+</body>
+</html>
