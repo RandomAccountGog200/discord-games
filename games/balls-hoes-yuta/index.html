@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Balls Hoes Yuta</title>
+    <style>
+        :root {
+            --bg: #0a0a1a;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        #gameContainer {
+            position: relative;
+            width: 100vw;
+            max-width: 500px;
+            height: 100vh;
+            max-height: 800px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        canvas {
+            display: block;
+            border-radius: 16px;
+            box-shadow: 0 0 40px rgba(100, 60, 255, 0.4), 0 0 80px rgba(255, 80, 140, 0.25);
+            width: 100%;
+            height: auto;
+            max-height: 100%;
+            background: radial-gradient(ellipse at center, #1a1a3a 0%, #0a0a18 100%);
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            // Responsive canvas sizing
+            const MAX_WIDTH = 500;
+            const MAX_HEIGHT = 800;
+            let scale = 1;
+
+            function resizeCanvas() {
+                const container = document.getElementById('gameContainer');
+                const containerWidth = Math.min(window.innerWidth, MAX_WIDTH);
+                const containerHeight = Math.min(window.innerHeight, MAX_HEIGHT);
+                scale = Math.min(containerWidth / MAX_WIDTH, containerHeight / MAX_HEIGHT);
+                canvas.width = MAX_WIDTH;
+                canvas.height = MAX_HEIGHT;
+                canvas.style.width = (MAX_WIDTH * scale) + 'px';
+                canvas.style.height = (MAX_HEIGHT * scale) + 'px';
+            }
+
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+
+            // Audio engine
+            const audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+
+            function playSound(freq, type, duration, vol = 0.15, slide = 0) {
+                try {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                    if (slide) osc.frequency.linearRampToValueAtTime(freq + slide, audioCtx.currentTime + duration);
+                    gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(audioCtx.currentTime);
+                    osc.stop(audioCtx.currentTime + duration);
+                } catch (e) { /* silent */ }
+            }
+
+            function sfxCatch() { playSound(600, 'sine', 0.12, 0.2, 400); }
+
+            function sfxHit() { playSound(80, 'sawtooth', 0.25, 0.15, -30); }
+
+            function sfxGameOver() { playSound(40, 'triangle', 0.5, 0.1, -20);
+                setTimeout(() => playSound(30, 'triangle', 0.6, 0.1, -15), 150); }
+
+            function sfxPowerUp() { playSound(900, 'sine', 0.08, 0.3, 600);
+                playSound(1200, 'sine', 0.06, 0.25, 400); }
+
+            // Game state
+            const STATE = {
+                MENU: 'menu',
+                PLAYING: 'playing',
+                GAMEOVER: 'gameover',
+            };
+
+            let gameState = STATE.MENU;
+            let score = 0;
+            let highScore = parseInt(localStorage.getItem('ballsHoesYutaHighScore')) || 0;
+            let lives = 3;
+            let comboCount = 0;
+            let comboTimer = 0;
+            let shakeAmount = 0;
+            let screenFlash = 0;
+
+            // Player
+            const player = {
+                x: MAX_WIDTH / 2,
+                y: MAX_HEIGHT - 100,
+                width: 70,
+                height: 80,
+                speed: 420,
+                targetX: MAX_WIDTH / 2,
+                bobOffset: 0,
+                eyeBlink: 0,
+                trail: [],
+            };
+
+            // Balls
+            let balls = [];
+            let particles = [];
+            let floatingTexts = [];
+            let powerUps = [];
+            let stars = [];
+
+            // Spawn stars for background
+            function initStars() {
+                stars = [];
+                for (let i = 0; i < 80; i++) {
+                    stars.push({
+                        x: Math.random() * MAX_WIDTH,
+                        y: Math.random() * MAX_HEIGHT,
+                        size: Math.random() * 2 + 0.5,
+                        twinkle: Math.random() * Math.PI * 2,
+                        speed: Math.random() * 0.02 + 0.005,
+                        brightness: Math.random() * 0.6 + 0.4,
+                    });
+                }
+            }
+            initStars();
+
+            // Input handling
+            const keys = {};
+            let mouseDown = false;
+            let mouseX = MAX_WIDTH / 2;
+            let touchActive = false;
+
+            window.addEventListener('keydown', e => {
+                keys[e.key] = true;
+                if (gameState === STATE.MENU && (e.key === ' ' || e.key === 'Enter')) {
+                    startGame();
+                }
+                if (gameState === STATE.GAMEOVER && (e.key === ' ' || e.key === 'Enter' || e.key === 'r')) {
+                    restartGame();
+                }
+                e.preventDefault();
+            });
+
+            window.addEventListener('keyup', e => {
+                keys[e.key] = false;
+                e.preventDefault();
+            });
+
+            canvas.addEventListener('mousedown', e => {
+                mouseDown = true;
+                const rect = canvas.getBoundingClientRect();
+                mouseX = (e.clientX - rect.left) / scale;
+                if (gameState === STATE.MENU) startGame();
+                if (gameState === STATE.GAMEOVER) restartGame();
+            });
+
+            canvas.addEventListener('mousemove', e => {
+                if (mouseDown) {
+                    const rect = canvas.getBoundingClientRect();
+                    mouseX = (e.clientX - rect.left) / scale;
+                }
+            });
+
+            canvas.addEventListener('mouseup', () => { mouseDown = false; });
+
+            canvas.addEventListener('touchstart', e => {
+                e.preventDefault();
+                touchActive = true;
+                const rect = canvas.getBoundingClientRect();
+                mouseX = (e.touches[0].clientX - rect.left) / scale;
+                if (gameState === STATE.MENU) startGame();
+                if (gameState === STATE.GAMEOVER) restartGame();
+            }, { passive: false });
+
+            canvas.addEventListener('touchmove', e => {
+                e.preventDefault();
+                if (touchActive) {
+                    const rect = canvas.getBoundingClientRect();
+                    mouseX = (e.touches[0].clientX - rect.left) / scale;
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('touchend', e => {
+                e.preventDefault();
+                touchActive = false;
+            });
+
+            function startGame() {
+                gameState = STATE.PLAYING;
+                score = 0;
+                lives = 3;
+                comboCount = 0;
+                comboTimer = 0;
+                balls = [];
+                particles = [];
+                floatingTexts = [];
+                powerUps = [];
+                shakeAmount = 0;
+                screenFlash = 0;
+                player.x = MAX_WIDTH / 2;
+                player.targetX = MAX_WIDTH / 2;
+                player.trail = [];
+                spawnBall();
+            }
+
+            function restartGame() {
+                startGame();
+            }
+
+            function gameOver() {
+                gameState = STATE.GAMEOVER;
+                sfxGameOver();
+                shakeAmount = 20;
+                screenFlash = 1;
+                if (score > highScore) {
+                    highScore = score;
+                    localStorage.setItem('ballsHoesYutaHighScore', highScore);
+                }
+                // Spawn explosion particles
+                for (let i = 0; i < 40; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * 300 + 100;
+                    particles.push({
+                        x: player.x,
+                        y: player.y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - 100,
+                        life: 1,
+                        decay: Math.random() * 0.8 + 0.5,
+                        color: Math.random() < 0.5 ? '#ff4466' : '#ff8844',
+                        size: Math.random() * 6 + 3,
+                    });
+                }
+            }
+
+            function spawnBall() {
+                if (gameState !== STATE.PLAYING) return;
+                const isGolden = Math.random() < 0.55;
+                const isPowerUp = Math.random() < 0.08;
+                const x = Math.random() * (MAX_WIDTH - 80) + 40;
+                const ball = {
+                    x: x,
+                    y: -40,
+                    radius: isPowerUp ? 16 : (Math.random() * 12 + 10),
+                    vy: Math.random() * 180 + 140,
+                    vx: (Math.random() - 0.5) * 60,
+                    type: isPowerUp ? 'powerup' : (isGolden ? 'golden' : 'red'),
+                    glow: 0,
+                    rotation: Math.random() * Math.PI * 2,
+                    rotSpeed: (Math.random() - 0.5) * 8,
+                };
+                balls.push(ball);
+            }
+
+            function spawnParticles(x, y, color, count = 15) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * 250 + 80;
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - 50,
+                        life: 1,
+                        decay: Math.random() * 1.5 + 0.6,
+                        color: color,
+                        size: Math.random() * 4 + 2,
+                    });
+                }
+            }
+
+            function spawnFloatingText(x, y, text, color = '#ffdd44') {
+                floatingTexts.push({
+                    x: x,
+                    y: y,
+                    text: text,
+                    life: 1,
+                    vy: -120,
+                    color: color,
+                });
+            }
+
+            // Update
+            function update(dt) {
+                if (gameState !== STATE.PLAYING && gameState !== STATE.GAMEOVER) return;
+                if (gameState === STATE.GAMEOVER) {
+                    shakeAmount *= 0.88;
+                    screenFlash *= 0.85;
+                    // Update particles even during game over
+                    for (let p of particles) {
+                        p.x += p.vx * dt;
+                        p.y += p.vy * dt;
+                        p.vy += 300 * dt;
+                        p.life -= p.decay * dt;
+                    }
+                    particles = particles.filter(p => p.life > 0);
+                    return;
+                }
+
+                const effectiveDt = Math.min(dt, 0.1);
+
+                // Player movement
+                if (keys['ArrowLeft'] || keys['a'] || keys['A']) {
+                    player.targetX -= player.speed * effectiveDt;
+                }
+                if (keys['ArrowRight'] || keys['d'] || keys['D']) {
+                    player.targetX += player.speed * effectiveDt;
+                }
+                if (mouseDown || touchActive) {
+                    player.targetX = mouseX;
+                }
+
+                player.targetX = Math.max(player.width / 2, Math.min(MAX_WIDTH - player.width / 2, player.targetX));
+                player.x += (player.targetX - player.x) * Math.min(12 * effectiveDt, 1);
+                player.bobOffset = Math.sin(Date.now() * 0.006) * 6;
+                player.eyeBlink = Math.sin(Date.now() * 0.003) * 0.5 + 0.5;
+
+                // Update trail
+                player.trail.push({ x: player.x, y: player.y, life: 0.5 });
+                for (let t of player.trail) t.life -= effectiveDt * 2;
+                player.trail = player.trail.filter(t => t.life > 0);
+
+                // Combo timer
+                if (comboTimer > 0) {
+                    comboTimer -= effectiveDt;
+                    if (comboTimer <= 0) comboCount = 0;
+                }
+
+                // Update balls
+                for (let ball of balls) {
+                    ball.y += ball.vy * effectiveDt;
+                    ball.x += ball.vx * effectiveDt;
+                    ball.rotation += ball.rotSpeed * effectiveDt;
+                    ball.glow = Math.sin(Date.now() * 0.01 + ball.x) * 0.3 + 0.7;
+
+                    // Bounce off walls
+                    if (ball.x - ball.radius < 0) {
+                        ball.x = ball.radius;
+                        ball.vx = Math.abs(ball.vx);
+                    }
+                    if (ball.x + ball.radius > MAX_WIDTH) {
+                        ball.x = MAX_WIDTH - ball.radius;
+                        ball.vx = -Math.abs(ball.vx);
+                    }
+
+                    // Collision with player
+                    const dx = ball.x - player.x;
+                    const dy = ball.y - (player.y + player.bobOffset);
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const collisionDist = ball.radius + player.width * 0.35;
+
+                    if (dist < collisionDist && ball.y < player.y + 20 && ball.y > player.y - 60) {
+                        if (ball.type === 'golden') {
+                            comboCount++;
+                            comboTimer = 2.5;
+                            const points = 10 + comboCount * 5;
+                            score += points;
+                            sfxCatch();
+                            spawnParticles(ball.x, ball.y, '#ffdd44', 20);
+                            if (comboCount > 1) {
+                                spawnFloatingText(ball.x, ball.y, '+' + points + ' x' + comboCount, '#ffdd44');
+                            } else {
+                                spawnFloatingText(ball.x, ball.y, '+' + points, '#ffdd44');
+                            }
+                            if (comboCount >= 5 && comboCount % 5 === 0) {
+                                sfxPowerUp();
+                                spawnParticles(ball.x, ball.y, '#ff44ff', 30);
+                                spawnFloatingText(ball.x, ball.y - 20, '🔥 COMBO!', '#ff44ff');
+                            }
+                            ball.y = MAX_HEIGHT + 100;
+                        } else if (ball.type === 'red') {
+                            lives--;
+                            comboCount = 0;
+                            comboTimer = 0;
+                            sfxHit();
+                            shakeAmount = 12;
+                            screenFlash = 0.6;
+                            spawnParticles(ball.x, ball.y, '#ff3355', 25);
+                            spawnFloatingText(ball.x, ball.y, '💥 OOF!', '#ff3355');
+                            ball.y = MAX_HEIGHT + 100;
+                            if (lives <= 0) {
+                                gameOver();
+                                return;
+                            }
+                        } else if (ball.type === 'powerup') {
+                            sfxPowerUp();
+                            score += 50;
+                            lives = Math.min(lives + 1, 5);
+                            spawnParticles(ball.x, ball.y, '#44ffcc', 30);
+                            spawnFloatingText(ball.x, ball.y, '+50 ⭐ +1UP', '#44ffcc');
+                            screenFlash = 0.3;
+                            ball.y = MAX_HEIGHT + 100;
+                        }
+                    }
+                }
+
+                // Remove off-screen balls
+                const offScreenBalls = balls.filter(b => b.y > MAX_HEIGHT + 60);
+                for (let b of offScreenBalls) {
+                    if (b.type === 'golden' && b.y > MAX_HEIGHT + 60 && b.y < MAX_HEIGHT + 200) {
+                        // Missed golden ball - small penalty
+                        comboCount = 0;
+                        comboTimer = 0;
+                    }
+                }
+                balls = balls.filter(b => b.y < MAX_HEIGHT + 200);
+
+                // Update particles
+                for (let p of particles) {
+                    p.x += p.vx * effectiveDt;
+                    p.y += p.vy * effectiveDt;
+                    p.vy += 250 * effectiveDt;
+                    p.life -= p.decay * effectiveDt;
+                }
+                particles = particles.filter(p => p.life > 0);
+
+                // Update floating texts
+                for (let ft of floatingTexts) {
+                    ft.y += ft.vy * effectiveDt;
+                    ft.life -= 1.2 * effectiveDt;
+                }
+                floatingTexts = floatingTexts.filter(ft => ft.life > 0);
+
+                // Shake decay
+                shakeAmount *= 0.85;
+                screenFlash *= 0.82;
+
+                // Spawn new balls
+                if (Math.random() < 0.025 + score * 0.0003 && balls.length < 15) {
+                    spawnBall();
+                }
+                if (balls.length < 3) spawnBall();
+            }
+
+            // Render
+            function drawStars() {
+                for (let star of stars) {
+                    star.twinkle += star.speed;
+                    const alpha = (Math.sin(star.twinkle) * 0.5 + 0.5) * star.brightness;
+                    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function drawPlayer() {
+                const px = player.x;
+                const py = player.y + player.bobOffset;
+
+                // Trail
+                for (let i = player.trail.length - 1; i >= 0; i--) {
+                    const t = player.trail[i];
+                    const alpha = t.life * 0.35;
+                    const size = player.width * 0.3 * t.life;
+                    ctx.fillStyle = `rgba(100,180,255,${alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(t.x, t.y, size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.4)';
+                ctx.beginPath();
+                ctx.ellipse(px, py + 30, player.width * 0.4, 10, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body - cute character "Yuta"
+                const bodyGrad = ctx.createRadialGradient(px, py - 15, 5, px, py, player.width * 0.55);
+                bodyGrad.addColorStop(0, '#ffcc88');
+                bodyGrad.addColorStop(0.6, '#ff9944');
+                bodyGrad.addColorStop(1, '#cc6622');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.arc(px, py - 5, player.width * 0.45, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Outline body
+                ctx.strokeStyle = '#884422';
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+
+                // Eyes
+                const eyeY = py - 15;
+                const eyeOffsetX = player.width * 0.14;
+                const blinkHeight = player.eyeBlink < 0.15 ? 2 : 9;
+
+                // White of eyes
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.ellipse(px - eyeOffsetX, eyeY, 9, blinkHeight, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(px + eyeOffsetX, eyeY, 9, blinkHeight, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Pupils
+                if (blinkHeight > 3) {
+                    ctx.fillStyle = '#111122';
+                    ctx.beginPath();
+                    ctx.arc(px - eyeOffsetX, eyeY, 4.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(px + eyeOffsetX, eyeY, 4.5, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Eye shine
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.arc(px - eyeOffsetX - 2, eyeY - 2, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(px + eyeOffsetX - 2, eyeY - 2, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Mouth
+                ctx.strokeStyle = '#553311';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(px, py + 5, 8, 0.1, Math.PI - 0.1);
+                ctx.stroke();
+
+                // Cheeks
+                ctx.fillStyle = 'rgba(255,150,150,0.5)';
+                ctx.beginPath();
+                ctx.arc(px - 18, py + 2, 7, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(px + 18, py + 2, 7, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Hat
+                ctx.fillStyle = '#4444cc';
+                ctx.beginPath();
+                ctx.arc(px, py - 28, player.width * 0.35, Math.PI, 0);
+                ctx.fill();
+                ctx.fillStyle = '#3333aa';
+                ctx.fillRect(px - player.width * 0.35, py - 28, player.width * 0.7, 10);
+                ctx.fillStyle = '#5555ee';
+                ctx.beginPath();
+                ctx.arc(px, py - 33, 6, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Glow around player
+                const glowGrad = ctx.createRadialGradient(px, py, player.width * 0.3, px, py, player.width * 0.7);
+                glowGrad.addColorStop(0, 'rgba(255,200,150,0.3)');
+                glowGrad.addColorStop(1, 'rgba(255,100,50,0)');
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(px, py, player.width * 0.7, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            function drawBall(ball) {
+                ctx.save();
+                ctx.translate(ball.x, ball.y);
+                ctx.rotate(ball.rotation);
+
+                // Glow
+                const glowGrad = ctx.createRadialGradient(0, 0, ball.radius * 0.4, 0, 0, ball.radius * 2.2);
+                if (ball.type === 'golden') {
+                    glowGrad.addColorStop(0, 'rgba(255,220,80,0.6)');
+                    glowGrad.addColorStop(0.5, 'rgba(255,180,30,0.3)');
+                    glowGrad.addColorStop(1, 'rgba(255,140,0,0)');
+                } else if (ball.type === 'red') {
+                    glowGrad.addColorStop(0, 'rgba(255,60,60,0.6)');
+                    glowGrad.addColorStop(0.5, 'rgba(255,20,20,0.3)');
+                    glowGrad.addColorStop(1, 'rgba(180,0,0,0)');
+                } else {
+                    glowGrad.addColorStop(0, 'rgba(100,255,200,0.7)');
+                    glowGrad.addColorStop(0.5, 'rgba(50,220,180,0.35)');
+                    glowGrad.addColorStop(1, 'rgba(0,180,140,0)');
+                }
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(0, 0, ball.radius * 2.2, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Ball body
+                const bodyGrad = ctx.createRadialGradient(-ball.radius * 0.25, -ball.radius * 0.3, ball.radius * 0.15, 0, 0,
+                    ball.radius);
+                if (ball.type === 'golden') {
+                    bodyGrad.addColorStop(0, '#fffde0');
+                    bodyGrad.addColorStop(0.3, '#ffd740');
+                    bodyGrad.addColorStop(0.7, '#ff8f00');
+                    bodyGrad.addColorStop(1, '#c56000');
+                } else if (ball.type === 'red') {
+                    bodyGrad.addColorStop(0, '#ff8888');
+                    bodyGrad.addColorStop(0.3, '#ff3333');
+                    bodyGrad.addColorStop(0.7, '#cc0000');
+                    bodyGrad.addColorStop(1, '#660000');
+                } else {
+                    bodyGrad.addColorStop(0, '#ccffee');
+                    bodyGrad.addColorStop(0.3, '#44ffcc');
+                    bodyGrad.addColorStop(0.7, '#00cc88');
+                    bodyGrad.addColorStop(1, '#006644');
+                }
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.arc(0, 0, ball.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Shine
+                ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                ctx.beginPath();
+                ctx.arc(-ball.radius * 0.25, -ball.radius * 0.3, ball.radius * 0.3, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Icon for powerup
+                if (ball.type === 'powerup') {
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = `${ball.radius*1.2}px sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('⭐', 0, 1);
+                }
+
+                // Spikes for red balls
+                if (ball.type === 'red') {
+                    ctx.strokeStyle = '#880000';
+                    ctx.lineWidth = 2;
+                    for (let i = 0; i < 6; i++) {
+                        const angle = (i / 6) * Math.PI * 2;
+                        const innerR = ball.radius * 0.85;
+                        const outerR = ball.radius * 1.25;
+                        ctx.beginPath();
+                        ctx.moveTo(Math.cos(angle) * innerR, Math.sin(angle) * innerR);
+                        ctx.lineTo(Math.cos(angle + 0.25) * outerR, Math.sin(angle + 0.25) * outerR);
+                        ctx.lineTo(Math.cos(angle + 0.5) * innerR, Math.sin(angle + 0.5) * innerR);
+                        ctx.fillStyle = '#ff4444';
+                        ctx.fill();
+                        ctx.stroke();
+                    }
+                }
+
+                ctx.restore();
+            }
+
+            function drawUI() {
+                // Score panel
+                const panelGrad = ctx.createLinearGradient(0, 0, 0, 55);
+                panelGrad.addColorStop(0, 'rgba(0,0,0,0.7)');
+                panelGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = panelGrad;
+                ctx.fillRect(0, 0, MAX_WIDTH, 55);
+
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 20px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText(`⭐ ${score}`, 16, 32);
+
+                ctx.textAlign = 'right';
+                ctx.fillText(`🏆 ${highScore}`, MAX_WIDTH - 16, 32);
+
+                // Lives
+                ctx.textAlign = 'center';
+                let heartsStr = '';
+                for (let i = 0; i < lives; i++) heartsStr += '❤️ ';
+                ctx.fillText(heartsStr.trim(), MAX_WIDTH / 2, 32);
+
+                // Combo indicator
+                if (comboCount >= 3 && gameState === STATE.PLAYING) {
+                    const comboAlpha = Math.min(1, comboTimer / 0.5);
+                    ctx.fillStyle = `rgba(255,200,50,${comboAlpha})`;
+                    ctx.font = 'bold 16px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`🔥 ${comboCount}x COMBO!`, MAX_WIDTH / 2, 55);
+                }
+            }
+
+            function drawMenu() {
+                // Darken
+                ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                ctx.fillRect(0, 0, MAX_WIDTH, MAX_HEIGHT);
+
+                // Title
+                const titleGrad = ctx.createLinearGradient(0, MAX_HEIGHT / 2 - 80, 0, MAX_HEIGHT / 2 - 20);
+                titleGrad.addColorStop(0, '#ffdd44');
+                titleGrad.addColorStop(0.5, '#ff9944');
+                titleGrad.addColorStop(1, '#ff5588');
+                ctx.fillStyle = titleGrad;
+                ctx.font = 'bold 42px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = 'rgba(255,150,50,0.7)';
+                ctx.shadowBlur = 25;
+                ctx.fillText('BALLS HOES', MAX_WIDTH / 2, MAX_HEIGHT / 2 - 60);
+                ctx.fillText('YUTA', MAX_WIDTH / 2, MAX_HEIGHT / 2 - 10);
+                ctx.shadowBlur = 0;
+
+                // Subtitle
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '18px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('Catch the golden balls!', MAX_WIDTH / 2, MAX_HEIGHT / 2 + 40);
+                ctx.fillText('Dodge the red ones!', MAX_WIDTH / 2, MAX_HEIGHT / 2 + 65);
+
+                // Start prompt
+                const pulse = Math.sin(Date.now() * 0.003) * 0.4 + 0.6;
+                ctx.fillStyle = `rgba(255,255,255,${0.7+pulse*0.3})`;
+                ctx.font = 'bold 22px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('TAP or PRESS SPACE to START', MAX_WIDTH / 2, MAX_HEIGHT / 2 + 130);
+
+                // High score
+                if (highScore > 0) {
+                    ctx.fillStyle = '#ffdd88';
+                    ctx.font = '16px "Segoe UI", system-ui, sans-serif';
+                    ctx.fillText(`Best: ${highScore}`, MAX_WIDTH / 2, MAX_HEIGHT / 2 + 165);
+                }
+            }
+
+            function drawGameOver() {
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(0, 0, MAX_WIDTH, MAX_HEIGHT);
+
+                ctx.fillStyle = '#ff4466';
+                ctx.font = 'bold 40px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = 'rgba(255,50,50,0.8)';
+                ctx.shadowBlur = 20;
+                ctx.fillText('GAME OVER', MAX_WIDTH / 2, MAX_HEIGHT / 2 - 30);
+                ctx.shadowBlur = 0;
+
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '22px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText(`Score: ${score}`, MAX_WIDTH / 2, MAX_HEIGHT / 2 + 25);
+
+                if (score >= highScore && score > 0) {
+                    ctx.fillStyle = '#ffdd44';
+                    ctx.font = 'bold 20px "Segoe UI", system-ui, sans-serif';
+                    ctx.fillText('🏆 NEW HIGH SCORE! 🏆', MAX_WIDTH / 2, MAX_HEIGHT / 2 + 55);
+                } else {
+                    ctx.fillStyle = '#cccccc';
+                    ctx.font = '18px "Segoe UI", system-ui, sans-serif';
+                    ctx.fillText(`Best: ${highScore}`, MAX_WIDTH / 2, MAX_HEIGHT / 2 + 55);
+                }
+
+                const pulse = Math.sin(Date.now() * 0.003) * 0.4 + 0.6;
+                ctx.fillStyle = `rgba(255,255,255,${0.7+pulse*0.3})`;
+                ctx.font = 'bold 20px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('TAP or PRESS R to RESTART', MAX_WIDTH / 2, MAX_HEIGHT / 2 + 100);
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, MAX_WIDTH, MAX_HEIGHT);
+
+                // Apply screen shake
+                const shakeX = (Math.random() - 0.5) * shakeAmount * 2;
+                const shakeY = (Math.random() - 0.5) * shakeAmount * 2;
+
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                // Background gradient
+                const bgGrad = ctx.createRadialGradient(MAX_WIDTH / 2, MAX_HEIGHT / 2, 100, MAX_WIDTH / 2, MAX_HEIGHT / 2,
+                    MAX_HEIGHT);
+                bgGrad.addColorStop(0, '#1a1a44');
+                bgGrad.addColorStop(0.5, '#0f0f28');
+                bgGrad.addColorStop(1, '#050510');
+                ctx.fillStyle = bgGrad;
+                ctx.fillRect(-20, -20, MAX_WIDTH + 40, MAX_HEIGHT + 40);
+
+                drawStars();
+
+                // Draw balls
+                for (let ball of balls) {
+                    drawBall(ball);
+                }
+
+                // Draw particles
+                for (let p of particles) {
+                    const alpha = p.life;
+                    ctx.fillStyle = p.color.replace(')', `,${alpha})`).replace('rgb',
+                        'rgba');
+                    if (p.color.startsWith('#')) {
+                        ctx.fillStyle = p.color + Math.floor(alpha * 255).toString(16).padStart(2, '0');
+                    }
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+
+                // Draw floating texts
+                for (let ft of floatingTexts) {
+                    const alpha = ft.life;
+                    ctx.fillStyle = ft.color;
+                    ctx.globalAlpha = alpha;
+                    ctx.font = 'bold 18px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(ft.text, ft.x, ft.y);
+                }
+                ctx.globalAlpha = 1;
+
+                if (gameState === STATE.PLAYING || gameState === STATE.GAMEOVER) {
+                    drawPlayer();
+                }
+                drawUI();
+
+                ctx.restore();
+
+                // Screen flash overlay
+                if (screenFlash > 0.01) {
+                    ctx.fillStyle = `rgba(255,255,255,${screenFlash*0.4})`;
+                    ctx.fillRect(0, 0, MAX_WIDTH, MAX_HEIGHT);
+                }
+
+                // Menu / Game Over overlays
+                if (gameState === STATE.MENU) {
+                    drawMenu();
+                } else if (gameState === STATE.GAMEOVER) {
+                    drawGameOver();
+                }
+            }
+
+            // Game loop
+            let lastTime = performance.now();
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.2) dt = 0.2; // Cap to avoid jumps
+                lastTime = timestamp;
+
+                update(dt);
+                render();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // Initial spawn for menu visuals
+            function spawnMenuBalls() {
+                if (gameState === STATE.MENU && balls.length < 6) {
+                    const x = Math.random() * (MAX_WIDTH - 80) + 40;
+                    balls.push({
+                        x: x,
+                        y: -40,
+                        radius: Math.random() * 12 + 10,
+                        vy: Math.random() * 100 + 60,
+                        vx: (Math.random() - 0.5) * 40,
+                        type: Math.random() < 0.6 ? 'golden' : 'red',
+                        glow: 0,
+                        rotation: Math.random() * Math.PI * 2,
+                        rotSpeed: (Math.random() - 0.5) * 6,
+                    });
+                }
+                balls = balls.filter(b => b.y < MAX_HEIGHT + 200);
+                for (let b of balls) {
+                    b.y += b.vy * 0.016;
+                    b.x += b.vx * 0.016;
+                    b.rotation += b.rotSpeed * 0.016;
+                }
+            }
+
+            // Separate menu animation loop
+            function menuLoop() {
+                if (gameState === STATE.MENU) {
+                    spawnMenuBalls();
+                }
+                if (gameState === STATE.MENU || gameState === STATE.GAMEOVER) {
+                    render();
+                }
+                requestAnimationFrame(() => {
+                    menuLoop();
+                });
+            }
+
+            // Start everything
+            resizeCanvas();
+            requestAnimationFrame(gameLoop);
+            requestAnimationFrame(menuLoop);
+
+            // Handle audio context on first interaction
+            document.addEventListener('click', () => {
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }, { once: true });
+            document.addEventListener('touchstart', () => {
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }, { once: true });
+
+            console.log('🎮 Balls Hoes Yuta - Ready!');
+            console.log('   Catch golden balls ⭐, dodge red ones 💀');
+            console.log('   Tap/Space to start, Arrow keys or drag to move');
+        })();
+    </script>
+</body>
+</html>
