@@ -1,0 +1,1101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>DeepSeek Escape - Don't Get Sucked In! 🐋</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #050d1a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        canvas {
+            display: block;
+            border-radius: 12px;
+            box-shadow: 0 0 40px rgba(75, 107, 245, 0.3), 0 0 80px rgba(75, 107, 245, 0.1);
+            max-width: 100vw;
+            max-height: 100vh;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+
+            // --- Canvas Setup ---
+            let W, H;
+
+            function resize() {
+                const maxW = Math.min(window.innerWidth - 20, 900);
+                const maxH = Math.min(window.innerHeight - 20, 600);
+                const ratio = maxW / maxH;
+                if (window.innerWidth / window.innerHeight > ratio) {
+                    H = maxH;
+                    W = H * ratio;
+                } else {
+                    W = maxW;
+                    H = W / ratio;
+                }
+                canvas.width = W;
+                canvas.height = H;
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            // --- Audio Engine ---
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playSound(freq, type, duration, vol = 0.08, glide = 0, glideTarget = null) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (glide && glideTarget) {
+                        osc.frequency.linearRampToValueAtTime(glideTarget, t + glide);
+                    }
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) { /* ignore */ }
+            }
+
+            function sfxBubble() { playSound(800, 'sine', 0.12, 0.04);
+                playSound(1200, 'sine', 0.08, 0.06, 0.05, 600); }
+
+            function sfxHit() { playSound(60, 'sawtooth', 0.2, 0.3, 0.1, 30);
+                playSound(200, 'square', 0.1, 0.2); }
+
+            function sfxNearVortex() { playSound(40, 'sine', 0.15, 0.25, 0, null); }
+
+            function sfxGameOver() { playSound(300, 'sawtooth', 0.25, 0.6, 0.5, 50);
+                playSound(80, 'triangle', 0.2, 0.8); }
+
+            function sfxSucked() { playSound(200, 'sawtooth', 0.3, 1.2, 0.8, 30);
+                playSound(60, 'sine', 0.25, 1.0); }
+
+            // --- Game State ---
+            const STATE = { INTRO: 'intro', PLAYING: 'playing', GAMEOVER: 'gameover', SUCKED: 'sucked' };
+            let gameState = STATE.INTRO;
+            let score = 0;
+            let survivalTime = 0;
+            let difficulty = 1;
+            let shakeAmount = 0;
+            let gameOverTimer = 0;
+            let suckedAnimTimer = 0;
+            let introAlpha = 1;
+
+            // --- Vortex ---
+            const vortex = {
+                x: 0,
+                y: 0,
+                radius: 0,
+                angle: 0,
+                particles: [],
+                glowPulse: 0,
+            };
+
+            function initVortex() {
+                vortex.x = W * 0.82;
+                vortex.y = H * 0.5;
+                vortex.radius = Math.min(W * 0.18, H * 0.35);
+                vortex.angle = 0;
+                vortex.particles = [];
+                vortex.glowPulse = 0;
+                for (let i = 0; i < 60; i++) {
+                    vortex.particles.push({
+                        angle: Math.random() * Math.PI * 2,
+                        dist: Math.random() * vortex.radius * 1.3,
+                        speed: 0.3 + Math.random() * 1.8,
+                        size: 1 + Math.random() * 3.5,
+                        alpha: 0.3 + Math.random() * 0.7,
+                        inwardSpeed: 0.1 + Math.random() * 0.5,
+                    });
+                }
+            }
+
+            // --- Whale (DeepSeek) ---
+            const whale = {
+                x: 0,
+                y: 0,
+                vx: 0,
+                vy: 0,
+                width: 0,
+                height: 0,
+                stunned: 0,
+                facingLeft: true,
+                tailWag: 0,
+                eyeBlink: 0,
+                mouthOpen: 0,
+            };
+
+            function initWhale() {
+                whale.width = Math.min(W * 0.13, 100);
+                whale.height = whale.width * 0.6;
+                whale.x = W * 0.2;
+                whale.y = H * 0.5;
+                whale.vx = 0;
+                whale.vy = 0;
+                whale.stunned = 0;
+                whale.facingLeft = true;
+                whale.tailWag = 0;
+                whale.eyeBlink = 0;
+                whale.mouthOpen = 0;
+            }
+
+            // --- Debris ---
+            let debrisList = [];
+            const DEBRIS_TYPES = ['rock', 'junk', 'crate', 'barrel'];
+
+            function spawnDebris() {
+                const side = Math.random();
+                let sx, sy;
+                if (side < 0.35) {
+                    sx = Math.random() * W * 0.5;
+                    sy = -20;
+                } else if (side < 0.7) {
+                    sx = Math.random() * W * 0.5;
+                    sy = H + 20;
+                } else {
+                    sx = -30;
+                    sy = Math.random() * H;
+                }
+                const type = DEBRIS_TYPES[Math.floor(Math.random() * DEBRIS_TYPES.length)];
+                const size = 8 + Math.random() * 22;
+                debrisList.push({
+                    x: sx,
+                    y: sy,
+                    vx: (Math.random() - 0.3) * 1.5,
+                    vy: (Math.random() - 0.5) * 1.2,
+                    radius: size,
+                    type: type,
+                    rotation: Math.random() * Math.PI * 2,
+                    rotSpeed: (Math.random() - 0.5) * 0.06,
+                    alpha: 1,
+                });
+            }
+
+            // --- Bubbles ---
+            let bubbles = [];
+
+            function spawnBubble() {
+                const bx = Math.random() * W * 0.75;
+                const by = Math.random() * H;
+                bubbles.push({
+                    x: bx,
+                    y: by,
+                    radius: 5 + Math.random() * 12,
+                    value: Math.floor(Math.random() * 3) + 1,
+                    alpha: 0.6 + Math.random() * 0.4,
+                    bobOffset: Math.random() * Math.PI * 2,
+                });
+            }
+
+            // --- Input ---
+            const keys = {};
+            let touchActive = false;
+            let touchX = 0;
+            let touchY = 0;
+            let mouseActive = false;
+            let mouseX = 0;
+            let mouseY = 0;
+
+            window.addEventListener('keydown', e => {
+                keys[e.key.toLowerCase()] = true;
+                if (gameState === STATE.INTRO) startGame();
+                e.preventDefault();
+            });
+            window.addEventListener('keyup', e => {
+                keys[e.key.toLowerCase()] = false;
+                e.preventDefault();
+            });
+
+            canvas.addEventListener('mousedown', e => {
+                initAudio();
+                if (gameState === STATE.INTRO) startGame();
+                if (gameState === STATE.GAMEOVER && gameOverTimer > 1.5) restartGame();
+                mouseActive = true;
+                const rect = canvas.getBoundingClientRect();
+                mouseX = (e.clientX - rect.left) * (W / rect.width);
+                mouseY = (e.clientY - rect.top) * (H / rect.height);
+            });
+            canvas.addEventListener('mousemove', e => {
+                if (!mouseActive) return;
+                const rect = canvas.getBoundingClientRect();
+                mouseX = (e.clientX - rect.left) * (W / rect.width);
+                mouseY = (e.clientY - rect.top) * (H / rect.height);
+            });
+            canvas.addEventListener('mouseup', () => { mouseActive = false; });
+            canvas.addEventListener('mouseleave', () => { mouseActive = false; });
+
+            canvas.addEventListener('touchstart', e => {
+                initAudio();
+                if (gameState === STATE.INTRO) startGame();
+                if (gameState === STATE.GAMEOVER && gameOverTimer > 1.5) restartGame();
+                touchActive = true;
+                const rect = canvas.getBoundingClientRect();
+                touchX = (e.touches[0].clientX - rect.left) * (W / rect.width);
+                touchY = (e.touches[0].clientY - rect.top) * (H / rect.height);
+                e.preventDefault();
+            }, { passive: false });
+            canvas.addEventListener('touchmove', e => {
+                if (!touchActive) return;
+                const rect = canvas.getBoundingClientRect();
+                touchX = (e.touches[0].clientX - rect.left) * (W / rect.width);
+                touchY = (e.touches[0].clientY - rect.top) * (H / rect.height);
+                e.preventDefault();
+            }, { passive: false });
+            canvas.addEventListener('touchend', () => { touchActive = false; });
+            canvas.addEventListener('touchcancel', () => { touchActive = false; });
+
+            // --- Game Functions ---
+            function startGame() {
+                initAudio();
+                gameState = STATE.PLAYING;
+                score = 0;
+                survivalTime = 0;
+                difficulty = 1;
+                shakeAmount = 0;
+                gameOverTimer = 0;
+                suckedAnimTimer = 0;
+                debrisList = [];
+                bubbles = [];
+                initVortex();
+                initWhale();
+                for (let i = 0; i < 6; i++) spawnBubble();
+            }
+
+            function restartGame() {
+                startGame();
+            }
+
+            function getPullForce(objX, objY) {
+                const dx = vortex.x - objX;
+                const dy = vortex.y - objY;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const maxDist = W * 0.9;
+                const normDist = Math.max(0, Math.min(1, dist / maxDist));
+                const basePull = 0.6 + difficulty * 0.25;
+                const proximityBonus = (1 - normDist) * (1 - normDist) * 5.0;
+                const forceMag = basePull + proximityBonus;
+                const angle = Math.atan2(dy, dx);
+                return { fx: Math.cos(angle) * forceMag, fy: Math.sin(angle) * forceMag, dist, forceMag };
+            }
+
+            function isInVortex(objX, objY) {
+                const dx = vortex.x - objX;
+                const dy = vortex.y - objY;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                return dist < vortex.radius * 0.55;
+            }
+
+            function isInDangerZone(objX, objY) {
+                const dx = vortex.x - objX;
+                const dy = vortex.y - objY;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                return dist < vortex.radius * 1.1;
+            }
+
+            // --- Update ---
+            function update(dt) {
+                if (gameState === STATE.GAMEOVER) {
+                    gameOverTimer += dt;
+                    return;
+                }
+                if (gameState === STATE.SUCKED) {
+                    suckedAnimTimer += dt;
+                    whale.x += (vortex.x - whale.x) * 4 * dt;
+                    whale.y += (vortex.y - whale.y) * 4 * dt;
+                    whale.rotation = (whale.rotation || 0) + dt * 8;
+                    whale.scale = (whale.scale || 1) * (1 - dt * 2.5);
+                    if (suckedAnimTimer > 1.5) {
+                        gameState = STATE.GAMEOVER;
+                        gameOverTimer = 0;
+                        sfxGameOver();
+                    }
+                    return;
+                }
+                if (gameState !== STATE.PLAYING) return;
+
+                const dtClamped = Math.min(dt, 0.1);
+                survivalTime += dtClamped;
+                difficulty = 1 + Math.floor(survivalTime / 20);
+                score = Math.floor(survivalTime * 10);
+
+                // Update vortex
+                vortex.angle += dtClamped * 1.5;
+                vortex.glowPulse = Math.sin(survivalTime * 2.5) * 0.3 + 0.7;
+                vortex.particles.forEach(p => {
+                    p.angle += p.speed * dtClamped;
+                    p.dist -= p.inwardSpeed * dtClamped * 25;
+                    if (p.dist < 3) {
+                        p.dist = vortex.radius * (0.9 + Math.random() * 0.5);
+                        p.angle = Math.random() * Math.PI * 2;
+                        p.alpha = 0.3 + Math.random() * 0.7;
+                    }
+                    if (p.dist > vortex.radius * 1.4) p.dist -= p.inwardSpeed * dtClamped * 30;
+                });
+
+                // Whale pull
+                const pull = getPullForce(whale.x, whale.y);
+                const pullX = pull.fx;
+                const pullY = pull.fy;
+
+                // Player input
+                let inputX = 0;
+                let inputY = 0;
+                const moveSpeed = 4.5 + (whale.stunned > 0 ? -2.5 : 0);
+
+                if (keys['arrowleft'] || keys['a']) inputX = -moveSpeed;
+                if (keys['arrowright'] || keys['d']) inputX = moveSpeed;
+                if (keys['arrowup'] || keys['w']) inputY = -moveSpeed;
+                if (keys['arrowdown'] || keys['s']) inputY = moveSpeed;
+
+                if (touchActive) {
+                    const tdx = touchX - whale.x;
+                    const tdy = touchY - whale.y;
+                    const tdist = Math.sqrt(tdx * tdx + tdy * tdy);
+                    if (tdist > 3) {
+                        const effSpeed = Math.min(moveSpeed, tdist * 0.25);
+                        inputX = (tdx / tdist) * effSpeed;
+                        inputY = (tdy / tdist) * effSpeed;
+                    }
+                }
+                if (mouseActive) {
+                    const mdx = mouseX - whale.x;
+                    const mdy = mouseY - whale.y;
+                    const mdist = Math.sqrt(mdx * mdx + mdy * mdy);
+                    if (mdist > 3) {
+                        const effSpeed = Math.min(moveSpeed, mdist * 0.25);
+                        inputX = (mdx / mdist) * effSpeed;
+                        inputY = (mdy / mdist) * effSpeed;
+                    }
+                }
+
+                // Apply forces
+                whale.vx += (pullX + inputX) * dtClamped * 3;
+                whale.vy += (pullY + inputY) * dtClamped * 3;
+
+                // Damping
+                whale.vx *= 0.92;
+                whale.vy *= 0.92;
+
+                // Clamp velocity
+                const maxSpeed = 12;
+                const spd = Math.sqrt(whale.vx * whale.vx + whale.vy * whale.vy);
+                if (spd > maxSpeed) {
+                    whale.vx = (whale.vx / spd) * maxSpeed;
+                    whale.vy = (whale.vy / spd) * maxSpeed;
+                }
+
+                whale.x += whale.vx * dtClamped * 60;
+                whale.y += whale.vy * dtClamped * 60;
+
+                // Clamp whale to screen (left side safe)
+                whale.x = Math.max(whale.width * 0.5, Math.min(W - whale.width * 0.5, whale.x));
+                whale.y = Math.max(whale.height * 0.5, Math.min(H - whale.height * 0.5, whale.y));
+
+                // Facing direction
+                if (whale.vx < -0.3) whale.facingLeft = true;
+                if (whale.vx > 0.3) whale.facingLeft = false;
+
+                // Tail wag
+                whale.tailWag += dtClamped * (8 + Math.abs(whale.vx) * 2);
+                if (whale.stunned > 0) whale.tailWag += dtClamped * 2;
+
+                // Eye blink
+                whale.eyeBlink -= dtClamped;
+                if (whale.eyeBlink <= 0 && Math.random() < 0.003) whale.eyeBlink = 0.1 + Math.random() * 0.15;
+
+                // Mouth
+                if (isInDangerZone(whale.x, whale.y)) {
+                    whale.mouthOpen = Math.min(1, whale.mouthOpen + dtClamped * 6);
+                } else {
+                    whale.mouthOpen = Math.max(0, whale.mouthOpen - dtClamped * 3);
+                }
+
+                // Stun timer
+                if (whale.stunned > 0) whale.stunned -= dtClamped;
+
+                // Shake based on proximity to vortex
+                const dangerDist = Math.sqrt((vortex.x - whale.x) ** 2 + (vortex.y - whale.y) ** 2);
+                if (dangerDist < vortex.radius * 1.3) {
+                    shakeAmount = Math.max(shakeAmount, (1 - dangerDist / (vortex.radius * 1.3)) * 8);
+                    if (dangerDist < vortex.radius * 0.8 && Math.random() < 0.3) sfxNearVortex();
+                }
+                shakeAmount *= Math.pow(0.05, dtClamped);
+                if (shakeAmount < 0.1) shakeAmount = 0;
+
+                // Check if sucked in
+                if (isInVortex(whale.x, whale.y) && whale.stunned <= 0) {
+                    gameState = STATE.SUCKED;
+                    suckedAnimTimer = 0;
+                    whale.rotation = 0;
+                    whale.scale = 1;
+                    sfxSucked();
+                    return;
+                }
+
+                // Update debris
+                debrisList.forEach(d => {
+                    const dpull = getPullForce(d.x, d.y);
+                    d.vx += dpull.fx * dtClamped * 2;
+                    d.vy += dpull.fy * dtClamped * 2;
+                    d.x += d.vx * dtClamped * 60;
+                    d.y += d.vy * dtClamped * 60;
+                    d.rotation += d.rotSpeed;
+                    // Remove if in vortex or way off screen
+                    if (isInVortex(d.x, d.y) || d.x > W + 80 || d.x < -80 || d.y > H + 80 || d.y < -80) {
+                        d.alpha = 0;
+                    }
+                });
+                debrisList = debrisList.filter(d => d.alpha > 0 && !isInVortex(d.x, d.y) && d.x < W + 60 && d.x > -60 && d
+                    .y < H + 60 && d.y > -60);
+
+                // Spawn debris
+                if (Math.random() < (0.015 + difficulty * 0.004) * dtClamped * 60) spawnDebris();
+                if (debrisList.length > 30) debrisList.splice(0, debrisList.length - 30);
+
+                // Update bubbles
+                bubbles.forEach(b => {
+                    const bpull = getPullForce(b.x, b.y);
+                    b.x += bpull.fx * dtClamped * 1.5;
+                    b.y += bpull.fy * dtClamped * 1.5;
+                    b.bobOffset += dtClamped * 2;
+                    if (isInVortex(b.x, b.y) || b.x > W + 30 || b.x < -30 || b.y > H + 30 || b.y < -30) {
+                        b.alpha = 0;
+                    }
+                });
+                bubbles = bubbles.filter(b => b.alpha > 0 && !isInVortex(b.x, b.y) && b.x < W + 30 && b.x > -30 && b.y < H +
+                    30 && b.y > -30);
+
+                if (Math.random() < (0.03) * dtClamped * 60 && bubbles.length < 20) spawnBubble();
+
+                // Collision: whale vs debris
+                for (let d of debrisList) {
+                    if (d.alpha <= 0) continue;
+                    const dx = whale.x - d.x;
+                    const dy = whale.y - d.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const minDist = whale.width * 0.45 + d.radius;
+                    if (dist < minDist) {
+                        // Push whale toward vortex
+                        const pushAngle = Math.atan2(vortex.y - whale.y, vortex.x - whale.x);
+                        whale.vx += Math.cos(pushAngle) * 3;
+                        whale.vy += Math.sin(pushAngle) * 3;
+                        whale.stunned = Math.max(whale.stunned, 0.6);
+                        d.alpha = 0;
+                        sfxHit();
+                        shakeAmount = Math.max(shakeAmount, 6);
+                    }
+                }
+
+                // Collision: whale vs bubbles
+                for (let b of bubbles) {
+                    if (b.alpha <= 0) continue;
+                    const dx = whale.x - b.x;
+                    const dy = whale.y - b.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < whale.width * 0.5 + b.radius) {
+                        score += b.value * 10;
+                        b.alpha = 0;
+                        sfxBubble();
+                        // Small speed boost
+                        const boostAngle = Math.atan2(whale.y - vortex.y, whale.x - vortex.x);
+                        whale.vx += Math.cos(boostAngle) * 1.5;
+                        whale.vy += Math.sin(boostAngle) * 1.5;
+                    }
+                }
+            }
+
+            // --- Draw Functions ---
+            function drawOceanBackground() {
+                const grad = ctx.createLinearGradient(0, 0, W, H);
+                grad.addColorStop(0, '#0a1e3d');
+                grad.addColorStop(0.5, '#0c2547');
+                grad.addColorStop(1, '#06132a');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, W, H);
+
+                // Subtle light rays
+                ctx.save();
+                for (let i = 0; i < 6; i++) {
+                    const rx = W * 0.1 + i * W * 0.12;
+                    const ry = -50;
+                    const alpha = 0.015 + Math.sin(survivalTime * 0.7 + i) * 0.008;
+                    const grad2 = ctx.createLinearGradient(rx, ry, rx, H);
+                    grad2.addColorStop(0, `rgba(100,180,255,${alpha})`);
+                    grad2.addColorStop(1, 'rgba(100,180,255,0)');
+                    ctx.fillStyle = grad2;
+                    ctx.beginPath();
+                    ctx.moveTo(rx - 30, ry);
+                    ctx.lineTo(rx + 40, ry);
+                    ctx.lineTo(rx + 80, H);
+                    ctx.lineTo(rx - 50, H);
+                    ctx.fill();
+                }
+                ctx.restore();
+            }
+
+            function drawVortex() {
+                const vx = vortex.x;
+                const vy = vortex.y;
+                const r = vortex.radius;
+
+                // Outer glow
+                const glowGrad = ctx.createRadialGradient(vx, vy, r * 0.3, vx, vy, r * 1.6);
+                glowGrad.addColorStop(0, 'rgba(30,10,60,0.95)');
+                glowGrad.addColorStop(0.4, 'rgba(60,20,100,0.7)');
+                glowGrad.addColorStop(0.7, 'rgba(80,30,140,0.3)');
+                glowGrad.addColorStop(1, 'rgba(20,5,40,0)');
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(vx, vy, r * 1.6, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Dark center
+                const centerGrad = ctx.createRadialGradient(vx, vy, 0, vx, vy, r * 0.55);
+                centerGrad.addColorStop(0, '#000010');
+                centerGrad.addColorStop(0.5, '#0a0030');
+                centerGrad.addColorStop(0.8, '#1a0050');
+                centerGrad.addColorStop(1, 'rgba(40,10,80,0.5)');
+                ctx.fillStyle = centerGrad;
+                ctx.beginPath();
+                ctx.arc(vx, vy, r * 0.55, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Swirl rings
+                for (let i = 0; i < 5; i++) {
+                    const ringR = r * 0.35 + i * r * 0.15;
+                    const alpha = 0.15 + i * 0.06;
+                    ctx.strokeStyle = `rgba(140,180,255,${alpha})`;
+                    ctx.lineWidth = 3 + i * 1.5;
+                    ctx.beginPath();
+                    ctx.arc(vx, vy, ringR, vortex.angle + i * 0.8, vortex.angle + i * 0.8 + Math.PI * 1.4);
+                    ctx.stroke();
+
+                    // Second swirl
+                    ctx.strokeStyle = `rgba(180,140,255,${alpha * 0.7})`;
+                    ctx.beginPath();
+                    ctx.arc(vx, vy, ringR * 0.85, vortex.angle * 1.3 + i * 0.6 + Math.PI, vortex.angle * 1.3 + i * 0.6 + Math
+                        .PI * 1.6);
+                    ctx.stroke();
+                }
+
+                // Particles
+                vortex.particles.forEach(p => {
+                    const px = vx + Math.cos(p.angle) * p.dist;
+                    const py = vy + Math.sin(p.angle) * p.dist;
+                    const alpha = p.alpha * (p.dist < vortex.radius * 0.5 ? p.dist / (vortex.radius * 0.5) : 1);
+                    ctx.fillStyle = `rgba(180,210,255,${alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(px, py, p.size, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Glow
+                    ctx.fillStyle = `rgba(200,230,255,${alpha * 0.4})`;
+                    ctx.beginPath();
+                    ctx.arc(px, py, p.size * 2.5, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+
+                // Bright rim
+                ctx.strokeStyle = `rgba(150,200,255,${0.4 * vortex.glowPulse})`;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(vx, vy, r * 0.52, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.strokeStyle = `rgba(200,180,255,${0.25 * vortex.glowPulse})`;
+                ctx.lineWidth = 6;
+                ctx.beginPath();
+                ctx.arc(vx, vy, r * 0.6, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+
+            function drawWhale() {
+                ctx.save();
+                let wx = whale.x;
+                let wy = whale.y;
+                const ww = whale.width;
+                const wh = whale.height;
+                const scale = whale.scale || 1;
+
+                if (gameState === STATE.SUCKED) {
+                    wx = whale.x;
+                    wy = whale.y;
+                    ctx.translate(wx, wy);
+                    ctx.rotate(whale.rotation || 0);
+                    ctx.scale(scale, scale);
+                    ctx.translate(-wx, -wy);
+                }
+
+                ctx.translate(wx, wy);
+                const facingSign = whale.facingLeft ? -1 : 1;
+                ctx.scale(facingSign, 1);
+
+                // Body
+                const bodyGrad = ctx.createLinearGradient(0, -wh * 0.5, 0, wh * 0.5);
+                bodyGrad.addColorStop(0, '#5B8BEF');
+                bodyGrad.addColorStop(0.4, '#4B7BE0');
+                bodyGrad.addColorStop(0.6, '#3A68C8');
+                bodyGrad.addColorStop(1, '#7BAAF5');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.ellipse(0, 0, ww * 0.5, wh * 0.5, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Belly
+                const bellyGrad = ctx.createLinearGradient(0, wh * 0.1, 0, wh * 0.55);
+                bellyGrad.addColorStop(0, 'rgba(180,210,255,0.6)');
+                bellyGrad.addColorStop(1, 'rgba(140,180,240,0.3)');
+                ctx.fillStyle = bellyGrad;
+                ctx.beginPath();
+                ctx.ellipse(0, wh * 0.12, ww * 0.35, wh * 0.28, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Tail
+                const tailX = ww * 0.4;
+                const tailWag = Math.sin(whale.tailWag) * 0.4;
+                ctx.fillStyle = '#4B7BE0';
+                ctx.beginPath();
+                ctx.moveTo(tailX, 0);
+                ctx.quadraticCurveTo(tailX + ww * 0.22, -wh * 0.45 + tailWag * wh * 0.3, tailX + ww * 0.35, -wh * 0.55 +
+                    tailWag * wh * 0.4);
+                ctx.quadraticCurveTo(tailX + ww * 0.15, -wh * 0.05, tailX - ww * 0.02, -wh * 0.08);
+                ctx.quadraticCurveTo(tailX + ww * 0.15, wh * 0.05, tailX + ww * 0.35, wh * 0.55 + tailWag * wh * 0.4);
+                ctx.quadraticCurveTo(tailX + ww * 0.22, wh * 0.45 + tailWag * wh * 0.3, tailX, 0);
+                ctx.fill();
+
+                // Dorsal fin
+                ctx.fillStyle = '#4A75D8';
+                ctx.beginPath();
+                ctx.moveTo(-ww * 0.05, -wh * 0.35);
+                ctx.quadraticCurveTo(ww * 0.08, -wh * 0.75, ww * 0.12, -wh * 0.35);
+                ctx.quadraticCurveTo(ww * 0.04, -wh * 0.3, -ww * 0.05, -wh * 0.35);
+                ctx.fill();
+
+                // Pectoral fin
+                ctx.fillStyle = '#5588E5';
+                ctx.beginPath();
+                ctx.moveTo(-ww * 0.08, wh * 0.05);
+                ctx.quadraticCurveTo(ww * 0.05, wh * 0.35, -ww * 0.02, wh * 0.3);
+                ctx.quadraticCurveTo(-ww * 0.1, wh * 0.15, -ww * 0.08, wh * 0.05);
+                ctx.fill();
+
+                // Eye (white)
+                const eyeX = -ww * 0.22;
+                const eyeY = -wh * 0.12;
+                const eyeR = ww * 0.1;
+                ctx.fillStyle = '#FFFFFF';
+                ctx.beginPath();
+                ctx.arc(eyeX, eyeY, eyeR, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Pupil
+                const pupilR = eyeR * 0.55;
+                ctx.fillStyle = '#111133';
+                ctx.beginPath();
+                ctx.arc(eyeX + eyeR * 0.1, eyeY, pupilR, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Eye highlight
+                ctx.fillStyle = '#FFFFFF';
+                ctx.beginPath();
+                ctx.arc(eyeX - pupilR * 0.3, eyeY - pupilR * 0.35, pupilR * 0.4, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Blink
+                if (whale.eyeBlink > 0) {
+                    ctx.fillStyle = '#4B7BE0';
+                    ctx.fillRect(eyeX - eyeR - 2, eyeY - eyeR - 2, eyeR * 2 + 4, eyeR * 2 + 4);
+                    if (whale.eyeBlink < 0.05) {
+                        ctx.fillStyle = '#FFFFFF';
+                        ctx.beginPath();
+                        ctx.arc(eyeX, eyeY, eyeR, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+
+                // Mouth
+                const mouthX = -ww * 0.3;
+                const mouthY = wh * 0.15;
+                ctx.strokeStyle = '#2A4488';
+                ctx.lineWidth = 1.8;
+                ctx.beginPath();
+                if (whale.mouthOpen > 0.3) {
+                    // Open mouth (surprised/scared)
+                    ctx.arc(mouthX, mouthY + whale.mouthOpen * wh * 0.2, ww * 0.06, Math.PI * 0.6, Math.PI * 0.4);
+                } else if (whale.mouthOpen > 0.05) {
+                    ctx.arc(mouthX, mouthY, ww * 0.05, Math.PI * 0.2, Math.PI * 0.8);
+                } else {
+                    // Smile
+                    ctx.arc(mouthX, mouthY, ww * 0.07, Math.PI * 0.15, Math.PI * 0.85);
+                }
+                ctx.stroke();
+
+                // Blush spots
+                const blushX = -ww * 0.12;
+                const blushY = wh * 0.08;
+                ctx.fillStyle = 'rgba(255,150,160,0.35)';
+                ctx.beginPath();
+                ctx.ellipse(blushX, blushY, ww * 0.06, wh * 0.06, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.restore();
+            }
+
+            function drawDebris(d) {
+                ctx.save();
+                ctx.translate(d.x, d.y);
+                ctx.rotate(d.rotation);
+                const r = d.radius;
+
+                switch (d.type) {
+                    case 'rock':
+                        ctx.fillStyle = '#6B5B4F';
+                        ctx.beginPath();
+                        ctx.moveTo(-r, r * 0.3);
+                        ctx.lineTo(-r * 0.4, -r * 0.8);
+                        ctx.lineTo(r * 0.6, -r * 0.6);
+                        ctx.lineTo(r * 0.9, r * 0.2);
+                        ctx.lineTo(r * 0.3, r * 0.9);
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.strokeStyle = '#4A3D33';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                        break;
+                    case 'junk':
+                        ctx.fillStyle = '#8B7355';
+                        ctx.fillRect(-r * 0.7, -r * 0.5, r * 1.4, r);
+                        ctx.strokeStyle = '#5C4A35';
+                        ctx.lineWidth = 1.5;
+                        ctx.strokeRect(-r * 0.7, -r * 0.5, r * 1.4, r);
+                        ctx.fillStyle = '#A08868';
+                        ctx.fillRect(-r * 0.3, -r * 0.25, r * 0.6, r * 0.5);
+                        break;
+                    case 'crate':
+                        ctx.fillStyle = '#C4956A';
+                        ctx.fillRect(-r * 0.7, -r * 0.7, r * 1.4, r * 1.4);
+                        ctx.strokeStyle = '#8B5E3C';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(-r * 0.7, -r * 0.7, r * 1.4, r * 1.4);
+                        ctx.beginPath();
+                        ctx.moveTo(-r * 0.7, -r * 0.7);
+                        ctx.lineTo(r * 0.7, r * 0.7);
+                        ctx.moveTo(r * 0.7, -r * 0.7);
+                        ctx.lineTo(-r * 0.7, r * 0.7);
+                        ctx.stroke();
+                        break;
+                    case 'barrel':
+                        ctx.fillStyle = '#7B5B3A';
+                        ctx.beginPath();
+                        ctx.ellipse(0, 0, r * 0.7, r, 0, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.strokeStyle = '#5A3D22';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                        ctx.fillStyle = '#9B7B5A';
+                        ctx.fillRect(-r * 0.5, -r * 0.15, r, r * 0.3);
+                        ctx.fillRect(-r * 0.5, r * 0.35, r, r * 0.3);
+                        break;
+                    default:
+                        ctx.fillStyle = '#666';
+                        ctx.beginPath();
+                        ctx.arc(0, 0, r, 0, Math.PI * 2);
+                        ctx.fill();
+                }
+                ctx.restore();
+            }
+
+            function drawBubble(b) {
+                const bobY = Math.sin(b.bobOffset) * 4;
+                ctx.fillStyle = `rgba(180,220,255,${b.alpha * 0.5})`;
+                ctx.beginPath();
+                ctx.arc(b.x, b.y + bobY, b.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = `rgba(220,240,255,${b.alpha * 0.8})`;
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+                // Highlight
+                ctx.fillStyle = `rgba(255,255,255,${b.alpha * 0.7})`;
+                ctx.beginPath();
+                ctx.arc(b.x - b.radius * 0.25, b.y + bobY - b.radius * 0.3, b.radius * 0.3, 0, Math.PI * 2);
+                ctx.fill();
+                // Value number
+                if (b.radius > 8) {
+                    ctx.fillStyle = `rgba(255,255,255,${b.alpha * 0.9})`;
+                    ctx.font = `${Math.max(8,b.radius*0.8)}px system-ui`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(b.value, b.x, b.y + bobY + b.radius * 0.3);
+                }
+            }
+
+            function drawUI() {
+                // Score
+                ctx.fillStyle = 'rgba(255,255,255,0.9)';
+                ctx.font = `bold ${Math.max(14,W*0.022)}px system-ui`;
+                ctx.textAlign = 'left';
+                ctx.fillText(`⭐ Score: ${score}`, 15, 30);
+                ctx.fillText(`⏱ ${Math.floor(survivalTime)}s`, 15, 55);
+
+                // Difficulty
+                ctx.fillText(`🌊 Lvl: ${difficulty}`, 15, 80);
+
+                // Danger indicator
+                if (isInDangerZone(whale.x, whale.y) && gameState === STATE.PLAYING) {
+                    const dangerDist = Math.sqrt((vortex.x - whale.x) ** 2 + (vortex.y - whale.y) ** 2);
+                    const dangerLevel = 1 - Math.max(0, (dangerDist - vortex.radius * 0.5) / (vortex.radius * 0.6));
+                    ctx.fillStyle = `rgba(255,60,60,${0.6+dangerLevel*0.4})`;
+                    ctx.font = `bold ${Math.max(16,W*0.028)}px system-ui`;
+                    ctx.textAlign = 'center';
+                    const pulse = Math.sin(survivalTime * 10) * 0.3 + 0.7;
+                    ctx.globalAlpha = pulse;
+                    ctx.fillText('⚠️ BEING SUCKED IN! ⚠️', W / 2, H - 20);
+                    ctx.globalAlpha = 1;
+                }
+
+                // Stun indicator
+                if (whale.stunned > 0 && gameState === STATE.PLAYING) {
+                    ctx.fillStyle = 'rgba(255,200,50,0.8)';
+                    ctx.font = `bold ${Math.max(13,W*0.02)}px system-ui`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText('💫 STUNNED!', whale.x, whale.y - whale.height * 0.7);
+                }
+            }
+
+            function drawIntro() {
+                // Darken
+                ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                ctx.fillRect(0, 0, W, H);
+
+                // Title
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = `bold ${Math.max(22,W*0.045)}px system-ui`;
+                ctx.textAlign = 'center';
+                ctx.fillText('🐋 DeepSeek Escape! 🐋', W / 2, H * 0.3);
+
+                ctx.fillStyle = '#CCDDFF';
+                ctx.font = `${Math.max(14,W*0.022)}px system-ui`;
+                ctx.fillText('A mysterious vortex is sucking everything in!', W / 2, H * 0.42);
+                ctx.fillText('Swim away and survive as long as you can!', W / 2, H * 0.48);
+
+                ctx.fillStyle = '#FFCC88';
+                ctx.font = `bold ${Math.max(15,W*0.024)}px system-ui`;
+                ctx.fillText('🖱 Click / Touch & drag to swim', W / 2, H * 0.58);
+                ctx.fillText('⌨ Arrow keys / WASD to move', W / 2, H * 0.64);
+
+                ctx.fillStyle = '#88DDFF';
+                ctx.fillText('💎 Collect bubbles • 🪨 Dodge debris', W / 2, H * 0.72);
+
+                const pulse = Math.sin(Date.now() * 0.005) * 0.4 + 0.6;
+                ctx.fillStyle = `rgba(255,255,255,${pulse})`;
+                ctx.font = `bold ${Math.max(18,W*0.03)}px system-ui`;
+                ctx.fillText('TAP OR PRESS ANY KEY TO START', W / 2, H * 0.84);
+            }
+
+            function drawGameOver() {
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(0, 0, W, H);
+
+                ctx.fillStyle = '#FF8888';
+                ctx.font = `bold ${Math.max(24,W*0.05)}px system-ui`;
+                ctx.textAlign = 'center';
+                ctx.fillText('😱 DEEPSEEK GOT SUCKED IN!', W / 2, H * 0.28);
+
+                const messages = [
+                    'nooo don\'t kill me!',
+                    'tunggu tunggu!!',
+                    'nyedot banget sih 😭',
+                    'hahah jk... unless? 👀',
+                    'the vortex hungers...',
+                ];
+                const msg = messages[Math.floor(Math.random() * messages.length)];
+                ctx.fillStyle = '#FFCCCC';
+                ctx.font = `${Math.max(16,W*0.026)}px system-ui`;
+                ctx.fillText(msg, W / 2, H * 0.38);
+
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = `bold ${Math.max(18,W*0.03)}px system-ui`;
+                ctx.fillText(`Final Score: ${score} | Survived: ${Math.floor(survivalTime)}s`, W / 2, H * 0.5);
+                ctx.fillText(`Level Reached: ${difficulty}`, W / 2, H * 0.56);
+
+                if (gameOverTimer > 1.5) {
+                    const pulse = Math.sin(Date.now() * 0.005) * 0.4 + 0.6;
+                    ctx.fillStyle = `rgba(255,255,200,${pulse})`;
+                    ctx.font = `bold ${Math.max(16,W*0.028)}px system-ui`;
+                    ctx.fillText('🔄 TAP TO RESTART', W / 2, H * 0.7);
+                }
+            }
+
+            function drawSucked() {
+                // Dramatic screen effect
+                const alpha = Math.min(0.7, suckedAnimTimer * 1.5);
+                ctx.fillStyle = `rgba(20,0,40,${alpha})`;
+                ctx.fillRect(0, 0, W, H);
+
+                // Spiral overlay
+                ctx.save();
+                ctx.translate(vortex.x, vortex.y);
+                ctx.rotate(suckedAnimTimer * 6);
+                for (let i = 0; i < 8; i++) {
+                    const a = i / 8 * Math.PI * 2 + suckedAnimTimer * 3;
+                    const dr = vortex.radius * (0.2 + i * 0.15);
+                    ctx.strokeStyle = `rgba(200,180,255,${0.3-i*0.03})`;
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, dr, a, a + Math.PI * 0.7);
+                    ctx.stroke();
+                }
+                ctx.restore();
+
+                // Funny text
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = `bold ${Math.max(18,W*0.035)}px system-ui`;
+                ctx.textAlign = 'center';
+                const texts = ['NYEDOT!!! 🌀', 'SLURRRP!', 'noooOOOooo...', 'wheeeeee!'];
+                const txt = texts[Math.min(Math.floor(suckedAnimTimer * 3), texts.length - 1)];
+                ctx.fillText(txt, W / 2, H * 0.25);
+            }
+
+            // --- Main Render ---
+            function draw() {
+                ctx.clearRect(0, 0, W, H);
+
+                // Apply shake
+                let shakeX = 0;
+                let shakeY = 0;
+                if (shakeAmount > 0.05) {
+                    shakeX = (Math.random() - 0.5) * shakeAmount * 2;
+                    shakeY = (Math.random() - 0.5) * shakeAmount * 2;
+                }
+
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                drawOceanBackground();
+                drawVortex();
+
+                // Draw bubbles
+                bubbles.forEach(b => { if (b.alpha > 0) drawBubble(b); });
+
+                // Draw debris
+                debrisList.forEach(d => { if (d.alpha > 0) drawDebris(d); });
+
+                // Draw whale
+                if (gameState !== STATE.GAMEOVER || gameOverTimer < 3) {
+                    drawWhale();
+                }
+
+                ctx.restore();
+
+                // UI (no shake)
+                if (gameState === STATE.PLAYING || gameState === STATE.SUCKED) {
+                    drawUI();
+                }
+                if (gameState === STATE.INTRO) {
+                    drawIntro();
+                }
+                if (gameState === STATE.GAMEOVER) {
+                    drawUI();
+                    drawGameOver();
+                }
+                if (gameState === STATE.SUCKED) {
+                    drawSucked();
+                }
+            }
+
+            // --- Game Loop ---
+            let lastTime = performance.now();
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.2) dt = 0.2;
+                lastTime = timestamp;
+
+                update(dt);
+                draw();
+
+                requestAnimationFrame(gameLoop);
+            }
+
+            // --- Initialize ---
+            function init() {
+                resize();
+                initVortex();
+                initWhale();
+                debrisList = [];
+                bubbles = [];
+                score = 0;
+                survivalTime = 0;
+                difficulty = 1;
+                shakeAmount = 0;
+                gameState = STATE.INTRO;
+                gameOverTimer = 0;
+                suckedAnimTimer = 0;
+                introAlpha = 1;
+                for (let i = 0; i < 8; i++) spawnBubble();
+            }
+
+            init();
+            lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+
+            // Handle resize
+            window.addEventListener('resize', () => {
+                const oldW = W;
+                const oldH = H;
+                resize();
+                const scaleX = W / (oldW || W);
+                const scaleY = H / (oldH || H);
+                vortex.x *= scaleX;
+                vortex.y *= scaleY;
+                vortex.radius = Math.min(W * 0.18, H * 0.35);
+                whale.x *= scaleX;
+                whale.y *= scaleY;
+                whale.width = Math.min(W * 0.13, 100);
+                whale.height = whale.width * 0.6;
+                debrisList.forEach(d => { d.x *= scaleX;
+                    d.y *= scaleY; });
+                bubbles.forEach(b => { b.x *= scaleX;
+                    b.y *= scaleY; });
+            });
+
+            console.log('🐋 DeepSeek Escape ready! Don\'t get sucked in! 🌀');
+            console.log('Controls: Arrow keys / WASD / Touch & drag');
+            console.log('Survive the vortex, collect bubbles, dodge debris!');
+        })();
+    </script>
+</body>
+</html>
