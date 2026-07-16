@@ -448,5 +448,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T05:31:29.500Z",
     "updatedAt": "2026-07-16T05:31:29.500Z"
+  },
+  {
+    "slug": "cosmic-dodge",
+    "title": "Cosmic Dodge",
+    "description": "this usually takes 1-3 minutes...",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T05:33:46.338Z",
+    "updatedAt": "2026-07-16T05:33:46.338Z"
   }
 ]
