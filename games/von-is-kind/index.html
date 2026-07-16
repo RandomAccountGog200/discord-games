@@ -1,0 +1,1503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Von is Kind</title>
+    <style>
+        :root {
+            --bg: #2c3e2d;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: linear-gradient(135deg, #1a3a1a 0%, #2c3e2d 30%, #3d5a3c 60%, #2c3e2d 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Segoe UI', 'Trebuchet MS', sans-serif;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #game-container {
+            position: relative;
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 0 4px rgba(255, 255, 255, 0.08),
+                0 0 80px rgba(120, 200, 140, 0.25);
+            transition: transform 0.1s ease;
+        }
+        canvas {
+            display: block;
+            border-radius: 20px;
+            cursor: pointer;
+        }
+        #game-container:active {
+            transform: scale(0.995);
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            // --- Responsive sizing ---
+            const MAX_WIDTH = 820;
+            const MAX_HEIGHT = 580;
+            const MIN_WIDTH = 340;
+            const MIN_HEIGHT = 400;
+
+            function resizeCanvas() {
+                const w = Math.min(Math.max(window.innerWidth - 16, MIN_WIDTH), MAX_WIDTH);
+                const h = Math.min(Math.max(window.innerHeight - 16, MIN_HEIGHT), MAX_HEIGHT);
+                const ratio = Math.min(w / MAX_WIDTH, h / MAX_HEIGHT);
+                canvas.width = Math.floor(MAX_WIDTH * ratio);
+                canvas.height = Math.floor(MAX_HEIGHT * ratio);
+            }
+            resizeCanvas();
+            window.addEventListener('resize', () => {
+                resizeCanvas();
+                repositionEntities();
+            });
+            window.addEventListener('orientationchange', () => {
+                setTimeout(() => { resizeCanvas();
+                    repositionEntities(); }, 300);
+            });
+
+            // --- Audio ---
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    try {
+                        audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                    } catch (e) {
+                        audioCtx = null;
+                    }
+                }
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            }
+
+            function playTone(freq, duration, type = 'sine', vol = 0.18, glideTo = null) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (glideTo) osc.frequency.linearRampToValueAtTime(glideTo, t + duration);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) { /* silence */ }
+            }
+
+            function sfxCheerUp() { playTone(523, 0.1, 'sine', 0.2);
+                setTimeout(() => playTone(659, 0.15, 'sine', 0.22), 80); }
+
+            function sfxCombo(n) {
+                const notes = [523, 659, 784, 1047];
+                for (let i = 0; i < Math.min(n, notes.length); i++) {
+                    setTimeout(() => playTone(notes[i], 0.12, 'triangle', 0.2), i * 70);
+                }
+            }
+
+            function sfxSadTimeout() { playTone(330, 0.25, 'sawtooth', 0.12, 220);
+                setTimeout(() => playTone(262, 0.3, 'sawtooth', 0.1), 150); }
+
+            function sfxHeart() { playTone(880, 0.15, 'sine', 0.25); }
+
+            function sfxGameOver() {
+                playTone(392, 0.3, 'triangle', 0.18);
+                setTimeout(() => playTone(330, 0.3, 'triangle', 0.15), 250);
+                setTimeout(() => playTone(262, 0.5, 'triangle', 0.13), 500);
+            }
+
+            // --- Game State ---
+            let gameState = 'title'; // 'title' | 'playing' | 'gameover'
+            let score = 0;
+            let highScore = 0;
+            let happiness = 100;
+            let maxHappiness = 100;
+            let gameTime = 0;
+            let comboCount = 0;
+            let lastCheerTime = -99;
+            let comboTimer = 0;
+            let sadnessSpawnInterval = 5.5;
+            let timeSinceLastSadSpawn = 0;
+            let playerTargetX = null;
+            let playerTargetY = null;
+            let titlePulse = 0;
+            let shakeAmount = 0;
+            let kindnessRating = '';
+
+            // Load high score
+            try {
+                const saved = localStorage.getItem('vonIsKind_highScore');
+                if (saved) highScore = parseInt(saved, 10) || 0;
+            } catch (e) { highScore = 0; }
+
+            function saveHighScore() {
+                try { localStorage.setItem('vonIsKind_highScore', highScore.toString()); } catch (e) {}
+            }
+
+            // --- Player (Von) ---
+            const player = {
+                x: 0,
+                y: 0,
+                radius: 0,
+                speed: 0,
+                glowIntensity: 0,
+                trailPositions: [],
+                facingRight: true,
+            };
+
+            // --- NPCs ---
+            let npcs = [];
+            const NPC_STATES = { HAPPY: 'happy', SAD: 'sad', CHEERING: 'cheering' };
+            const NPC_COUNT_BASE = 10;
+
+            // --- Particles ---
+            let particles = [];
+
+            // --- Floating hearts ---
+            let floatingHearts = [];
+
+            // --- Clouds ---
+            let clouds = [];
+
+            // --- Flowers ---
+            let flowers = [];
+
+            function getScale() {
+                return canvas.width / MAX_WIDTH;
+            }
+
+            function repositionEntities() {
+                const s = getScale();
+                player.radius = Math.floor(28 * s);
+                player.speed = Math.floor(220 * s);
+                if (player.x === 0 && player.y === 0) {
+                    player.x = canvas.width / 2;
+                    player.y = canvas.height * 0.72;
+                }
+                player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
+                player.y = Math.max(canvas.height * 0.38 + player.radius, Math.min(canvas.height - player.radius - 8, player
+                    .y));
+                playerTargetX = null;
+                playerTargetY = null;
+
+                // Reposition NPCs proportionally
+                const oldW = MAX_WIDTH;
+                const oldH = MAX_HEIGHT;
+                const newW = canvas.width;
+                const newH = canvas.height;
+                npcs.forEach(npc => {
+                    const relX = npc._origX / oldW;
+                    const relY = npc._origY / oldH;
+                    npc.x = relX * newW;
+                    npc.y = relY * newH;
+                    npc.radius = Math.floor(20 * s);
+                    npc._origX = npc.x;
+                    npc._origY = npc.y;
+                });
+                floatingHearts.forEach(h => {
+                    h.radius = Math.floor(14 * s);
+                });
+                // Recreate flowers and clouds
+                initDecorations();
+            }
+
+            function initDecorations() {
+                const s = getScale();
+                clouds = [];
+                const cloudCount = Math.floor(5 * s) + 2;
+                for (let i = 0; i < cloudCount; i++) {
+                    clouds.push({
+                        x: Math.random() * canvas.width,
+                        y: Math.random() * canvas.height * 0.28 + canvas.height * 0.02,
+                        w: Math.floor((40 + Math.random() * 70) * s),
+                        h: Math.floor((18 + Math.random() * 30) * s),
+                        speed: (15 + Math.random() * 30) * s,
+                        opacity: 0.5 + Math.random() * 0.4,
+                    });
+                }
+                flowers = [];
+                const flowerCount = Math.floor(25 * s) + 15;
+                for (let i = 0; i < flowerCount; i++) {
+                    flowers.push({
+                        x: Math.random() * canvas.width,
+                        y: canvas.height * 0.4 + Math.random() * canvas.height * 0.58,
+                        size: Math.floor((3 + Math.random() * 7) * s),
+                        color: ['#f9a8d4', '#fcd34d', '#fde68a', '#fca5a5', '#fff', '#e9d5ff',
+                            '#fda4af'
+                        ][Math.floor(Math.random() * 7)],
+                    });
+                }
+            }
+
+            function spawnNPC(x, y) {
+                const s = getScale();
+                const npc = {
+                    x: x,
+                    y: y,
+                    _origX: x,
+                    _origY: y,
+                    radius: Math.floor(20 * s),
+                    state: NPC_STATES.HAPPY,
+                    sadTimer: 0,
+                    maxSadTimer: 9,
+                    cheerAnim: 0,
+                    vx: (Math.random() - 0.5) * 50 * s,
+                    vy: (Math.random() - 0.5) * 50 * s,
+                    dirChangeTimer: 1.5 + Math.random() * 3,
+                    color: {
+                        happy: ['#fbbf77', '#f9a66c', '#fdc89b', '#fec89a', '#ffd4a8'][Math.floor(Math.random() *
+                            5)],
+                        sad: '#8b9dc3',
+                        cheering: '#ffd700',
+                    },
+                    eyeOffY: 0,
+                    bounceY: 0,
+                };
+                npc._origX = x;
+                npc._origY = y;
+                return npc;
+            }
+
+            function initNPCs() {
+                npcs = [];
+                const s = getScale();
+                const count = Math.max(6, Math.floor(NPC_COUNT_BASE * s));
+                const groundTop = canvas.height * 0.38;
+                const groundBot = canvas.height - 30 * s;
+                const margin = 40 * s;
+                for (let i = 0; i < count; i++) {
+                    const x = margin + Math.random() * (canvas.width - margin * 2);
+                    const y = groundTop + margin + Math.random() * (groundBot - groundTop - margin);
+                    npcs.push(spawnNPC(x, y));
+                }
+            }
+
+            function resetGame() {
+                const s = getScale();
+                player.x = canvas.width / 2;
+                player.y = canvas.height * 0.72;
+                player.radius = Math.floor(28 * s);
+                player.speed = Math.floor(220 * s);
+                player.glowIntensity = 0;
+                player.trailPositions = [];
+                player.facingRight = true;
+                playerTargetX = null;
+                playerTargetY = null;
+                score = 0;
+                happiness = maxHappiness;
+                gameTime = 0;
+                comboCount = 0;
+                lastCheerTime = -99;
+                comboTimer = 0;
+                sadnessSpawnInterval = 5.5;
+                timeSinceLastSadSpawn = 0;
+                particles = [];
+                floatingHearts = [];
+                shakeAmount = 0;
+                kindnessRating = '';
+                initNPCs();
+                initDecorations();
+            }
+
+            function spawnParticles(x, y, count, color, spread = 3, life = 0.7) {
+                const s = getScale();
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = (spread * 0.5 + Math.random() * spread) * 80 * s;
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - Math.random() * 60 * s,
+                        life: life + Math.random() * 0.4,
+                        maxLife: life + 0.4,
+                        color: color,
+                        size: (2 + Math.random() * 6) * s,
+                        shape: Math.random() < 0.35 ? 'heart' : 'circle',
+                    });
+                }
+            }
+
+            function makeNPCSad(npc) {
+                if (npc.state !== NPC_STATES.HAPPY) return;
+                npc.state = NPC_STATES.SAD;
+                npc.sadTimer = npc.maxSadTimer + Math.random() * 3;
+                npc.eyeOffY = -2 * getScale();
+                npc.bounceY = 0;
+            }
+
+            function cheerUpNPC(npc) {
+                if (npc.state !== NPC_STATES.SAD) return;
+                npc.state = NPC_STATES.CHEERING;
+                npc.cheerAnim = 0.7;
+                npc.sadTimer = 0;
+                npc.eyeOffY = 0;
+                npc.bounceY = -8 * getScale();
+                const now = gameTime;
+                if (now - lastCheerTime < 1.8) {
+                    comboCount++;
+                    comboTimer = 1.5;
+                } else {
+                    comboCount = 1;
+                    comboTimer = 0;
+                }
+                lastCheerTime = now;
+                const bonus = comboCount > 1 ? (comboCount - 1) * 8 : 0;
+                score += 10 + bonus;
+                spawnParticles(npc.x, npc.y, 18 + comboCount * 5, '#ff6b9d', 4, 0.8);
+                spawnParticles(npc.x, npc.y, 10, '#ffd700', 3, 0.6);
+                spawnParticles(npc.x, npc.y, 6, '#fff', 2, 0.5);
+                if (comboCount > 1 && comboCount <= 4) {
+                    sfxCombo(comboCount);
+                } else if (comboCount > 4) {
+                    sfxCombo(4);
+                } else {
+                    sfxCheerUp();
+                }
+                if (comboCount >= 5) {
+                    spawnParticles(npc.x, npc.y, 30, '#ff4081', 5, 1.0);
+                    spawnParticles(npc.x, npc.y, 20, '#fff700', 4, 0.9);
+                }
+            }
+
+            function spawnFloatingHeart() {
+                const s = getScale();
+                const groundTop = canvas.height * 0.38;
+                const groundBot = canvas.height - 40 * s;
+                const margin = 50 * s;
+                floatingHearts.push({
+                    x: margin + Math.random() * (canvas.width - margin * 2),
+                    y: groundTop + margin + Math.random() * (groundBot - groundTop - margin * 2),
+                    radius: Math.floor(14 * s),
+                    life: 12 + Math.random() * 8,
+                    bobOffset: Math.random() * Math.PI * 2,
+                });
+            }
+
+            // --- Update ---
+            function update(dt) {
+                if (gameState !== 'playing') {
+                    // Still animate title screen
+                    if (gameState === 'title') {
+                        titlePulse += dt * 2.5;
+                        updateNPCsTitle(dt);
+                        updateClouds(dt);
+                    }
+                    if (gameState === 'gameover') {
+                        updateClouds(dt);
+                        updateParticles(dt);
+                    }
+                    return;
+                }
+
+                const realDt = Math.min(dt, 0.12);
+                gameTime += realDt;
+                timeSinceLastSadSpawn += realDt;
+                if (comboTimer > 0) comboTimer -= realDt;
+                if (comboTimer <= 0 && comboCount > 1) comboCount = 1;
+
+                // Update sadness spawn rate
+                const difficultyFactor = Math.min(gameTime / 80, 1.0);
+                sadnessSpawnInterval = 5.5 - difficultyFactor * 4.0;
+                if (sadnessSpawnInterval < 1.2) sadnessSpawnInterval = 1.2;
+
+                // Spawn sad NPCs
+                if (timeSinceLastSadSpawn >= sadnessSpawnInterval) {
+                    timeSinceLastSadSpawn = 0;
+                    const happyNPCs = npcs.filter(n => n.state === NPC_STATES.HAPPY);
+                    if (happyNPCs.length > 0) {
+                        const target = happyNPCs[Math.floor(Math.random() * happyNPCs.length)];
+                        makeNPCSad(target);
+                    }
+                }
+
+                // Spawn floating hearts occasionally
+                if (floatingHearts.length < 3 && Math.random() < realDt * 0.25) {
+                    spawnFloatingHeart();
+                }
+
+                // Update player
+                updatePlayer(realDt);
+
+                // Update NPCs
+                updateNPCs(realDt);
+
+                // Update particles
+                updateParticles(realDt);
+
+                // Update floating hearts
+                updateFloatingHearts(realDt);
+
+                // Update clouds
+                updateClouds(realDt);
+
+                // Update shake
+                if (shakeAmount > 0) shakeAmount = Math.max(0, shakeAmount - realDt * 3);
+
+                // Check game over
+                if (happiness <= 0) {
+                    happiness = 0;
+                    endGame();
+                }
+
+                // Update high score
+                if (score > highScore) {
+                    highScore = score;
+                    saveHighScore();
+                }
+            }
+
+            function updatePlayer(dt) {
+                const s = getScale();
+                let moveX = 0;
+                let moveY = 0;
+
+                // Keyboard input
+                if (keys['ArrowLeft'] || keys['KeyA']) moveX = -1;
+                if (keys['ArrowRight'] || keys['KeyD']) moveX = 1;
+                if (keys['ArrowUp'] || keys['KeyW']) moveY = -1;
+                if (keys['ArrowDown'] || keys['KeyS']) moveY = 1;
+
+                if (moveX !== 0 || moveY !== 0) {
+                    playerTargetX = null;
+                    playerTargetY = null;
+                    const len = Math.sqrt(moveX * moveX + moveY * moveY);
+                    moveX /= len;
+                    moveY /= len;
+                    player.x += moveX * player.speed * dt;
+                    player.y += moveY * player.speed * dt;
+                    if (moveX > 0.1) player.facingRight = true;
+                    if (moveX < -0.1) player.facingRight = false;
+                } else if (playerTargetX !== null && playerTargetY !== null) {
+                    const dx = playerTargetX - player.x;
+                    const dy = playerTargetY - player.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist > 3 * s) {
+                        const nx = dx / dist;
+                        const ny = dy / dist;
+                        player.x += nx * player.speed * dt;
+                        player.y += ny * player.speed * dt;
+                        if (nx > 0.05) player.facingRight = true;
+                        if (nx < -0.05) player.facingRight = false;
+                    } else {
+                        playerTargetX = null;
+                        playerTargetY = null;
+                    }
+                }
+
+                // Clamp player
+                const groundTop = canvas.height * 0.38;
+                const groundBot = canvas.height - 8 * s;
+                player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
+                player.y = Math.max(groundTop + player.radius, Math.min(groundBot - player.radius, player.y));
+
+                // Trail
+                if (Math.abs(moveX) > 0.01 || Math.abs(moveY) > 0.01 || (playerTargetX !== null)) {
+                    player.trailPositions.push({ x: player.x, y: player.y, life: 0.25 });
+                }
+                for (let i = player.trailPositions.length - 1; i >= 0; i--) {
+                    player.trailPositions[i].life -= dt;
+                    if (player.trailPositions[i].life <= 0) player.trailPositions.splice(i, 1);
+                }
+
+                // Glow near sad NPCs
+                let nearSad = false;
+                for (const npc of npcs) {
+                    if (npc.state === NPC_STATES.SAD) {
+                        const dx = player.x - npc.x;
+                        const dy = player.y - npc.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist < player.radius + npc.radius + 50 * s) {
+                            nearSad = true;
+                            // Auto cheer up when very close
+                            if (dist < player.radius + npc.radius + 8 * s) {
+                                cheerUpNPC(npc);
+                            }
+                        }
+                    }
+                }
+                player.glowIntensity += ((nearSad ? 1 : 0.15) - player.glowIntensity) * dt * 8;
+
+                // Check floating heart collection
+                for (let i = floatingHearts.length - 1; i >= 0; i--) {
+                    const h = floatingHearts[i];
+                    const dx = player.x - h.x;
+                    const dy = player.y - h.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < player.radius + h.radius + 5 * s) {
+                        // Collect heart
+                        score += 5;
+                        happiness = Math.min(maxHappiness, happiness + 8);
+                        spawnParticles(h.x, h.y, 12, '#ff6b9d', 2.5, 0.5);
+                        spawnParticles(h.x, h.y, 6, '#fff', 1.5, 0.4);
+                        sfxHeart();
+                        floatingHearts.splice(i, 1);
+                    }
+                }
+            }
+
+            function updateNPCs(dt) {
+                const s = getScale();
+                const groundTop = canvas.height * 0.38;
+                const groundBot = canvas.height - 30 * s;
+                const margin = 30 * s;
+
+                for (const npc of npcs) {
+                    // Cheer animation
+                    if (npc.cheerAnim > 0) {
+                        npc.cheerAnim -= dt;
+                        npc.bounceY = -Math.sin(npc.cheerAnim / 0.7 * Math.PI) * 14 * s;
+                        if (npc.cheerAnim <= 0) {
+                            npc.cheerAnim = 0;
+                            npc.bounceY = 0;
+                            npc.state = NPC_STATES.HAPPY;
+                            npc.eyeOffY = 0;
+                        }
+                    }
+
+                    // Sad timer
+                    if (npc.state === NPC_STATES.SAD) {
+                        npc.sadTimer -= dt;
+                        npc.eyeOffY = -3 * s;
+                        if (npc.sadTimer <= 0) {
+                            // Timeout
+                            happiness -= 16 + Math.floor(Math.random() * 8);
+                            shakeAmount = 0.4;
+                            spawnParticles(npc.x, npc.y, 10, '#5c6b8a', 2, 0.6);
+                            sfxSadTimeout();
+                            npc.state = NPC_STATES.HAPPY;
+                            npc.sadTimer = 0;
+                            npc.eyeOffY = 0;
+                            npc.bounceY = 0;
+                            // Small cooldown before can become sad again
+                            npc._sadCooldown = 3 + Math.random() * 3;
+                        }
+                    }
+                    if (npc._sadCooldown > 0 && npc.state === NPC_STATES.HAPPY) {
+                        npc._sadCooldown -= dt;
+                    }
+
+                    // Movement
+                    const speedMul = npc.state === NPC_STATES.SAD ? 0.3 : (npc.cheerAnim > 0 ? 0.1 : 1);
+                    npc.dirChangeTimer -= dt;
+                    if (npc.dirChangeTimer <= 0) {
+                        npc.dirChangeTimer = 1.5 + Math.random() * 3.5;
+                        npc.vx = (Math.random() - 0.5) * 70 * s;
+                        npc.vy = (Math.random() - 0.5) * 70 * s;
+                    }
+                    npc.x += npc.vx * speedMul * dt;
+                    npc.y += npc.vy * speedMul * dt;
+
+                    // Bounce back at boundaries
+                    if (npc.x - npc.radius < margin || npc.x + npc.radius > canvas.width - margin) {
+                        npc.vx *= -1;
+                        npc.x = Math.max(margin + npc.radius, Math.min(canvas.width - margin - npc.radius, npc.x));
+                        npc.dirChangeTimer = 0.3;
+                    }
+                    if (npc.y - npc.radius < groundTop + margin * 0.3 || npc.y + npc.radius > groundBot) {
+                        npc.vy *= -1;
+                        npc.y = Math.max(groundTop + margin * 0.3 + npc.radius, Math.min(groundBot - npc.radius, npc
+                            .y));
+                        npc.dirChangeTimer = 0.3;
+                    }
+
+                    // Simple separation
+                    for (const other of npcs) {
+                        if (other === npc) continue;
+                        const dx = npc.x - other.x;
+                        const dy = npc.y - other.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        const minDist = npc.radius + other.radius + 8 * s;
+                        if (dist < minDist && dist > 0.01) {
+                            const push = (minDist - dist) / minDist * 2;
+                            npc.x += (dx / dist) * push * 80 * s * dt;
+                            npc.y += (dy / dist) * push * 80 * s * dt;
+                        }
+                    }
+                }
+            }
+
+            function updateNPCsTitle(dt) {
+                const s = getScale();
+                const groundTop = canvas.height * 0.38;
+                const groundBot = canvas.height - 30 * s;
+                const margin = 30 * s;
+                for (const npc of npcs) {
+                    if (npc.cheerAnim > 0) {
+                        npc.cheerAnim -= dt;
+                        npc.bounceY = -Math.sin(Math.max(npc.cheerAnim / 0.7, 0) * Math.PI) * 10 * s;
+                        if (npc.cheerAnim <= 0) {
+                            npc.cheerAnim = 0;
+                            npc.bounceY = 0;
+                            npc.state = NPC_STATES.HAPPY;
+                        }
+                    }
+                    npc.dirChangeTimer -= dt;
+                    if (npc.dirChangeTimer <= 0) {
+                        npc.dirChangeTimer = 1.5 + Math.random() * 3.5;
+                        npc.vx = (Math.random() - 0.5) * 60 * s;
+                        npc.vy = (Math.random() - 0.5) * 60 * s;
+                    }
+                    npc.x += npc.vx * dt;
+                    npc.y += npc.vy * dt;
+                    if (npc.x - npc.radius < margin || npc.x + npc.radius > canvas.width - margin) {
+                        npc.vx *= -1;
+                        npc.x = Math.max(margin + npc.radius, Math.min(canvas.width - margin - npc.radius, npc.x));
+                    }
+                    if (npc.y - npc.radius < groundTop + margin * 0.3 || npc.y + npc.radius > groundBot) {
+                        npc.vy *= -1;
+                        npc.y = Math.max(groundTop + margin * 0.3 + npc.radius, Math.min(groundBot - npc.radius, npc
+                            .y));
+                    }
+                }
+            }
+
+            function updateParticles(dt) {
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.vy += 120 * getScale() * dt; // gravity
+                    p.life -= dt;
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+            }
+
+            function updateFloatingHearts(dt) {
+                const s = getScale();
+                for (let i = floatingHearts.length - 1; i >= 0; i--) {
+                    const h = floatingHearts[i];
+                    h.life -= dt;
+                    h.bobOffset += dt * 3;
+                    if (h.life <= 0) {
+                        floatingHearts.splice(i, 1);
+                    }
+                }
+                // Keep max hearts
+                while (floatingHearts.length > 5) floatingHearts.shift();
+            }
+
+            function updateClouds(dt) {
+                for (const cloud of clouds) {
+                    cloud.x += cloud.speed * dt;
+                    if (cloud.x > canvas.width + cloud.w) {
+                        cloud.x = -cloud.w;
+                        cloud.y = Math.random() * canvas.height * 0.28 + canvas.height * 0.02;
+                    }
+                }
+            }
+
+            function endGame() {
+                gameState = 'gameover';
+                sfxGameOver();
+                if (score > highScore) {
+                    highScore = score;
+                    saveHighScore();
+                }
+                // Determine kindness rating
+                if (score >= 200) kindnessRating = '🌟 Legendary Kindness! 🌟';
+                else if (score >= 120) kindnessRating = '💖 Super Kind!';
+                else if (score >= 70) kindnessRating = '😊 Very Kind!';
+                else if (score >= 30) kindnessRating = '🙂 Kind!';
+                else kindnessRating = '💙 Keep Practicing Kindness!';
+                spawnParticles(player.x, player.y, 40, '#ff6b9d', 5, 1.2);
+                spawnParticles(player.x, player.y, 25, '#ffd700', 4, 1.0);
+            }
+
+            // --- Render ---
+            function render() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                const s = getScale();
+
+                // Apply shake
+                let shakeX = 0;
+                let shakeY = 0;
+                if (shakeAmount > 0.01) {
+                    shakeX = (Math.random() - 0.5) * shakeAmount * 12 * s;
+                    shakeY = (Math.random() - 0.5) * shakeAmount * 12 * s;
+                }
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                // Sky gradient
+                const skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height * 0.42);
+                skyGrad.addColorStop(0, '#c9e4f7');
+                skyGrad.addColorStop(0.5, '#dceefb');
+                skyGrad.addColorStop(1, '#e8f4e8');
+                ctx.fillStyle = skyGrad;
+                ctx.fillRect(0, 0, canvas.width, canvas.height * 0.42);
+
+                // Sun
+                const sunX = canvas.width * 0.78;
+                const sunY = canvas.height * 0.12;
+                const sunGrad = ctx.createRadialGradient(sunX, sunY, 5 * s, sunX, sunY, 55 * s);
+                sunGrad.addColorStop(0, 'rgba(255,250,220,1)');
+                sunGrad.addColorStop(0.3, 'rgba(255,240,200,0.7)');
+                sunGrad.addColorStop(0.7, 'rgba(255,220,150,0.15)');
+                sunGrad.addColorStop(1, 'rgba(255,200,100,0)');
+                ctx.fillStyle = sunGrad;
+                ctx.beginPath();
+                ctx.arc(sunX, sunY, 55 * s, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Clouds
+                for (const cloud of clouds) {
+                    ctx.fillStyle = `rgba(255,255,255,${cloud.opacity})`;
+                    ctx.beginPath();
+                    const cx = cloud.x;
+                    const cy = cloud.y;
+                    const cw = cloud.w;
+                    const ch = cloud.h;
+                    ctx.ellipse(cx, cy, cw * 0.5, ch * 0.55, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.ellipse(cx - cw * 0.3, cy - ch * 0.15, cw * 0.35, ch * 0.5, -0.2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.ellipse(cx + cw * 0.28, cy - ch * 0.1, cw * 0.38, ch * 0.48, 0.15, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Distant hills
+                ctx.fillStyle = '#c5d9a8';
+                ctx.beginPath();
+                ctx.moveTo(0, canvas.height * 0.40);
+                ctx.quadraticCurveTo(canvas.width * 0.25, canvas.height * 0.30, canvas.width * 0.5, canvas.height * 0.39);
+                ctx.quadraticCurveTo(canvas.width * 0.7, canvas.height * 0.33, canvas.width, canvas.height * 0.38);
+                ctx.lineTo(canvas.width, canvas.height * 0.44);
+                ctx.lineTo(0, canvas.height * 0.44);
+                ctx.closePath();
+                ctx.fill();
+
+                // Ground
+                const groundTop = canvas.height * 0.38;
+                const groundGrad = ctx.createLinearGradient(0, groundTop, 0, canvas.height);
+                groundGrad.addColorStop(0, '#8dbd6a');
+                groundGrad.addColorStop(0.15, '#7aad5a');
+                groundGrad.addColorStop(0.5, '#6a9d48');
+                groundGrad.addColorStop(1, '#5a8538');
+                ctx.fillStyle = groundGrad;
+                ctx.fillRect(0, groundTop, canvas.width, canvas.height - groundTop);
+
+                // Path
+                ctx.fillStyle = '#c9b896';
+                ctx.beginPath();
+                ctx.moveTo(canvas.width * 0.15, groundTop);
+                ctx.quadraticCurveTo(canvas.width * 0.4, canvas.height * 0.55, canvas.width * 0.55, canvas.height * 0.58);
+                ctx.quadraticCurveTo(canvas.width * 0.7, canvas.height * 0.6, canvas.width * 0.88, canvas.height * 0.5);
+                ctx.lineTo(canvas.width * 0.88, canvas.height * 0.5 + 28 * s);
+                ctx.quadraticCurveTo(canvas.width * 0.7, canvas.height * 0.6 + 28 * s, canvas.width * 0.55, canvas.height *
+                    0.58 + 28 * s);
+                ctx.quadraticCurveTo(canvas.width * 0.4, canvas.height * 0.55 + 28 * s, canvas.width * 0.15, groundTop + 28 *
+                    s);
+                ctx.closePath();
+                ctx.fill();
+
+                // Path border stones
+                ctx.strokeStyle = '#b8a582';
+                ctx.lineWidth = 2 * s;
+                ctx.stroke();
+
+                // Flowers
+                for (const flower of flowers) {
+                    ctx.fillStyle = flower.color;
+                    ctx.beginPath();
+                    ctx.arc(flower.x, flower.y, flower.size, 0, Math.PI * 2);
+                    ctx.fill();
+                    if (flower.size > 4 * s) {
+                        ctx.fillStyle = '#fff8dc';
+                        ctx.beginPath();
+                        ctx.arc(flower.x, flower.y, flower.size * 0.35, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+
+                // Grass tufts
+                ctx.strokeStyle = '#5d9438';
+                ctx.lineWidth = 1 * s;
+                for (let i = 0; i < 40; i++) {
+                    const gx = (i * canvas.width / 39 + Math.sin(i * 7.3) * 12 * s);
+                    const gy = groundTop + 5 * s + (i % 5) * canvas.height * 0.12;
+                    if (gy < canvas.height - 10 * s) {
+                        ctx.beginPath();
+                        ctx.moveTo(gx, gy);
+                        ctx.quadraticCurveTo(gx + 4 * s, gy - 8 * s, gx + 1 * s, gy - 4 * s);
+                        ctx.stroke();
+                        ctx.beginPath();
+                        ctx.moveTo(gx + 1 * s, gy);
+                        ctx.quadraticCurveTo(gx - 3 * s, gy - 7 * s, gx - 1 * s, gy - 3 * s);
+                        ctx.stroke();
+                    }
+                }
+
+                // Draw trees in background
+                drawTree(canvas.width * 0.08, canvas.height * 0.43, 22 * s, 50 * s);
+                drawTree(canvas.width * 0.92, canvas.height * 0.41, 26 * s, 60 * s);
+                drawTree(canvas.width * 0.18, canvas.height * 0.44, 16 * s, 38 * s);
+
+                // Draw NPCs
+                for (const npc of npcs) {
+                    drawNPC(npc);
+                }
+
+                // Draw floating hearts
+                for (const h of floatingHearts) {
+                    const alpha = Math.min(1, h.life / 3);
+                    const bobY = Math.sin(h.bobOffset) * 6 * s;
+                    drawHeartShape(h.x, h.y + bobY, h.radius, `rgba(255,107,157,${alpha})`,
+                        `rgba(255,150,190,${alpha * 0.5})`);
+                    // Glow
+                    const glowGrad = ctx.createRadialGradient(h.x, h.y + bobY, h.radius * 0.3, h.x, h.y + bobY, h.radius *
+                        2);
+                    glowGrad.addColorStop(0, `rgba(255,180,200,${alpha * 0.4})`);
+                    glowGrad.addColorStop(1, 'rgba(255,180,200,0)');
+                    ctx.fillStyle = glowGrad;
+                    ctx.beginPath();
+                    ctx.arc(h.x, h.y + bobY, h.radius * 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Draw player trail
+                for (const t of player.trailPositions) {
+                    const alpha = t.life / 0.25;
+                    ctx.fillStyle = `rgba(100,210,210,${alpha * 0.35})`;
+                    ctx.beginPath();
+                    ctx.arc(t.x, t.y, player.radius * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Draw player (Von)
+                drawPlayer();
+
+                // Draw particles
+                for (const p of particles) {
+                    const alpha = Math.max(0, p.life / p.maxLife);
+                    if (p.shape === 'heart' && p.size > 3 * s) {
+                        drawHeartShape(p.x, p.y, p.size, `rgba(${hexToRgb(p.color)},${alpha})`,
+                            `rgba(${hexToRgb(p.color)},${alpha * 0.4})`);
+                    } else {
+                        ctx.fillStyle = `rgba(${hexToRgb(p.color)},${alpha})`;
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+
+                ctx.restore();
+
+                // Draw UI (not affected by shake)
+                drawUI();
+            }
+
+            function hexToRgb(hex) {
+                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                if (result) {
+                    return `${parseInt(result[1],16)},${parseInt(result[2],16)},${parseInt(result[3],16)}`;
+                }
+                return '255,255,255';
+            }
+
+            function drawHeartShape(x, y, size, fillColor, glowColor) {
+                ctx.fillStyle = glowColor || fillColor;
+                ctx.beginPath();
+                const s = size;
+                const cx = x;
+                const cy = y - s * 0.3;
+                ctx.moveTo(cx, cy + s * 0.7);
+                ctx.bezierCurveTo(cx, cy + s * 0.4, cx - s, cy - s * 0.2, cx - s * 0.5, cy - s * 0.6);
+                ctx.bezierCurveTo(cx, cy - s * 1.0, cx, cy + s * 0.1, cx, cy + s * 0.7);
+                ctx.bezierCurveTo(cx, cy + s * 0.1, cx, cy - s * 1.0, cx + s * 0.5, cy - s * 0.6);
+                ctx.bezierCurveTo(cx + s, cy - s * 0.2, cx, cy + s * 0.4, cx, cy + s * 0.7);
+                ctx.fill();
+                if (glowColor && glowColor !== fillColor) {
+                    ctx.fillStyle = fillColor;
+                    ctx.beginPath();
+                    const innerS = s * 0.7;
+                    const icx = x;
+                    const icy = y - innerS * 0.25;
+                    ctx.moveTo(icx, icy + innerS * 0.6);
+                    ctx.bezierCurveTo(icx, icy + innerS * 0.3, icx - innerS, icy - innerS * 0.2, icx - innerS * 0.5, icy -
+                        innerS * 0.55);
+                    ctx.bezierCurveTo(icx, icy - innerS * 0.9, icx, icy + innerS * 0.05, icx, icy + innerS * 0.6);
+                    ctx.bezierCurveTo(icx, icy + innerS * 0.05, icx, icy - innerS * 0.9, icx + innerS * 0.5, icy - innerS *
+                        0.55);
+                    ctx.bezierCurveTo(icx + innerS, icy - innerS * 0.2, icx, icy + innerS * 0.3, icx, icy + innerS * 0.6);
+                    ctx.fill();
+                }
+            }
+
+            function drawTree(x, y, radius, height) {
+                const s = getScale();
+                // Trunk
+                ctx.fillStyle = '#8B6B4A';
+                ctx.fillRect(x - radius * 0.3, y - height * 0.35, radius * 0.6, height * 0.35);
+                // Canopy
+                const canopyGrad = ctx.createRadialGradient(x, y - height * 0.5, radius * 0.2, x, y - height * 0.4, radius);
+                canopyGrad.addColorStop(0, '#7dbd5a');
+                canopyGrad.addColorStop(0.7, '#5a9a3a');
+                canopyGrad.addColorStop(1, '#3d7030');
+                ctx.fillStyle = canopyGrad;
+                ctx.beginPath();
+                ctx.arc(x, y - height * 0.45, radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#6aad48';
+                ctx.beginPath();
+                ctx.arc(x - radius * 0.3, y - height * 0.5, radius * 0.7, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#8ccd68';
+                ctx.beginPath();
+                ctx.arc(x + radius * 0.25, y - height * 0.52, radius * 0.65, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            function drawNPC(npc) {
+                const s = getScale();
+                const x = npc.x;
+                const y = npc.y + (npc.bounceY || 0);
+                const r = npc.radius;
+                let bodyColor, eyeColor, mouthCurve;
+
+                if (npc.state === NPC_STATES.CHEERING) {
+                    bodyColor = npc.color.cheering;
+                    eyeColor = '#fff';
+                    mouthCurve = 0.45;
+                } else if (npc.state === NPC_STATES.SAD) {
+                    const urgency = npc.sadTimer / npc.maxSadTimer;
+                    const rVal = Math.floor(139 + (1 - urgency) * 60);
+                    const gVal = Math.floor(157 + (1 - urgency) * 30);
+                    const bVal = Math.floor(195 - (1 - urgency) * 40);
+                    bodyColor = `rgb(${rVal},${gVal},${bVal})`;
+                    eyeColor = '#4a5568';
+                    mouthCurve = -0.35;
+                } else {
+                    bodyColor = npc.color.happy;
+                    eyeColor = '#3d2b1f';
+                    mouthCurve = 0.3;
+                }
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.15)';
+                ctx.beginPath();
+                ctx.ellipse(x, y + r * 0.8, r * 0.7, r * 0.2, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body
+                const bodyGrad = ctx.createRadialGradient(x - r * 0.25, y - r * 0.3, r * 0.1, x, y, r);
+                bodyGrad.addColorStop(0, 'rgba(255,255,255,0.35)');
+                bodyGrad.addColorStop(0.7, bodyColor);
+                bodyGrad.addColorStop(1, 'rgba(0,0,0,0.1)');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.arc(x, y, r, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Outline
+                ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+                ctx.lineWidth = 1.5 * s;
+                ctx.stroke();
+
+                // Eyes
+                const eyeSpacing = r * 0.4;
+                const eyeY = y - r * 0.15 + (npc.eyeOffY || 0);
+                const eyeR = r * 0.22;
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(x - eyeSpacing, eyeY, eyeR, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(x + eyeSpacing, eyeY, eyeR, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = eyeColor;
+                ctx.beginPath();
+                ctx.arc(x - eyeSpacing, eyeY, eyeR * 0.55, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(x + eyeSpacing, eyeY, eyeR * 0.55, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Mouth
+                ctx.strokeStyle = eyeColor;
+                ctx.lineWidth = 2 * s;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                if (mouthCurve >= 0) {
+                    ctx.arc(x, y + r * 0.15, r * 0.3, 0.1, Math.PI - 0.1, false);
+                } else {
+                    ctx.arc(x, y + r * 0.35, r * 0.3, Math.PI + 0.2, -0.2, false);
+                }
+                ctx.stroke();
+
+                // Sad timer ring
+                if (npc.state === NPC_STATES.SAD) {
+                    const urgency = npc.sadTimer / npc.maxSadTimer;
+                    const ringAlpha = 0.6;
+                    const ringR = r + 5 * s;
+                    ctx.strokeStyle = urgency < 0.3 ?
+                        `rgba(255,80,80,${ringAlpha})` : `rgba(180,180,200,${ringAlpha})`;
+                    ctx.lineWidth = 3 * s;
+                    ctx.beginPath();
+                    const startAngle = -Math.PI / 2;
+                    const endAngle = startAngle + (Math.PI * 2 * urgency);
+                    ctx.arc(x, y, ringR, startAngle, endAngle);
+                    ctx.stroke();
+                    if (urgency < 0.3) {
+                        // Pulsing warning
+                        const pulse = Math.sin(gameTime * 8) * 0.3 + 0.7;
+                        ctx.strokeStyle = `rgba(255,40,40,${pulse})`;
+                        ctx.lineWidth = 5 * s;
+                        ctx.beginPath();
+                        ctx.arc(x, y, ringR + 2 * s, startAngle, endAngle);
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            function drawPlayer() {
+                const s = getScale();
+                const x = player.x;
+                const y = player.y;
+                const r = player.radius;
+
+                // Glow aura
+                const glowR = r * 1.8 + player.glowIntensity * r * 0.8;
+                const glowGrad = ctx.createRadialGradient(x, y, r * 0.7, x, y, glowR);
+                glowGrad.addColorStop(0, `rgba(130,220,220,${0.25 + player.glowIntensity * 0.4})`);
+                glowGrad.addColorStop(1, 'rgba(130,220,220,0)');
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(x, y, glowR, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                ctx.beginPath();
+                ctx.ellipse(x, y + r * 0.85, r * 0.75, r * 0.22, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body
+                const bodyGrad = ctx.createRadialGradient(x - r * 0.3, y - r * 0.35, r * 0.05, x, y, r);
+                bodyGrad.addColorStop(0, '#b8f0f0');
+                bodyGrad.addColorStop(0.4, '#5cc9c9');
+                bodyGrad.addColorStop(1, '#2a8f8f');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.arc(x, y, r, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Outline
+                ctx.strokeStyle = 'rgba(20,80,80,0.5)';
+                ctx.lineWidth = 2.5 * s;
+                ctx.stroke();
+
+                // Heart emblem on chest
+                const heartSize = r * 0.45;
+                drawHeartShape(x, y - r * 0.05, heartSize, 'rgba(255,255,255,0.85)', 'rgba(255,200,200,0.5)');
+
+                // Eyes
+                const eyeSpacing = r * 0.38;
+                const eyeY = y - r * 0.2;
+                const eyeR = r * 0.24;
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(x - eyeSpacing, eyeY, eyeR, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(x + eyeSpacing, eyeY, eyeR, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#1a3a3a';
+                ctx.beginPath();
+                ctx.arc(x - eyeSpacing, eyeY, eyeR * 0.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(x + eyeSpacing, eyeY, eyeR * 0.5, 0, Math.PI * 2);
+                ctx.fill();
+                // Eye highlights
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(x - eyeSpacing - eyeR * 0.15, eyeY - eyeR * 0.2, eyeR * 0.2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(x + eyeSpacing - eyeR * 0.15, eyeY - eyeR * 0.2, eyeR * 0.2, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Smile
+                ctx.strokeStyle = '#1a3a3a';
+                ctx.lineWidth = 2 * s;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.arc(x, y + r * 0.05, r * 0.35, 0.15, Math.PI - 0.15, false);
+                ctx.stroke();
+
+                // Small cape hint
+                ctx.fillStyle = 'rgba(255,180,180,0.5)';
+                ctx.beginPath();
+                ctx.moveTo(x - r * 0.5, y + r * 0.3);
+                ctx.quadraticCurveTo(x - r * 0.6, y + r * 0.7, x - r * 0.3, y + r * 0.85);
+                ctx.lineTo(x + r * 0.3, y + r * 0.85);
+                ctx.quadraticCurveTo(x + r * 0.6, y + r * 0.7, x + r * 0.5, y + r * 0.3);
+                ctx.fill();
+            }
+
+            function drawUI() {
+                const s = getScale();
+                if (gameState === 'playing') {
+                    // Happiness bar
+                    const barX = 15 * s;
+                    const barY = 10 * s;
+                    const barW = canvas.width * 0.35;
+                    const barH = 16 * s;
+                    const borderRadius = 8 * s;
+
+                    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                    roundRect(barX - 2 * s, barY - 2 * s, barW + 4 * s, barH + 4 * s, borderRadius + 1);
+                    ctx.fill();
+
+                    const happyFrac = happiness / maxHappiness;
+                    const barGrad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+                    if (happyFrac > 0.5) {
+                        barGrad.addColorStop(0, '#4ade80');
+                        barGrad.addColorStop(1, '#22c55e');
+                    } else if (happyFrac > 0.25) {
+                        barGrad.addColorStop(0, '#fbbf24');
+                        barGrad.addColorStop(1, '#f59e0b');
+                    } else {
+                        barGrad.addColorStop(0, '#f87171');
+                        barGrad.addColorStop(1, '#ef4444');
+                    }
+                    ctx.fillStyle = barGrad;
+                    roundRect(barX, barY, barW * happyFrac, barH, borderRadius);
+                    ctx.fill();
+
+                    ctx.fillStyle = '#fff';
+                    ctx.font = `bold ${11*s}px 'Segoe UI', sans-serif`;
+                    ctx.textAlign = 'left';
+                    ctx.fillText('💛 Happiness', barX + 6 * s, barY + barH * 0.7);
+
+                    // Score
+                    ctx.fillStyle = '#fff';
+                    ctx.font = `bold ${15*s}px 'Segoe UI', sans-serif`;
+                    ctx.textAlign = 'right';
+                    ctx.fillText(`⭐ ${score}`, canvas.width - 15 * s, barY + barH * 0.75);
+
+                    // High score
+                    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                    ctx.font = `${10*s}px 'Segoe UI', sans-serif`;
+                    ctx.fillText(`Best: ${highScore}`, canvas.width - 15 * s, barY + barH + 14 * s);
+
+                    // Combo display
+                    if (comboCount > 1 && comboTimer > 0) {
+                        const comboAlpha = Math.min(1, comboTimer / 0.4);
+                        ctx.fillStyle = `rgba(255,200,50,${comboAlpha})`;
+                        ctx.font = `bold ${18*s}px 'Segoe UI', sans-serif`;
+                        ctx.textAlign = 'center';
+                        const comboText = comboCount >= 8 ? `🔥 MEGA COMBO x${comboCount}!` :
+                            comboCount >= 5 ? `✨ SUPER COMBO x${comboCount}!` :
+                            `Combo x${comboCount}!`;
+                        ctx.fillText(comboText, canvas.width / 2, canvas.height * 0.25);
+                    }
+
+                    // Instructions hint
+                    if (gameTime < 6) {
+                        const hintAlpha = Math.min(1, (6 - gameTime) / 2);
+                        ctx.fillStyle = `rgba(255,255,255,${hintAlpha * 0.8})`;
+                        ctx.font = `${12*s}px 'Segoe UI', sans-serif`;
+                        ctx.textAlign = 'center';
+                        const isMobile = 'ontouchstart' in window;
+                        ctx.fillText(
+                            isMobile ? '👆 Tap to move Von • Get close to sad people!' :
+                            '🎮 Arrow keys / WASD to move • Get close to sad people!',
+                            canvas.width / 2, canvas.height * 0.32);
+                    }
+                }
+
+                if (gameState === 'title') {
+                    drawTitleScreen();
+                }
+
+                if (gameState === 'gameover') {
+                    drawGameOverScreen();
+                }
+            }
+
+            function roundRect(x, y, w, h, r) {
+                ctx.beginPath();
+                ctx.moveTo(x + r, y);
+                ctx.lineTo(x + w - r, y);
+                ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+                ctx.lineTo(x + w, y + h - r);
+                ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+                ctx.lineTo(x + r, y + h);
+                ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+                ctx.lineTo(x, y + r);
+                ctx.quadraticCurveTo(x, y, x + r, y);
+                ctx.closePath();
+            }
+
+            function drawTitleScreen() {
+                const s = getScale();
+                // Overlay
+                ctx.fillStyle = 'rgba(0,0,0,0.35)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Title card
+                const cardW = canvas.width * 0.7;
+                const cardH = canvas.height * 0.55;
+                const cardX = (canvas.width - cardW) / 2;
+                const cardY = (canvas.height - cardH) / 2;
+
+                ctx.fillStyle = 'rgba(255,255,255,0.92)';
+                roundRect(cardX, cardY, cardW, cardH, 20 * s);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(100,180,160,0.6)';
+                ctx.lineWidth = 3 * s;
+                ctx.stroke();
+
+                // Title
+                const titleY = cardY + cardH * 0.25;
+                ctx.fillStyle = '#2a7f7f';
+                ctx.font = `bold ${32*s}px 'Segoe UI', 'Trebuchet MS', sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText('Von is Kind', canvas.width / 2, titleY);
+
+                // Heart under title
+                const pulse = Math.sin(titlePulse) * 0.2 + 0.9;
+                drawHeartShape(canvas.width / 2, titleY + 25 * s, 20 * s * pulse,
+                    'rgba(255,107,157,0.9)', 'rgba(255,150,190,0.5)');
+
+                // Subtitle
+                ctx.fillStyle = '#555';
+                ctx.font = `${15*s}px 'Segoe UI', sans-serif`;
+                ctx.fillText('Spread kindness through the village!', canvas.width / 2, titleY + 58 * s);
+
+                // Instructions
+                const instY = cardY + cardH * 0.58;
+                ctx.fillStyle = '#444';
+                ctx.font = `${13*s}px 'Segoe UI', sans-serif`;
+                const isMobile = 'ontouchstart' in window;
+                if (isMobile) {
+                    ctx.fillText('👆 Tap to move Von around', canvas.width / 2, instY);
+                    ctx.fillText('💛 Get close to sad villagers to cheer them up', canvas.width / 2, instY + 22 * s);
+                    ctx.fillText('💖 Collect floating hearts for bonus points', canvas.width / 2, instY + 44 * s);
+                    ctx.fillText('⚠️ Don\'t let sadness spread!', canvas.width / 2, instY + 66 * s);
+                } else {
+                    ctx.fillText('🎮 Arrow keys or WASD to move Von', canvas.width / 2, instY);
+                    ctx.fillText('💛 Get close to sad villagers to cheer them up', canvas.width / 2, instY + 22 * s);
+                    ctx.fillText('💖 Collect floating hearts for bonus points', canvas.width / 2, instY + 44 * s);
+                    ctx.fillText('⚠️ Don\'t let sadness spread!', canvas.width / 2, instY + 66 * s);
+                }
+
+                // Start prompt
+                const startY = cardY + cardH * 0.88;
+                const startPulse = Math.sin(titlePulse * 1.3) * 0.25 + 0.75;
+                ctx.fillStyle = `rgba(42,127,127,${startPulse})`;
+                ctx.font = `bold ${16*s}px 'Segoe UI', sans-serif`;
+                ctx.fillText('✨ Tap or Press Space to Start ✨', canvas.width / 2, startY);
+
+                // High score
+                if (highScore > 0) {
+                    ctx.fillStyle = '#888';
+                    ctx.font = `${11*s}px 'Segoe UI', sans-serif`;
+                    ctx.fillText(`🏆 Best Score: ${highScore}`, canvas.width / 2, startY + 26 * s);
+                }
+            }
+
+            function drawGameOverScreen() {
+                const s = getScale();
+                ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                const cardW = canvas.width * 0.65;
+                const cardH = canvas.height * 0.5;
+                const cardX = (canvas.width - cardW) / 2;
+                const cardY = (canvas.height - cardH) / 2;
+
+                ctx.fillStyle = 'rgba(255,255,255,0.93)';
+                roundRect(cardX, cardY, cardW, cardH, 20 * s);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(180,140,140,0.5)';
+                ctx.lineWidth = 3 * s;
+                ctx.stroke();
+
+                ctx.fillStyle = '#c44';
+                ctx.font = `bold ${26*s}px 'Segoe UI', sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText('Game Over', canvas.width / 2, cardY + cardH * 0.2);
+
+                ctx.fillStyle = '#333';
+                ctx.font = `${18*s}px 'Segoe UI', sans-serif`;
+                ctx.fillText(kindnessRating, canvas.width / 2, cardY + cardH * 0.38);
+
+                ctx.fillStyle = '#555';
+                ctx.font = `${16*s}px 'Segoe UI', sans-serif`;
+                ctx.fillText(`Score: ${score}`, canvas.width / 2, cardY + cardH * 0.55);
+
+                if (score >= highScore && score > 0) {
+                    ctx.fillStyle = '#e8a020';
+                    ctx.font = `bold ${14*s}px 'Segoe UI', sans-serif`;
+                    ctx.fillText('🏆 NEW HIGH SCORE! 🏆', canvas.width / 2, cardY + cardH * 0.68);
+                } else {
+                    ctx.fillStyle = '#777';
+                    ctx.font = `${12*s}px 'Segoe UI', sans-serif`;
+                    ctx.fillText(`Best: ${highScore}`, canvas.width / 2, cardY + cardH * 0.68);
+                }
+
+                const restartY = cardY + cardH * 0.84;
+                ctx.fillStyle = '#2a7f7f';
+                ctx.font = `bold ${15*s}px 'Segoe UI', sans-serif`;
+                ctx.fillText('🔄 Tap or Press Space to Restart', canvas.width / 2, restartY);
+            }
+
+            // --- Input Handling ---
+            const keys = {};
+            window.addEventListener('keydown', (e) => {
+                keys[e.code] = true;
+                if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'ArrowDown') {
+                    e.preventDefault();
+                }
+                if (e.code === 'Space') {
+                    initAudio();
+                    if (gameState === 'title') {
+                        startGame();
+                    } else if (gameState === 'gameover') {
+                        restartGame();
+                    }
+                }
+            });
+            window.addEventListener('keyup', (e) => {
+                keys[e.code] = false;
+            });
+
+            canvas.addEventListener('click', (e) => {
+                initAudio();
+                if (gameState === 'title') {
+                    startGame();
+                    return;
+                }
+                if (gameState === 'gameover') {
+                    restartGame();
+                    return;
+                }
+                if (gameState === 'playing') {
+                    const rect = canvas.getBoundingClientRect();
+                    const scaleX = canvas.width / rect.width;
+                    const scaleY = canvas.height / rect.height;
+                    playerTargetX = (e.clientX - rect.left) * scaleX;
+                    playerTargetY = (e.clientY - rect.top) * scaleY;
+                }
+            });
+
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                initAudio();
+                if (gameState === 'title') {
+                    startGame();
+                    return;
+                }
+                if (gameState === 'gameover') {
+                    restartGame();
+                    return;
+                }
+                if (gameState === 'playing' && e.touches.length > 0) {
+                    const rect = canvas.getBoundingClientRect();
+                    const scaleX = canvas.width / rect.width;
+                    const scaleY = canvas.height / rect.height;
+                    playerTargetX = (e.touches[0].clientX - rect.left) * scaleX;
+                    playerTargetY = (e.touches[0].clientY - rect.top) * scaleY;
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                if (gameState === 'playing' && e.touches.length > 0) {
+                    const rect = canvas.getBoundingClientRect();
+                    const scaleX = canvas.width / rect.width;
+                    const scaleY = canvas.height / rect.height;
+                    playerTargetX = (e.touches[0].clientX - rect.left) * scaleX;
+                    playerTargetY = (e.touches[0].clientY - rect.top) * scaleY;
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('touchend', (e) => {
+                // Keep target; player stops when reaching it
+            });
+
+            function startGame() {
+                gameState = 'playing';
+                resetGame();
+                initAudio();
+            }
+
+            function restartGame() {
+                gameState = 'playing';
+                resetGame();
+                initAudio();
+            }
+
+            // --- Game Loop ---
+            let lastTime = 0;
+
+            function gameLoop(timestamp) {
+                if (lastTime === 0) lastTime = timestamp;
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt > 0.15) dt = 0.15; // Cap to prevent jumps
+                if (dt <= 0) dt = 0.016;
+                lastTime = timestamp;
+
+                update(dt);
+                render();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // --- Initialize ---
+            function init() {
+                resizeCanvas();
+                resetGame();
+                initDecorations();
+                // Start with all NPCs happy on title screen
+                npcs.forEach(n => { n.state = NPC_STATES.HAPPY;
+                    n.sadTimer = 0;
+                    n.eyeOffY = 0;
+                    n.bounceY = 0; });
+                player.x = canvas.width / 2;
+                player.y = canvas.height * 0.72;
+                playerTargetX = null;
+                playerTargetY = null;
+                lastTime = performance.now();
+                requestAnimationFrame(gameLoop);
+            }
+
+            init();
+            console.log('🌟 Von is Kind - Ready to spread kindness!');
+            console.log('   Click/tap or press Space to start.');
+        })();
+    </script>
+</body>
+</html>
