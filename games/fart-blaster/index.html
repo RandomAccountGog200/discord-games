@@ -1,0 +1,1145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>💨 Fart Blaster</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Segoe UI', 'Arial', sans-serif;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        canvas {
+            display: block;
+            border-radius: 16px;
+            box-shadow: 0 0 40px rgba(100, 200, 80, 0.3), 0 0 80px rgba(100, 180, 60, 0.15);
+            max-width: 98vw;
+            max-height: 98vh;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+
+            // Internal resolution
+            const W = 480;
+            const H = 750;
+            canvas.width = W;
+            canvas.height = H;
+
+            // Scale canvas to fit viewport
+            function resizeCanvas() {
+                const scale = Math.min(window.innerWidth / W, window.innerHeight / H) * 0.95;
+                canvas.style.width = (W * scale) + 'px';
+                canvas.style.height = (H * scale) + 'px';
+            }
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+
+            // Audio
+            let audioCtx = null;
+
+            function getAudioCtx() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                return audioCtx;
+            }
+
+            function playFartSound() {
+                try {
+                    const ac = getAudioCtx();
+                    const now = ac.currentTime;
+                    const duration = 0.35;
+
+                    // Main raspberry oscillator
+                    const osc1 = ac.createOscillator();
+                    const osc2 = ac.createOscillator();
+                    const gain = ac.createGain();
+                    const filter = ac.createBiquadFilter();
+
+                    osc1.type = 'sawtooth';
+                    osc1.frequency.setValueAtTime(220, now);
+                    osc1.frequency.exponentialRampToValueAtTime(45, now + duration);
+
+                    osc2.type = 'sawtooth';
+                    osc2.frequency.setValueAtTime(180, now);
+                    osc2.frequency.exponentialRampToValueAtTime(35, now + duration);
+
+                    filter.type = 'lowpass';
+                    filter.frequency.setValueAtTime(500, now);
+                    filter.frequency.exponentialRampToValueAtTime(80, now + duration);
+                    filter.Q.setValueAtTime(1.5, now);
+
+                    gain.gain.setValueAtTime(0.25, now);
+                    gain.gain.setValueAtTime(0.28, now + 0.04);
+                    gain.gain.exponentialRampToValueAtTime(0.005, now + duration);
+
+                    osc1.connect(filter);
+                    osc2.connect(filter);
+                    filter.connect(gain);
+                    gain.connect(ac.destination);
+
+                    osc1.start(now);
+                    osc2.start(now);
+                    osc1.stop(now + duration + 0.05);
+                    osc2.stop(now + duration + 0.05);
+                } catch (e) {
+                    // Silently fail
+                }
+            }
+
+            function playPopSound() {
+                try {
+                    const ac = getAudioCtx();
+                    const now = ac.currentTime;
+                    const osc = ac.createOscillator();
+                    const gain = ac.createGain();
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(600, now);
+                    osc.frequency.exponentialRampToValueAtTime(200, now + 0.08);
+                    gain.gain.setValueAtTime(0.2, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+                    osc.connect(gain);
+                    gain.connect(ac.destination);
+                    osc.start(now);
+                    osc.stop(now + 0.1);
+                } catch (e) {}
+            }
+
+            function playGameOverSound() {
+                try {
+                    const ac = getAudioCtx();
+                    const now = ac.currentTime;
+                    const osc = ac.createOscillator();
+                    const gain = ac.createGain();
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(300, now);
+                    osc.frequency.exponentialRampToValueAtTime(80, now + 0.6);
+                    gain.gain.setValueAtTime(0.2, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.7);
+                    osc.connect(gain);
+                    gain.connect(ac.destination);
+                    osc.start(now);
+                    osc.stop(now + 0.7);
+                } catch (e) {}
+            }
+
+            // Game state
+            const STATE = { MENU: 'menu', PLAYING: 'playing', OVER: 'over' };
+            let gameState = STATE.MENU;
+            let score = 0;
+            let lives = 5;
+            let comboCount = 0;
+            let lastHitTime = 0;
+            let comboMultiplier = 1;
+            let shakeAmount = 0;
+            let shakeX = 0;
+            let shakeY = 0;
+            let difficulty = 1;
+            let spawnTimer = 0;
+            let spawnInterval = 1.6; // seconds between spawns
+            let gameTime = 0;
+            let charSquash = 0;
+            let instructionAlpha = 1;
+
+            // Arrays
+            let fartClouds = [];
+            let targets = [];
+            let particles = [];
+            let floatingTexts = [];
+
+            // Character position
+            const charX = W / 2;
+            const charY = 620;
+            const missLineY = 595;
+
+            // Fart cloud cooldown
+            let fartCooldown = 0;
+            const FART_COOLDOWN_TIME = 0.35;
+
+            // Input tracking
+            let inputPressed = false;
+            let inputJustPressed = false;
+
+            // ---- Drawing helpers ----
+            function drawCharacter(x, y, squash) {
+                ctx.save();
+                ctx.translate(x, y);
+
+                // Squash effect when farting
+                const sx = 1 + squash * 0.2;
+                const sy = 1 - squash * 0.25;
+                ctx.scale(sx, sy);
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                ctx.beginPath();
+                ctx.ellipse(0, 38, 40, 12, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body - round bean shape
+                const bodyGrad = ctx.createRadialGradient(-5, -15, 5, 0, 5, 50);
+                bodyGrad.addColorStop(0, '#FDEBD3');
+                bodyGrad.addColorStop(0.5, '#F0C78E');
+                bodyGrad.addColorStop(1, '#D4956B');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.ellipse(0, 0, 38, 44, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#C07B5A';
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+
+                // Belly highlight
+                ctx.fillStyle = 'rgba(255,255,255,0.25)';
+                ctx.beginPath();
+                ctx.ellipse(-8, -10, 18, 20, -0.3, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Eyes
+                const eyeY = -12;
+                // White of eyes
+                ctx.fillStyle = '#FFF';
+                ctx.beginPath();
+                ctx.ellipse(-13, eyeY, 10, 12, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(13, eyeY, 10, 12, 0, 0, Math.PI * 2);
+                ctx.fill();
+                // Pupils
+                ctx.fillStyle = '#2C1810';
+                ctx.beginPath();
+                ctx.arc(-11, eyeY + 2, 5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(15, eyeY + 2, 5, 0, Math.PI * 2);
+                ctx.fill();
+                // Eye shine
+                ctx.fillStyle = '#FFF';
+                ctx.beginPath();
+                ctx.arc(-9, eyeY - 1, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(17, eyeY - 1, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Blush
+                ctx.fillStyle = 'rgba(255,150,150,0.5)';
+                ctx.beginPath();
+                ctx.ellipse(-22, eyeY + 8, 8, 5, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(22, eyeY + 8, 8, 5, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Mouth - changes when squashed
+                ctx.strokeStyle = '#6B3A2A';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                if (squash > 0.3) {
+                    // Surprised/exerting mouth
+                    ctx.arc(0, eyeY + 16, 6, 0, Math.PI);
+                } else {
+                    // Happy mouth
+                    ctx.arc(0, eyeY + 12, 7, 0.1, Math.PI - 0.1);
+                }
+                ctx.stroke();
+
+                // Small arms
+                ctx.fillStyle = '#E8B88A';
+                ctx.strokeStyle = '#C07B5A';
+                ctx.lineWidth = 2;
+                // Left arm
+                ctx.beginPath();
+                ctx.ellipse(-36, 2, 12, 7, -0.4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+                // Right arm
+                ctx.beginPath();
+                ctx.ellipse(36, 2, 12, 7, 0.4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.restore();
+            }
+
+            function drawFartCloud(cloud) {
+                const { x, y, radius, alpha, wobble } = cloud;
+                ctx.save();
+                ctx.globalAlpha = alpha;
+
+                // Main cloud body - multiple overlapping circles
+                const baseColor = '144, 195, 70';
+                const lightColor = '180, 220, 120';
+                const darkColor = '100, 160, 40';
+
+                // Large center blob
+                const grad = ctx.createRadialGradient(x, y, radius * 0.2, x, y, radius);
+                grad.addColorStop(0, `rgba(${lightColor}, 0.85)`);
+                grad.addColorStop(0.5, `rgba(${baseColor}, 0.7)`);
+                grad.addColorStop(1, `rgba(${darkColor}, 0.3)`);
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(x, y, radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Fluffy bumps around the cloud
+                const bumps = 7;
+                for (let i = 0; i < bumps; i++) {
+                    const angle = (i / bumps) * Math.PI * 2 + wobble * 0.3;
+                    const bx = x + Math.cos(angle) * radius * 0.7;
+                    const by = y + Math.sin(angle) * radius * 0.65;
+                    const br = radius * (0.4 + Math.sin(i * 2.3 + wobble) * 0.2);
+                    ctx.fillStyle = `rgba(${baseColor}, 0.65)`;
+                    ctx.beginPath();
+                    ctx.arc(bx, by, br, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Inner highlight
+                const hlGrad = ctx.createRadialGradient(x - radius * 0.2, y - radius * 0.25, radius * 0.05, x, y, radius *
+                    0.7);
+                hlGrad.addColorStop(0, `rgba(220, 255, 180, 0.5)`);
+                hlGrad.addColorStop(1, `rgba(220, 255, 180, 0)`);
+                ctx.fillStyle = hlGrad;
+                ctx.beginPath();
+                ctx.arc(x, y, radius * 0.75, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Stink lines rising from cloud
+                ctx.strokeStyle = `rgba(${darkColor}, ${alpha * 0.7})`;
+                ctx.lineWidth = 2.5;
+                for (let i = 0; i < 3; i++) {
+                    const sx = x + (i - 1) * radius * 0.5;
+                    const sy = y - radius * 0.6;
+                    ctx.beginPath();
+                    ctx.moveTo(sx, sy);
+                    const cp1x = sx + Math.sin(wobble * 2 + i) * 15;
+                    const cp1y = sy - radius * 0.8;
+                    const cp2x = sx + Math.cos(wobble * 1.5 + i) * 12;
+                    const cp2y = sy - radius * 1.4;
+                    const ex = sx + Math.sin(wobble + i * 2) * 20;
+                    const ey = sy - radius * 1.7;
+                    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, ex, ey);
+                    ctx.stroke();
+                }
+
+                ctx.restore();
+            }
+
+            function drawStinkLinesTarget(t) {
+                const { x, y, animTime } = t;
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.strokeStyle = '#6B8E3A';
+                ctx.lineWidth = 3;
+                ctx.lineCap = 'round';
+                for (let i = 0; i < 4; i++) {
+                    const baseX = (i - 1.5) * 12;
+                    ctx.beginPath();
+                    ctx.moveTo(baseX, 10);
+                    const cpX = baseX + Math.sin(animTime * 4 + i * 1.5) * 14;
+                    const cpY = -8;
+                    const ex = baseX + Math.sin(animTime * 3.5 + i) * 18;
+                    const ey = -28;
+                    ctx.quadraticCurveTo(cpX, cpY, ex, ey);
+                    ctx.stroke();
+                    // Small dot at tip
+                    ctx.fillStyle = '#8BC34A';
+                    ctx.beginPath();
+                    ctx.arc(ex, ey, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.fillStyle = 'rgba(139,195,74,0.4)';
+                ctx.beginPath();
+                ctx.arc(0, 5, 18, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            function drawToiletPaperTarget(t) {
+                const { x, y, animTime } = t;
+                ctx.save();
+                ctx.translate(x, y);
+                // Roll
+                const rollGrad = ctx.createLinearGradient(-16, 0, 16, 0);
+                rollGrad.addColorStop(0, '#E8E8E8');
+                rollGrad.addColorStop(0.3, '#FFFFFF');
+                rollGrad.addColorStop(0.7, '#F5F5F5');
+                rollGrad.addColorStop(1, '#D0D0D0');
+                ctx.fillStyle = rollGrad;
+                ctx.fillRect(-16, -20, 32, 40);
+                ctx.strokeStyle = '#BBB';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(-16, -20, 32, 40);
+                // Inner circle
+                ctx.fillStyle = '#D8D8D8';
+                ctx.beginPath();
+                ctx.arc(0, 0, 8, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#AAA';
+                ctx.stroke();
+                // Trailing paper
+                ctx.strokeStyle = '#F0F0F0';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.moveTo(16, 15);
+                ctx.quadraticCurveTo(24 + Math.sin(animTime * 3) * 4, 22, 20, 34);
+                ctx.stroke();
+                ctx.strokeStyle = '#DDD';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            function drawPoopTarget(t) {
+                const { x, y, animTime } = t;
+                ctx.save();
+                ctx.translate(x, y);
+                const bounce = Math.abs(Math.sin(animTime * 2.5)) * 4;
+                ctx.translate(0, -bounce);
+                // Main mound
+                const poopGrad = ctx.createRadialGradient(0, -5, 8, 0, 8, 28);
+                poopGrad.addColorStop(0, '#8B5E3C');
+                poopGrad.addColorStop(0.6, '#6B3A22');
+                poopGrad.addColorStop(1, '#4A2210');
+                ctx.fillStyle = poopGrad;
+                ctx.beginPath();
+                ctx.moveTo(-22, 10);
+                ctx.quadraticCurveTo(-26, -8, -14, -18);
+                ctx.quadraticCurveTo(-4, -26, 8, -22);
+                ctx.quadraticCurveTo(20, -16, 22, 0);
+                ctx.quadraticCurveTo(24, 12, 18, 14);
+                ctx.quadraticCurveTo(0, 20, -22, 10);
+                ctx.fill();
+                ctx.strokeStyle = '#3A1A08';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                // Swirl on top
+                ctx.strokeStyle = '#A0724A';
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                ctx.arc(2, -10, 7, -0.8, Math.PI * 1.4);
+                ctx.stroke();
+                // Eyes
+                ctx.fillStyle = '#FFF';
+                ctx.beginPath();
+                ctx.arc(-6, -4, 6, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(10, -2, 5.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#1A0A00';
+                ctx.beginPath();
+                ctx.arc(-5, -2, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(11, 0, 2.8, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            function drawCheeseTarget(t) {
+                const { x, y, animTime } = t;
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.rotate(Math.sin(animTime * 1.8) * 0.2);
+                // Cheese wedge
+                ctx.fillStyle = '#FFD54F';
+                ctx.beginPath();
+                ctx.moveTo(-20, 10);
+                ctx.lineTo(20, 10);
+                ctx.lineTo(5, -22);
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = '#F9A825';
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+                // Holes
+                ctx.fillStyle = '#E8A820';
+                ctx.beginPath();
+                ctx.arc(-4, 2, 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(9, 4, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(1, -8, 3.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            function drawTarget(t) {
+                switch (t.type) {
+                    case 'stink':
+                        drawStinkLinesTarget(t);
+                        break;
+                    case 'toilet':
+                        drawToiletPaperTarget(t);
+                        break;
+                    case 'poop':
+                        drawPoopTarget(t);
+                        break;
+                    case 'cheese':
+                        drawCheeseTarget(t);
+                        break;
+                }
+                // Glow for rare types
+                if (t.type === 'cheese' || t.type === 'poop') {
+                    ctx.save();
+                    ctx.globalAlpha = 0.3 + Math.sin(t.animTime * 3) * 0.2;
+                    const glowGrad = ctx.createRadialGradient(t.x, t.y, 15, t.x, t.y, 45);
+                    if (t.type === 'cheese') glowGrad.addColorStop(0, '#FFD54F');
+                    else glowGrad.addColorStop(0, '#FFAB40');
+                    glowGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                    ctx.fillStyle = glowGrad;
+                    ctx.beginPath();
+                    ctx.arc(t.x, t.y, 45, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+            }
+
+            // ---- Spawn functions ----
+            function spawnTarget() {
+                const typeWeights = [
+                    { type: 'stink', weight: 50, points: 10, speed: 70, size: 30 },
+                    { type: 'toilet', weight: 28, points: 20, speed: 60, size: 34 },
+                    { type: 'poop', weight: 17, points: 35, speed: 50, size: 38 },
+                    { type: 'cheese', weight: 5, points: 60, speed: 80, size: 32 },
+                ];
+                const totalWeight = typeWeights.reduce((s, tw) => s + tw.weight, 0);
+                let roll = Math.random() * totalWeight;
+                let chosen = typeWeights[0];
+                for (const tw of typeWeights) {
+                    roll -= tw.weight;
+                    if (roll <= 0) { chosen = tw; break; }
+                }
+
+                const target = {
+                    type: chosen.type,
+                    x: 40 + Math.random() * (W - 80),
+                    y: -50 - Math.random() * 60,
+                    points: chosen.points,
+                    baseSpeed: chosen.speed + Math.random() * 40 + difficulty * 8,
+                    size: chosen.size,
+                    animTime: Math.random() * Math.PI * 2,
+                    horizontalAmp: (Math.random() - 0.5) * 60,
+                    horizontalFreq: 0.5 + Math.random() * 1.5,
+                    alive: true,
+                };
+                targets.push(target);
+            }
+
+            function spawnFartCloud() {
+                const cloud = {
+                    x: charX + (Math.random() - 0.5) * 16,
+                    y: charY + 20,
+                    radius: 8,
+                    maxRadius: 55 + Math.random() * 25,
+                    alpha: 0.9,
+                    riseSpeed: 160 + Math.random() * 100,
+                    wobble: Math.random() * Math.PI * 2,
+                    wobbleSpeed: 1 + Math.random() * 2,
+                    alive: true,
+                    lifetime: 0,
+                    maxLifetime: 1.8 + Math.random() * 0.6,
+                };
+                fartClouds.push(cloud);
+            }
+
+            function spawnParticles(x, y, count, colorBase) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 80 + Math.random() * 250;
+                    const particle = {
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - Math.random() * 100,
+                        radius: 2 + Math.random() * 5,
+                        alpha: 1,
+                        decay: 0.6 + Math.random() * 1.8,
+                        color: colorBase || `hsl(${70 + Math.random()*40}, ${60+Math.random()*30}%, ${45+Math.random()*35}%)`,
+                        alive: true,
+                    };
+                    particles.push(particle);
+                }
+            }
+
+            function spawnFloatingText(x, y, text, color) {
+                floatingTexts.push({
+                    x,
+                    y,
+                    text,
+                    color,
+                    alpha: 1,
+                    vy: -120,
+                    lifetime: 0,
+                    maxLifetime: 0.9,
+                    alive: true,
+                });
+            }
+
+            // ---- Update functions ----
+            function updateFartClouds(dt) {
+                for (const cloud of fartClouds) {
+                    if (!cloud.alive) continue;
+                    cloud.lifetime += dt;
+                    cloud.y -= cloud.riseSpeed * dt;
+                    cloud.wobble += cloud.wobbleSpeed * dt;
+                    cloud.x += Math.sin(cloud.wobble) * 25 * dt;
+                    // Expand
+                    const lifeRatio = cloud.lifetime / cloud.maxLifetime;
+                    if (lifeRatio < 0.35) {
+                        cloud.radius = cloud.maxRadius * (lifeRatio / 0.35);
+                    } else if (lifeRatio > 0.65) {
+                        cloud.alpha = 0.9 * (1 - (lifeRatio - 0.65) / 0.35);
+                    } else {
+                        cloud.radius = cloud.maxRadius;
+                    }
+                    if (cloud.lifetime >= cloud.maxLifetime || cloud.y < -80) {
+                        cloud.alive = false;
+                    }
+                    // Trail particles
+                    if (Math.random() < 0.4 && cloud.lifetime < cloud.maxLifetime * 0.7) {
+                        particles.push({
+                            x: cloud.x + (Math.random() - 0.5) * cloud.radius,
+                            y: cloud.y + cloud.radius * 0.5 + Math.random() * cloud.radius * 0.5,
+                            vx: (Math.random() - 0.5) * 30,
+                            vy: -20 - Math.random() * 40,
+                            radius: 1.5 + Math.random() * 3,
+                            alpha: 0.7,
+                            decay: 0.4 + Math.random() * 0.8,
+                            color: 'hsl(85, 70%, 55%)',
+                            alive: true,
+                        });
+                    }
+                }
+                fartClouds = fartClouds.filter(c => c.alive);
+            }
+
+            function updateTargets(dt) {
+                for (const t of targets) {
+                    if (!t.alive) continue;
+                    t.y += t.baseSpeed * dt;
+                    t.animTime += dt;
+                    t.x += Math.sin(t.animTime * t.horizontalFreq) * t.horizontalAmp * dt;
+                    // Keep in bounds horizontally
+                    if (t.x < t.size) t.x = t.size;
+                    if (t.x > W - t.size) t.x = W - t.size;
+                    // Check if missed
+                    if (t.y > missLineY && t.alive) {
+                        t.alive = false;
+                        lives--;
+                        shakeAmount = Math.max(shakeAmount, 6);
+                        spawnParticles(t.x, missLineY, 10, 'hsl(0, 70%, 50%)');
+                        if (lives <= 0 && gameState === STATE.PLAYING) {
+                            endGame();
+                        }
+                    }
+                }
+                targets = targets.filter(t => t.alive);
+            }
+
+            function updateParticles(dt) {
+                for (const p of particles) {
+                    if (!p.alive) continue;
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.vy += 120 * dt; // gravity
+                    p.alpha -= p.decay * dt;
+                    if (p.alpha <= 0) p.alive = false;
+                }
+                particles = particles.filter(p => p.alive);
+            }
+
+            function updateFloatingTexts(dt) {
+                for (const ft of floatingTexts) {
+                    if (!ft.alive) continue;
+                    ft.y += ft.vy * dt;
+                    ft.lifetime += dt;
+                    ft.alpha = 1 - (ft.lifetime / ft.maxLifetime);
+                    if (ft.lifetime >= ft.maxLifetime) ft.alive = false;
+                }
+                floatingTexts = floatingTexts.filter(ft => ft.alive);
+            }
+
+            function checkCollisions() {
+                for (const cloud of fartClouds) {
+                    if (!cloud.alive) continue;
+                    if (cloud.lifetime < 0.05) continue; // Just spawned
+                    for (const t of targets) {
+                        if (!t.alive) continue;
+                        const dx = cloud.x - t.x;
+                        const dy = cloud.y - t.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        const collisionDist = cloud.radius + t.size;
+                        if (dist < collisionDist) {
+                            // Hit!
+                            t.alive = false;
+                            cloud.radius *= 0.7;
+                            cloud.alpha *= 0.6;
+
+                            // Combo
+                            const now = performance.now() / 1000;
+                            if (now - lastHitTime < 2.0) {
+                                comboCount++;
+                            } else {
+                                comboCount = 1;
+                            }
+                            lastHitTime = now;
+                            comboMultiplier = 1 + (comboCount - 1) * 0.4;
+                            const pointsEarned = Math.floor(t.points * comboMultiplier);
+
+                            score += pointsEarned;
+                            shakeAmount = Math.max(shakeAmount, 8);
+                            charSquash = 1;
+
+                            // Effects
+                            const particleColor = t.type === 'cheese' ? 'hsl(45, 90%, 55%)' :
+                                t.type === 'poop' ? 'hsl(25, 70%, 40%)' :
+                                t.type === 'toilet' ? 'hsl(0, 0%, 80%)' : 'hsl(85, 60%, 50%)';
+                            spawnParticles(t.x, t.y, 20, particleColor);
+                            spawnFloatingText(t.x, t.y - 10,
+                                '+' + pointsEarned + (comboCount > 1 ? ' x' + comboCount : ''),
+                                comboCount >= 5 ? '#FFD700' : comboCount >= 3 ? '#FF9800' : '#FFF');
+                            playPopSound();
+
+                            // Increase difficulty
+                            difficulty = Math.floor(score / 120);
+                            spawnInterval = Math.max(0.5, 1.6 - difficulty * 0.08);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            function endGame() {
+                gameState = STATE.OVER;
+                playGameOverSound();
+                spawnParticles(charX, charY, 40, 'hsl(0, 60%, 50%)');
+                spawnParticles(charX, charY, 30, 'hsl(30, 70%, 50%)');
+            }
+
+            function resetGame() {
+                score = 0;
+                lives = 5;
+                comboCount = 0;
+                lastHitTime = 0;
+                comboMultiplier = 1;
+                shakeAmount = 0;
+                difficulty = 1;
+                spawnTimer = 0;
+                spawnInterval = 1.6;
+                gameTime = 0;
+                charSquash = 0;
+                fartClouds = [];
+                targets = [];
+                particles = [];
+                floatingTexts = [];
+                fartCooldown = 0;
+                gameState = STATE.PLAYING;
+            }
+
+            // ---- Main update ----
+            function update(dt) {
+                if (gameState !== STATE.PLAYING) {
+                    // Still update particles in other states
+                    updateParticles(dt);
+                    updateFloatingTexts(dt);
+                    if (shakeAmount > 0) shakeAmount = Math.max(0, shakeAmount - dt * 25);
+                    return;
+                }
+
+                gameTime += dt;
+                const cappedDt = Math.min(dt, 0.1);
+
+                // Cooldowns
+                fartCooldown = Math.max(0, fartCooldown - cappedDt);
+                charSquash = Math.max(0, charSquash - cappedDt * 5);
+                if (shakeAmount > 0) shakeAmount = Math.max(0, shakeAmount - cappedDt * 20);
+                shakeX = (Math.random() - 0.5) * shakeAmount * 2;
+                shakeY = (Math.random() - 0.5) * shakeAmount * 2;
+
+                // Spawn targets
+                spawnTimer += cappedDt;
+                if (spawnTimer >= spawnInterval) {
+                    spawnTimer -= spawnInterval;
+                    spawnTarget();
+                    // Sometimes spawn pairs
+                    if (Math.random() < 0.25 && difficulty > 2) {
+                        setTimeout(() => { if (gameState === STATE.PLAYING) spawnTarget(); }, 200 + Math.random() *
+                            400);
+                    }
+                }
+
+                // Handle input
+                if (inputJustPressed && fartCooldown <= 0 && gameState === STATE.PLAYING) {
+                    spawnFartCloud();
+                    playFartSound();
+                    fartCooldown = FART_COOLDOWN_TIME;
+                    charSquash = 1;
+                    inputJustPressed = false;
+                }
+
+                // Update all entities
+                updateFartClouds(cappedDt);
+                updateTargets(cappedDt);
+                updateParticles(cappedDt);
+                updateFloatingTexts(cappedDt);
+                checkCollisions();
+
+                // Check game over
+                if (lives <= 0 && gameState === STATE.PLAYING) {
+                    endGame();
+                }
+            }
+
+            // ---- Render ----
+            function drawBackground() {
+                // Sky gradient
+                const skyGrad = ctx.createLinearGradient(0, 0, 0, H);
+                skyGrad.addColorStop(0, '#87CEEB');
+                skyGrad.addColorStop(0.4, '#B8E4F0');
+                skyGrad.addColorStop(0.75, '#E8F5E9');
+                skyGrad.addColorStop(1, '#C8E6C9');
+                ctx.fillStyle = skyGrad;
+                ctx.fillRect(0, 0, W, H);
+
+                // Subtle clouds in background
+                ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                for (let i = 0; i < 5; i++) {
+                    const cx = (i * 110 + 30 + Math.sin(gameTime * 0.3 + i) * 40) % (W + 100) - 50;
+                    const cy = 80 + i * 55;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 35, 0, Math.PI * 2);
+                    ctx.arc(cx + 30, cy - 15, 28, 0, Math.PI * 2);
+                    ctx.arc(cx + 50, cy + 5, 30, 0, Math.PI * 2);
+                    ctx.arc(cx - 20, cy + 5, 22, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Ground
+                const groundGrad = ctx.createLinearGradient(0, 670, 0, H);
+                groundGrad.addColorStop(0, '#A5D6A7');
+                groundGrad.addColorStop(0.15, '#81C784');
+                groundGrad.addColorStop(0.5, '#66BB6A');
+                groundGrad.addColorStop(1, '#388E3C');
+                ctx.fillStyle = groundGrad;
+                ctx.fillRect(0, 670, W, H - 670);
+
+                // Ground line
+                ctx.strokeStyle = '#4CAF50';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(0, 670);
+                ctx.lineTo(W, 670);
+                ctx.stroke();
+
+                // Grass tufts
+                ctx.strokeStyle = '#43A047';
+                ctx.lineWidth = 2;
+                for (let i = 0; i < W; i += 18) {
+                    const gh = 8 + Math.sin(i * 0.5 + gameTime) * 6;
+                    ctx.beginPath();
+                    ctx.moveTo(i, 670);
+                    ctx.quadraticCurveTo(i + 6, 670 - gh, i + 10, 670 - gh * 0.6);
+                    ctx.stroke();
+                }
+
+                // Miss line indicator (subtle)
+                ctx.strokeStyle = 'rgba(255,100,100,0.2)';
+                ctx.setLineDash([8, 20]);
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(0, missLineY);
+                ctx.lineTo(W, missLineY);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            function drawUI() {
+                // Score
+                ctx.fillStyle = '#2E7D32';
+                ctx.font = 'bold 22px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText('💨 Score: ' + score, 16, 38);
+
+                // Lives
+                ctx.textAlign = 'right';
+                ctx.fillStyle = '#C62828';
+                ctx.font = '20px "Segoe UI", Arial, sans-serif';
+                let heartsStr = '';
+                for (let i = 0; i < lives; i++) heartsStr += '❤️ ';
+                ctx.fillText(heartsStr.trim(), W - 16, 38);
+
+                // Combo display
+                if (comboCount >= 3 && gameState === STATE.PLAYING) {
+                    const now = performance.now() / 1000;
+                    if (now - lastHitTime < 2.0) {
+                        const comboAlpha = Math.min(1, (2.0 - (now - lastHitTime)) / 0.5);
+                        ctx.fillStyle = `rgba(255,180,0,${comboAlpha})`;
+                        ctx.font = 'bold 18px "Segoe UI", Arial, sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('COMBO x' + comboCount + '!', W / 2, 70);
+                    }
+                }
+
+                // Difficulty indicator
+                if (difficulty > 3) {
+                    ctx.fillStyle = 'rgba(255,80,80,0.7)';
+                    ctx.font = 'bold 13px "Segoe UI", Arial, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🔥 Intensity: ' + difficulty, W / 2, 92);
+                }
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, W, H);
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                drawBackground();
+
+                // Draw targets
+                for (const t of targets) {
+                    if (t.alive) drawTarget(t);
+                }
+
+                // Draw fart clouds
+                for (const cloud of fartClouds) {
+                    if (cloud.alive) drawFartCloud(cloud);
+                }
+
+                // Draw character
+                drawCharacter(charX, charY, charSquash);
+
+                // Draw particles
+                for (const p of particles) {
+                    if (!p.alive) continue;
+                    ctx.save();
+                    ctx.globalAlpha = p.alpha;
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+
+                // Draw floating texts
+                for (const ft of floatingTexts) {
+                    if (!ft.alive) continue;
+                    ctx.save();
+                    ctx.globalAlpha = ft.alpha;
+                    ctx.fillStyle = ft.color;
+                    ctx.font = 'bold 16px "Segoe UI", Arial, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(ft.text, ft.x, ft.y);
+                    ctx.restore();
+                }
+
+                ctx.restore();
+
+                // UI (not affected by shake)
+                drawUI();
+
+                // Game state overlays
+                if (gameState === STATE.MENU) {
+                    drawMenuOverlay();
+                } else if (gameState === STATE.OVER) {
+                    drawGameOverOverlay();
+                }
+            }
+
+            function drawMenuOverlay() {
+                // Dim background
+                ctx.fillStyle = 'rgba(0,0,0,0.45)';
+                ctx.fillRect(0, 0, W, H);
+
+                // Title
+                const titleY = 200;
+                ctx.fillStyle = '#FFF';
+                ctx.font = 'bold 48px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = 'rgba(100,200,60,0.8)';
+                ctx.shadowBlur = 25;
+                ctx.fillText('💨 FART', W / 2, titleY);
+                ctx.fillText('BLASTER', W / 2, titleY + 55);
+                ctx.shadowBlur = 0;
+
+                // Subtitle
+                ctx.fillStyle = '#E8F5E9';
+                ctx.font = 'bold 16px "Segoe UI", Arial, sans-serif';
+                ctx.fillText('Blast the stinky targets!', W / 2, titleY + 90);
+
+                // Instructions
+                const instY = 370;
+                ctx.fillStyle = '#FFF';
+                ctx.font = '17px "Segoe UI", Arial, sans-serif';
+                const instructions = [
+                    '🖱️ Tap or Click to FART',
+                    '⌨️ Press SPACE to FART',
+                    '🎯 Hit targets before they pass!',
+                    '💚 Green clouds = your weapon',
+                    '❤️ 5 lives - don\'t let them through!',
+                ];
+                instructions.forEach((inst, i) => {
+                    ctx.fillText(inst, W / 2, instY + i * 32);
+                });
+
+                // Target previews
+                const previewY = 540;
+                ctx.fillText('Targets:', W / 2, previewY - 10);
+                const previewTargets = [
+                    { type: 'stink', x: 80, y: previewY + 30, animTime: gameTime, size: 30, points: 10, baseSpeed: 0,
+                        horizontalAmp: 0, horizontalFreq: 0, alive: true },
+                    { type: 'toilet', x: 180, y: previewY + 30, animTime: gameTime, size: 34, points: 20, baseSpeed: 0,
+                        horizontalAmp: 0, horizontalFreq: 0, alive: true },
+                    { type: 'poop', x: 290, y: previewY + 30, animTime: gameTime, size: 38, points: 35, baseSpeed: 0,
+                        horizontalAmp: 0, horizontalFreq: 0, alive: true },
+                    { type: 'cheese', x: 390, y: previewY + 30, animTime: gameTime, size: 32, points: 60, baseSpeed: 0,
+                        horizontalAmp: 0, horizontalFreq: 0, alive: true },
+                ];
+                for (const pt of previewTargets) drawTarget(pt);
+                ctx.fillStyle = '#FFD54F';
+                ctx.font = 'bold 13px "Segoe UI", Arial, sans-serif';
+                ctx.fillText('10pts', 80, previewY + 60);
+                ctx.fillText('20pts', 180, previewY + 60);
+                ctx.fillText('35pts', 290, previewY + 60);
+                ctx.fillText('60pts', 390, previewY + 60);
+
+                // Start prompt
+                const pulse = Math.sin(gameTime * 3) * 0.3 + 0.7;
+                ctx.fillStyle = `rgba(255,255,255,${pulse})`;
+                ctx.font = 'bold 22px "Segoe UI", Arial, sans-serif';
+                ctx.fillText('👆 TAP OR PRESS SPACE TO START! 👆', W / 2, 660);
+            }
+
+            function drawGameOverOverlay() {
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(0, 0, W, H);
+
+                ctx.fillStyle = '#FF5252';
+                ctx.font = 'bold 50px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = 'rgba(255,0,0,0.6)';
+                ctx.shadowBlur = 20;
+                ctx.fillText('GAME OVER', W / 2, 250);
+                ctx.shadowBlur = 0;
+
+                ctx.fillStyle = '#FFF';
+                ctx.font = 'bold 28px "Segoe UI", Arial, sans-serif';
+                ctx.fillText('Final Score: ' + score, W / 2, 320);
+
+                ctx.fillStyle = '#FFD54F';
+                ctx.font = '18px "Segoe UI", Arial, sans-serif';
+                ctx.fillText('Max Combo: x' + Math.max(1, comboCount), W / 2, 360);
+                ctx.fillText('Intensity Reached: ' + difficulty, W / 2, 390);
+
+                const pulse = Math.sin(gameTime * 3) * 0.3 + 0.7;
+                ctx.fillStyle = `rgba(255,255,255,${pulse})`;
+                ctx.font = 'bold 22px "Segoe UI", Arial, sans-serif';
+                ctx.fillText('👆 TAP TO PLAY AGAIN! 👆', W / 2, 500);
+
+                // Draw sad character
+                drawCharacter(W / 2, 580, 0);
+            }
+
+            // ---- Game loop ----
+            let lastTime = performance.now();
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.2) dt = 0.2; // Cap to prevent large jumps
+                lastTime = timestamp;
+
+                update(dt);
+                render();
+
+                requestAnimationFrame(gameLoop);
+            }
+
+            // ---- Input handling ----
+            function handleInput() {
+                if (gameState === STATE.MENU) {
+                    resetGame();
+                    inputJustPressed = true;
+                    return;
+                }
+                if (gameState === STATE.OVER) {
+                    resetGame();
+                    inputJustPressed = true;
+                    return;
+                }
+                if (gameState === STATE.PLAYING) {
+                    inputJustPressed = true;
+                }
+            }
+
+            canvas.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                handleInput();
+            });
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                handleInput();
+            }, { passive: false });
+            document.addEventListener('keydown', (e) => {
+                if (e.code === 'Space' || e.code === 'KeyF') {
+                    e.preventDefault();
+                    handleInput();
+                }
+            });
+
+            // Prevent scrolling on canvas
+            canvas.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+
+            // ---- Start ----
+            // Initial spawn for menu preview
+            gameTime = 0;
+            // Start with a few decorative particles
+            for (let i = 0; i < 8; i++) {
+                particles.push({
+                    x: Math.random() * W,
+                    y: Math.random() * H,
+                    vx: (Math.random() - 0.5) * 20,
+                    vy: -10 - Math.random() * 30,
+                    radius: 2 + Math.random() * 4,
+                    alpha: 0.5 + Math.random() * 0.4,
+                    decay: 0.3 + Math.random() * 0.6,
+                    color: 'hsl(85, 60%, 55%)',
+                    alive: true,
+                });
+            }
+
+            requestAnimationFrame(gameLoop);
+
+            console.log('💨 Fart Blaster ready! Tap, click, or press Space to play!');
+        })();
+    </script>
+</body>
+</html>
