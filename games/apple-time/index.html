@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>🍎 Apple Time!</title>
+    <style>
+        :root {
+            --bg: #1a1a2e;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            max-width: 500px;
+            max-height: 850px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        canvas {
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 0 4px rgba(255, 255, 255, 0.08);
+            display: block;
+            max-width: 100%;
+            max-height: 100%;
+            cursor: pointer;
+        }
+
+        #instructions {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 13px;
+            text-align: center;
+            pointer-events: none;
+            background: rgba(0, 0, 0, 0.4);
+            padding: 8px 18px;
+            border-radius: 20px;
+            letter-spacing: 0.5px;
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            transition: opacity 0.5s;
+        }
+
+        @media (max-width: 520px) {
+            canvas {
+                border-radius: 10px;
+            }
+            #instructions {
+                bottom: 8px;
+                font-size: 11px;
+                padding: 6px 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <div id="instructions">🖱️ Move mouse or 👆 touch & drag to catch apples!</div>
+    </div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+            const instructionsEl = document.getElementById('instructions');
+
+            // --- Canvas sizing ---
+            let W, H;
+            const MAX_W = 500;
+            const MAX_H = 850;
+
+            function resizeCanvas() {
+                const container = document.getElementById('game-container');
+                const cw = Math.min(window.innerWidth * 0.96, MAX_W);
+                const ch = Math.min(window.innerHeight * 0.92, MAX_H);
+                const ratio = Math.min(cw / MAX_W, ch / MAX_H);
+                W = Math.floor(MAX_W * ratio);
+                H = Math.floor(MAX_H * ratio);
+                canvas.width = W;
+                canvas.height = H;
+            }
+
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+
+            // --- Audio Engine ---
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            let audioCtx;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new AudioCtx();
+                }
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            }
+
+            function playSound(freq, type, duration, vol = 0.08, glideTo = 0) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (glideTo) osc.frequency.linearRampToValueAtTime(glideTo, t + duration);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) {
+                    // Silently ignore audio errors
+                }
+            }
+
+            function sfxCatch(points) {
+                if (points >= 50) {
+                    playSound(880, 'triangle', 0.15, 0.1, 1200);
+                    setTimeout(() => playSound(660, 'triangle', 0.12, 0.08, 880), 100);
+                } else if (points >= 20) {
+                    playSound(550, 'triangle', 0.12, 0.09, 700);
+                } else {
+                    playSound(400, 'triangle', 0.1, 0.08, 500);
+                }
+            }
+
+            function sfxBad() {
+                playSound(90, 'sawtooth', 0.2, 0.06, 40);
+            }
+
+            function sfxGameOver() {
+                playSound(200, 'sine', 0.3, 0.1, 100);
+                setTimeout(() => playSound(150, 'sine', 0.35, 0.15, 70), 150);
+                setTimeout(() => playSound(100, 'sine', 0.4, 0.2, 50), 300);
+            }
+
+            function sfxStart() {
+                playSound(500, 'triangle', 0.08, 0.06, 800);
+                setTimeout(() => playSound(600, 'triangle', 0.08, 0.06, 900), 80);
+                setTimeout(() => playSound(750, 'triangle', 0.08, 0.06, 1100), 160);
+            }
+
+            // --- Game State ---
+            const GAME_STATE = { IDLE: 'idle', PLAYING: 'playing', OVER: 'over' };
+            let gameState = GAME_STATE.IDLE;
+            let score = 0;
+            let timeLeft = 60;
+            let timerInterval = null;
+            let basket = { x: W / 2, y: H - 100, w: 90, h: 55 };
+            let apples = [];
+            let particles = [];
+            let spawnTimer = 0;
+            let difficulty = 1;
+            let frameCount = 0;
+            let highScore = 0;
+            let comboCount = 0;
+            let comboTimer = 0;
+            let shakeAmount = 0;
+
+            // --- Apple Types ---
+            const APPLE_TYPES = [
+                { name: 'red', color: '#e74c3c', glow: '#ff6b6b', points: 10, radius: 18, prob: 55 },
+                { name: 'green', color: '#27ae60', glow: '#5cdb7e', points: 20, radius: 16, prob: 30 },
+                { name: 'gold', color: '#f39c12', glow: '#ffd93d', points: 50, radius: 20, prob: 10 },
+                { name: 'rotten', color: '#5d4037', glow: '#8d6e63', points: -25, radius: 17, prob: 5 },
+            ];
+
+            function getRandomAppleType() {
+                const totalProb = APPLE_TYPES.reduce((sum, t) => sum + t.prob, 0);
+                let r = Math.random() * totalProb;
+                for (const type of APPLE_TYPES) {
+                    r -= type.prob;
+                    if (r <= 0) return type;
+                }
+                return APPLE_TYPES[0];
+            }
+
+            // --- Basket ---
+            function updateBasketTarget(clientX, clientY) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = W / rect.width;
+                const scaleY = H / rect.height;
+                basket.x = (clientX - rect.left) * scaleX;
+                basket.y = (clientY - rect.top) * scaleY;
+                // Clamp
+                basket.x = Math.max(basket.w / 2, Math.min(W - basket.w / 2, basket.x));
+                basket.y = Math.max(H * 0.4, Math.min(H - basket.h / 2, basket.y));
+            }
+
+            // Mouse
+            canvas.addEventListener('mousemove', (e) => {
+                if (gameState === GAME_STATE.PLAYING) {
+                    updateBasketTarget(e.clientX, e.clientY);
+                }
+            });
+
+            canvas.addEventListener('click', (e) => {
+                initAudio();
+                if (gameState === GAME_STATE.IDLE) {
+                    startGame();
+                } else if (gameState === GAME_STATE.OVER) {
+                    restartGame();
+                }
+                if (gameState === GAME_STATE.PLAYING) {
+                    updateBasketTarget(e.clientX, e.clientY);
+                }
+            });
+
+            // Touch
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                if (gameState === GAME_STATE.PLAYING && e.touches.length > 0) {
+                    updateBasketTarget(e.touches[0].clientX, e.touches[0].clientY);
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                initAudio();
+                if (gameState === GAME_STATE.IDLE) {
+                    startGame();
+                } else if (gameState === GAME_STATE.OVER) {
+                    restartGame();
+                }
+                if (gameState === GAME_STATE.PLAYING && e.touches.length > 0) {
+                    updateBasketTarget(e.touches[0].clientX, e.touches[0].clientY);
+                }
+            }, { passive: false });
+
+            // Keyboard
+            const keys = {};
+            window.addEventListener('keydown', (e) => {
+                keys[e.key] = true;
+                initAudio();
+                if (e.key === ' ' || e.key === 'Enter') {
+                    if (gameState === GAME_STATE.IDLE) startGame();
+                    else if (gameState === GAME_STATE.OVER) restartGame();
+                }
+            });
+            window.addEventListener('keyup', (e) => { keys[e.key] = false; });
+
+            function handleKeyboardInput() {
+                if (gameState !== GAME_STATE.PLAYING) return;
+                const speed = 6;
+                if (keys['ArrowLeft'] || keys['a'] || keys['A']) basket.x -= speed;
+                if (keys['ArrowRight'] || keys['d'] || keys['D']) basket.x += speed;
+                if (keys['ArrowUp'] || keys['w'] || keys['W']) basket.y -= speed;
+                if (keys['ArrowDown'] || keys['s'] || keys['S']) basket.y += speed;
+                basket.x = Math.max(basket.w / 2, Math.min(W - basket.w / 2, basket.x));
+                basket.y = Math.max(H * 0.35, Math.min(H - basket.h / 2, basket.y));
+            }
+
+            // --- Particles ---
+            function spawnParticles(x, y, color, count = 15) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 2 + Math.random() * 6;
+                    particles.push({
+                        x,
+                        y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - 2,
+                        life: 1,
+                        decay: 0.015 + Math.random() * 0.04,
+                        color,
+                        size: 2 + Math.random() * 4,
+                    });
+                }
+            }
+
+            function updateParticles() {
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += 0.15;
+                    p.life -= p.decay;
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+            }
+
+            function drawParticles() {
+                for (const p of particles) {
+                    ctx.save();
+                    ctx.globalAlpha = p.life;
+                    ctx.fillStyle = p.color;
+                    ctx.shadowColor = p.color;
+                    ctx.shadowBlur = 6;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+            }
+
+            // --- Spawn Apple ---
+            function spawnApple() {
+                const type = getRandomAppleType();
+                const x = 30 + Math.random() * (W - 60);
+                const apple = {
+                    x,
+                    y: -30 - Math.random() * 40,
+                    vy: 1.5 + Math.random() * 2 + difficulty * 0.3,
+                    vx: (Math.random() - 0.5) * 1.5,
+                    type,
+                    radius: type.radius,
+                    rotation: Math.random() * Math.PI * 2,
+                    rotSpeed: (Math.random() - 0.5) * 0.06,
+                    wobble: Math.random() * Math.PI * 2,
+                    wobbleSpeed: 0.02 + Math.random() * 0.03,
+                };
+                apples.push(apple);
+            }
+
+            // --- Start / Restart ---
+            function startGame() {
+                gameState = GAME_STATE.PLAYING;
+                score = 0;
+                timeLeft = 60;
+                difficulty = 1;
+                apples = [];
+                particles = [];
+                spawnTimer = 0;
+                frameCount = 0;
+                comboCount = 0;
+                comboTimer = 0;
+                shakeAmount = 0;
+                basket.x = W / 2;
+                basket.y = H - 100;
+                sfxStart();
+                if (timerInterval) clearInterval(timerInterval);
+                timerInterval = setInterval(() => {
+                    if (gameState === GAME_STATE.PLAYING) {
+                        timeLeft--;
+                        if (timeLeft <= 0) {
+                            timeLeft = 0;
+                            endGame();
+                        }
+                    }
+                }, 1000);
+                instructionsEl.style.opacity = '0.5';
+            }
+
+            function endGame() {
+                gameState = GAME_STATE.OVER;
+                if (timerInterval) clearInterval(timerInterval);
+                timerInterval = null;
+                if (score > highScore) highScore = score;
+                sfxGameOver();
+                spawnParticles(basket.x, basket.y, '#ff6b6b', 40);
+                spawnParticles(basket.x, basket.y, '#ffd93d', 30);
+                instructionsEl.style.opacity = '1';
+                instructionsEl.textContent = '🔄 Tap or click to play again!';
+            }
+
+            function restartGame() {
+                if (timerInterval) clearInterval(timerInterval);
+                timerInterval = null;
+                startGame();
+            }
+
+            // --- Collision detection ---
+            function rectCircleCollision(rx, ry, rw, rh, cx, cy, cr) {
+                const closestX = Math.max(rx, Math.min(cx, rx + rw));
+                const closestY = Math.max(ry, Math.min(cy, ry + rh));
+                const distX = cx - closestX;
+                const distY = cy - closestY;
+                return (distX * distX + distY * distY) < (cr * cr);
+            }
+
+            // --- Drawing helpers ---
+            function drawSky() {
+                const grad = ctx.createLinearGradient(0, 0, 0, H);
+                grad.addColorStop(0, '#87CEEB');
+                grad.addColorStop(0.35, '#b8e4f0');
+                grad.addColorStop(0.7, '#fdf5c9');
+                grad.addColorStop(1, '#e8d5a3');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, W, H);
+
+                // Sun
+                const sunX = W * 0.78;
+                const sunY = H * 0.12;
+                const sunGrad = ctx.createRadialGradient(sunX, sunY, 20, sunX, sunY, 100);
+                sunGrad.addColorStop(0, 'rgba(255,255,220,1)');
+                sunGrad.addColorStop(0.4, 'rgba(255,250,200,0.7)');
+                sunGrad.addColorStop(1, 'rgba(255,240,180,0)');
+                ctx.fillStyle = sunGrad;
+                ctx.beginPath();
+                ctx.arc(sunX, sunY, 100, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Clouds
+                drawCloud(W * 0.15, H * 0.1, 1);
+                drawCloud(W * 0.55, H * 0.17, 0.8);
+                drawCloud(W * 0.35, H * 0.06, 0.6);
+            }
+
+            function drawCloud(cx, cy, scale) {
+                ctx.save();
+                ctx.fillStyle = 'rgba(255,255,255,0.85)';
+                ctx.shadowColor = 'rgba(255,255,255,0.4)';
+                ctx.shadowBlur = 20;
+                const s = scale;
+                ctx.beginPath();
+                ctx.arc(cx, cy, 30 * s, 0, Math.PI * 2);
+                ctx.arc(cx + 35 * s, cy - 10 * s, 25 * s, 0, Math.PI * 2);
+                ctx.arc(cx + 60 * s, cy, 28 * s, 0, Math.PI * 2);
+                ctx.arc(cx + 25 * s, cy + 12 * s, 22 * s, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            function drawTree(cx, topY) {
+                // Trunk
+                ctx.fillStyle = '#8B5E3C';
+                ctx.shadowColor = 'rgba(0,0,0,0.3)';
+                ctx.shadowBlur = 8;
+                const trunkW = 22;
+                const trunkH = 80;
+                ctx.fillRect(cx - trunkW / 2, topY + 50, trunkW, trunkH);
+
+                // Foliage layers
+                const foliageColors = ['#2d8a4e', '#38a35a', '#43b865', '#4ecb70'];
+                ctx.shadowColor = 'rgba(0,0,0,0.25)';
+                ctx.shadowBlur = 10;
+                for (let i = 3; i >= 0; i--) {
+                    ctx.fillStyle = foliageColors[i];
+                    ctx.beginPath();
+                    const fy = topY + 15 + i * 18;
+                    const fr = 45 - i * 5;
+                    ctx.arc(cx, fy, fr, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.shadowBlur = 0;
+            }
+
+            function drawGround() {
+                const grad = ctx.createLinearGradient(0, H - 70, 0, H);
+                grad.addColorStop(0, '#7cb342');
+                grad.addColorStop(0.3, '#689f38');
+                grad.addColorStop(1, '#4a7c28');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, H - 70, W, 70);
+
+                // Grass blades
+                ctx.strokeStyle = '#8bc34a';
+                ctx.lineWidth = 2;
+                for (let x = 0; x < W; x += 8 + Math.sin(x * 0.3) * 3) {
+                    const gh = 8 + Math.sin(x * 0.5 + frameCount * 0.02) * 5;
+                    ctx.beginPath();
+                    ctx.moveTo(x, H - 68);
+                    ctx.lineTo(x + 3, H - 68 - gh);
+                    ctx.stroke();
+                }
+            }
+
+            function drawBasket() {
+                ctx.save();
+                const bx = basket.x;
+                const by = basket.y;
+                const bw = basket.w;
+                const bh = basket.h;
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.25)';
+                ctx.beginPath();
+                ctx.ellipse(bx, by + bh * 0.35, bw * 0.45, bh * 0.2, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Basket body (woven look)
+                const bodyGrad = ctx.createLinearGradient(bx, by, bx, by + bh);
+                bodyGrad.addColorStop(0, '#d4a66a');
+                bodyGrad.addColorStop(0.5, '#c08b4c');
+                bodyGrad.addColorStop(1, '#8b5e34');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.moveTo(bx - bw / 2, by - bh * 0.15);
+                ctx.quadraticCurveTo(bx - bw / 2 - 8, by + bh * 0.5, bx - bw / 2 + 5, by + bh);
+                ctx.lineTo(bx + bw / 2 - 5, by + bh);
+                ctx.quadraticCurveTo(bx + bw / 2 + 8, by + bh * 0.5, bx + bw / 2, by - bh * 0.15);
+                ctx.closePath();
+                ctx.fill();
+
+                // Basket rim
+                ctx.strokeStyle = '#a0723a';
+                ctx.lineWidth = 4;
+                ctx.shadowColor = 'rgba(0,0,0,0.3)';
+                ctx.shadowBlur = 5;
+                ctx.stroke();
+
+                // Inner dark
+                const innerGrad = ctx.createLinearGradient(bx, by, bx, by + bh * 0.4);
+                innerGrad.addColorStop(0, 'rgba(0,0,0,0.5)');
+                innerGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = innerGrad;
+                ctx.beginPath();
+                ctx.moveTo(bx - bw / 2 + 8, by - bh * 0.1);
+                ctx.quadraticCurveTo(bx, by + bh * 0.3, bx + bw / 2 - 8, by - bh * 0.1);
+                ctx.quadraticCurveTo(bx, by - bh * 0.3, bx - bw / 2 + 8, by - bh * 0.1);
+                ctx.fill();
+
+                // Weave lines
+                ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+                ctx.lineWidth = 1;
+                ctx.shadowBlur = 0;
+                for (let i = 0; i < 5; i++) {
+                    const wy = by - bh * 0.05 + (bh * 0.2) + i * (bh * 0.15);
+                    ctx.beginPath();
+                    ctx.moveTo(bx - bw / 2 + 5, wy);
+                    ctx.lineTo(bx + bw / 2 - 5, wy);
+                    ctx.stroke();
+                }
+
+                ctx.restore();
+            }
+
+            function drawApple(apple) {
+                ctx.save();
+                const ax = apple.x;
+                const ay = apple.y;
+                const r = apple.radius;
+                const type = apple.type;
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                ctx.beginPath();
+                ctx.arc(ax + 2, ay + 2, r, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body
+                const bodyGrad = ctx.createRadialGradient(ax - r * 0.3, ay - r * 0.3, r * 0.1, ax, ay, r);
+                bodyGrad.addColorStop(0, type.glow);
+                bodyGrad.addColorStop(0.7, type.color);
+                bodyGrad.addColorStop(1, '#1a0000');
+                ctx.fillStyle = bodyGrad;
+                ctx.shadowColor = type.glow;
+                ctx.shadowBlur = 12;
+                ctx.beginPath();
+                ctx.arc(ax, ay, r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                // Highlight
+                ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                ctx.beginPath();
+                ctx.arc(ax - r * 0.3, ay - r * 0.35, r * 0.35, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Stem
+                ctx.strokeStyle = '#4a3020';
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                ctx.moveTo(ax, ay - r);
+                ctx.quadraticCurveTo(ax + r * 0.4, ay - r - 10, ax + r * 0.3, ay - r - 8);
+                ctx.stroke();
+
+                // Leaf
+                ctx.fillStyle = '#3d8b37';
+                ctx.beginPath();
+                ctx.ellipse(ax + r * 0.4, ay - r - 5, 8, 4, 0.4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#2d6b27';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+
+                // Rotten spots
+                if (type.name === 'rotten') {
+                    ctx.fillStyle = 'rgba(30,15,10,0.5)';
+                    ctx.beginPath();
+                    ctx.arc(ax + r * 0.2, ay - r * 0.1, r * 0.3, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = 'rgba(80,60,40,0.4)';
+                    ctx.beginPath();
+                    ctx.arc(ax - r * 0.25, ay + r * 0.2, r * 0.25, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Golden sparkle
+                if (type.name === 'gold') {
+                    ctx.fillStyle = 'rgba(255,255,200,0.7)';
+                    const sparkleAngle = frameCount * 0.1;
+                    for (let i = 0; i < 3; i++) {
+                        const sx = ax + Math.cos(sparkleAngle + i * 2.1) * r * 0.7;
+                        const sy = ay + Math.sin(sparkleAngle + i * 2.1) * r * 0.6;
+                        ctx.beginPath();
+                        ctx.arc(sx, sy, 2.5, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+
+                ctx.restore();
+            }
+
+            function drawHUD() {
+                // Score panel
+                const panelW = 160;
+                const panelH = 70;
+                const panelX = W / 2 - panelW / 2;
+                const panelY = 10;
+
+                ctx.fillStyle = 'rgba(0,0,0,0.45)';
+                ctx.shadowColor = 'rgba(0,0,0,0.3)';
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                ctx.roundRect(panelX, panelY, panelW, panelH, 18);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 15px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('🍎 Score', panelX + panelW / 2, panelY + 22);
+                ctx.font = 'bold 28px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText(score.toString(), panelX + panelW / 2, panelY + 52);
+
+                // Timer
+                const timerX = W - 55;
+                const timerY = 50;
+                const timerR = 32;
+                ctx.fillStyle = 'rgba(0,0,0,0.45)';
+                ctx.beginPath();
+                ctx.arc(timerX, timerY, timerR, 0, Math.PI * 2);
+                ctx.fill();
+
+                const timerProgress = timeLeft / 60;
+                const timerGrad = ctx.createConicalGradient(timerX, timerY, 0);
+                timerGrad.addColorStop(0, '#ff6b6b');
+                timerGrad.addColorStop(timerProgress, '#ffd93d');
+                timerGrad.addColorStop(1, '#555');
+                ctx.fillStyle = timerGrad;
+                ctx.beginPath();
+                ctx.arc(timerX, timerY, timerR - 5, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * timerProgress);
+                ctx.lineTo(timerX, timerY);
+                ctx.fill();
+
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.beginPath();
+                ctx.arc(timerX, timerY, timerR - 5, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 16px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(timeLeft.toString(), timerX, timerY + 6);
+
+                // Combo
+                if (comboCount >= 3 && comboTimer > 0) {
+                    const comboAlpha = Math.min(1, comboTimer / 30);
+                    ctx.fillStyle = `rgba(255,215,0,${comboAlpha})`;
+                    ctx.font = 'bold 20px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`🔥 ${comboCount}x COMBO!`, W / 2, panelY + panelH + 30);
+                }
+
+                // High score
+                if (highScore > 0) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                    ctx.font = '12px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'right';
+                    ctx.fillText(`Best: ${highScore}`, W - 18, timerY + timerR + 22);
+                }
+            }
+
+            function drawIdleScreen() {
+                // Title
+                const titleY = H * 0.28;
+                ctx.fillStyle = 'rgba(0,0,0,0.35)';
+                ctx.shadowColor = 'rgba(0,0,0,0.4)';
+                ctx.shadowBlur = 20;
+                ctx.font = 'bold 52px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('🍎 Apple Time!', W / 2 + 2, titleY + 2);
+                ctx.fillStyle = '#fff';
+                ctx.shadowColor = 'rgba(255,180,50,0.6)';
+                ctx.shadowBlur = 25;
+                ctx.fillText('🍎 Apple Time!', W / 2, titleY);
+                ctx.shadowBlur = 0;
+
+                // Subtitle
+                ctx.fillStyle = 'rgba(255,255,255,0.85)';
+                ctx.font = '18px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('Catch the falling apples!', W / 2, titleY + 45);
+
+                // Start button
+                const btnY = titleY + 100;
+                const pulse = Math.sin(frameCount * 0.05) * 5;
+                ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                ctx.beginPath();
+                ctx.roundRect(W / 2 - 90, btnY - 22, 180, 50 + pulse, 30);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 20px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('🎮 Tap to Start', W / 2, btnY + 8);
+
+                // Apple types legend
+                const legendY = btnY + 70;
+                ctx.fillStyle = 'rgba(0,0,0,0.35)';
+                ctx.beginPath();
+                ctx.roundRect(W / 2 - 130, legendY - 5, 260, 90, 16);
+                ctx.fill();
+
+                const types = [
+                    { emoji: '🍎', label: '+10', color: '#e74c3c' },
+                    { emoji: '🍏', label: '+20', color: '#27ae60' },
+                    { emoji: '✨', label: '+50', color: '#f39c12' },
+                    { emoji: '💀', label: '-25', color: '#5d4037' },
+                ];
+                ctx.font = '13px "Segoe UI", system-ui, sans-serif';
+                types.forEach((t, i) => {
+                    const lx = W / 2 - 110 + i * 62;
+                    ctx.fillStyle = t.color;
+                    ctx.fillText(t.emoji, lx, legendY + 22);
+                    ctx.fillStyle = '#fff';
+                    ctx.fillText(t.label, lx + 2, legendY + 50);
+                });
+            }
+
+            function drawGameOverScreen() {
+                // Overlay
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(0, 0, W, H);
+
+                const cy = H * 0.35;
+                ctx.fillStyle = '#fff';
+                ctx.shadowColor = 'rgba(255,100,100,0.5)';
+                ctx.shadowBlur = 25;
+                ctx.font = 'bold 44px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('⏰ Time\'s Up!', W / 2, cy);
+                ctx.shadowBlur = 0;
+
+                ctx.fillStyle = '#ffd93d';
+                ctx.font = 'bold 28px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText(`Score: ${score}`, W / 2, cy + 55);
+
+                if (score >= highScore && score > 0) {
+                    ctx.fillStyle = '#ff6b6b';
+                    ctx.font = 'bold 20px "Segoe UI", system-ui, sans-serif';
+                    ctx.fillText('🏆 New High Score! 🏆', W / 2, cy + 85);
+                }
+
+                const btnY = cy + 130;
+                const pulse = Math.sin(frameCount * 0.05) * 4;
+                ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                ctx.beginPath();
+                ctx.roundRect(W / 2 - 85, btnY - 20, 170, 46 + pulse, 28);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 18px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('🔄 Play Again', W / 2, btnY + 8);
+            }
+
+            // --- Main Game Loop ---
+            function update() {
+                frameCount++;
+                handleKeyboardInput();
+
+                if (gameState === GAME_STATE.PLAYING) {
+                    // Difficulty ramp
+                    difficulty = 1 + Math.floor((60 - timeLeft) / 12);
+
+                    // Spawn apples
+                    spawnTimer++;
+                    const spawnRate = Math.max(15, 55 - difficulty * 5);
+                    if (spawnTimer >= spawnRate) {
+                        spawnTimer = 0;
+                        spawnApple();
+                        // Sometimes spawn extra
+                        if (Math.random() < difficulty * 0.15) spawnApple();
+                    }
+
+                    // Update apples
+                    for (let i = apples.length - 1; i >= 0; i--) {
+                        const apple = apples[i];
+                        apple.y += apple.vy;
+                        apple.x += apple.vx + Math.sin(apple.wobble) * 1.5;
+                        apple.wobble += apple.wobbleSpeed;
+                        apple.rotation += apple.rotSpeed;
+                        apple.vy += 0.02;
+
+                        // Check collision with basket
+                        const bx = basket.x - basket.w / 2;
+                        const by = basket.y - basket.h * 0.15;
+                        const bw = basket.w;
+                        const bh = basket.h;
+
+                        if (rectCircleCollision(bx, by, bw, bh, apple.x, apple.y, apple.radius)) {
+                            const pts = apple.type.points;
+                            if (pts > 0) {
+                                score += pts;
+                                comboCount++;
+                                comboTimer = 45;
+                                sfxCatch(pts);
+                                spawnParticles(apple.x, apple.y, apple.type.glow, pts >= 50 ? 25 : 15);
+                            } else {
+                                score = Math.max(0, score + pts);
+                                comboCount = 0;
+                                comboTimer = 0;
+                                sfxBad();
+                                shakeAmount = 8;
+                                spawnParticles(apple.x, apple.y, '#5d4037', 10);
+                            }
+                            apples.splice(i, 1);
+                            continue;
+                        }
+
+                        // Off screen
+                        if (apple.y > H + 50) {
+                            if (apple.type.points > 0 && apple.type.name !== 'rotten') {
+                                comboCount = 0;
+                                comboTimer = 0;
+                            }
+                            apples.splice(i, 1);
+                        }
+                    }
+
+                    // Combo timer
+                    if (comboTimer > 0) {
+                        comboTimer--;
+                        if (comboTimer <= 0) comboCount = 0;
+                    }
+
+                    // Shake decay
+                    if (shakeAmount > 0) shakeAmount *= 0.85;
+                    if (shakeAmount < 0.1) shakeAmount = 0;
+                }
+
+                updateParticles();
+            }
+
+            function draw() {
+                ctx.clearRect(0, 0, W, H);
+
+                // Apply shake
+                let shakeX = 0,
+                    shakeY = 0;
+                if (shakeAmount > 0.1) {
+                    shakeX = (Math.random() - 0.5) * shakeAmount * 2;
+                    shakeY = (Math.random() - 0.5) * shakeAmount * 2;
+                }
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                drawSky();
+
+                // Draw trees
+                drawTree(W * 0.12, H * 0.06);
+                drawTree(W * 0.3, H * 0.03);
+                drawTree(W * 0.65, H * 0.08);
+                drawTree(W * 0.88, H * 0.04);
+                drawTree(W * 0.5, H * 0.01);
+                drawTree(W * 0.2, H * 0.09);
+
+                drawGround();
+
+                // Draw apples
+                for (const apple of apples) {
+                    drawApple(apple);
+                }
+
+                drawBasket();
+                drawParticles();
+                drawHUD();
+
+                ctx.restore();
+
+                // Overlay screens (not affected by shake)
+                if (gameState === GAME_STATE.IDLE) {
+                    drawIdleScreen();
+                } else if (gameState === GAME_STATE.OVER) {
+                    drawGameOverScreen();
+                }
+            }
+
+            function gameLoop() {
+                update();
+                draw();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // --- Initialize ---
+            function init() {
+                resizeCanvas();
+                basket.x = W / 2;
+                basket.y = H - 100;
+                basket.w = Math.max(70, W * 0.18);
+                basket.h = basket.w * 0.6;
+                instructionsEl.textContent = '🖱️ Move mouse or 👆 touch & drag to catch apples!';
+                instructionsEl.style.opacity = '1';
+                gameLoop();
+            }
+
+            // Polyfill roundRect if needed
+            if (!ctx.roundRect) {
+                ctx.roundRect = function(x, y, w, h, r) {
+                    if (typeof r === 'number') r = { tl: r, tr: r, br: r, bl: r };
+                    ctx.beginPath();
+                    ctx.moveTo(x + r.tl, y);
+                    ctx.lineTo(x + w - r.tr, y);
+                    ctx.quadraticCurveTo(x + w, y, x + w, y + r.tr);
+                    ctx.lineTo(x + w, y + h - r.br);
+                    ctx.quadraticCurveTo(x + w, y + h, x + w - r.br, y + h);
+                    ctx.lineTo(x + r.bl, y + h);
+                    ctx.quadraticCurveTo(x, y + h, x, y + h - r.bl);
+                    ctx.lineTo(x, y + r.tl);
+                    ctx.quadraticCurveTo(x, y, x + r.tl, y);
+                    ctx.closePath();
+                };
+            }
+
+            // Polyfill createConicalGradient
+            if (!ctx.createConicalGradient) {
+                ctx.createConicalGradient = function(cx, cy, startAngle) {
+                    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, 40);
+                    return grad;
+                };
+            }
+
+            init();
+        })();
+    </script>
+</body>
+</html>
