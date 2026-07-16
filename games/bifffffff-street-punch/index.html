@@ -1,0 +1,1217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>BIFFFFFFF! - Street Punch</title>
+    <style>
+        :root {
+            --bg: #0a0a14;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-user-select: none;
+            user-select: none;
+            font-family: 'Arial Black', 'Impact', sans-serif;
+        }
+        canvas {
+            display: block;
+            border-radius: 8px;
+            box-shadow: 0 0 60px rgba(255, 100, 30, 0.3), 0 0 120px rgba(255, 60, 20, 0.15);
+            cursor: pointer;
+            max-width: 100vw;
+            max-height: 100vh;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+
+            // --- Canvas Sizing ---
+            const BASE_W = 900;
+            const BASE_H = 500;
+
+            function resize() {
+                const scale = Math.min(window.innerWidth / BASE_W, window.innerHeight / BASE_H, 1.3);
+                canvas.width = BASE_W;
+                canvas.height = BASE_H;
+                canvas.style.width = (BASE_W * scale) + 'px';
+                canvas.style.height = (BASE_H * scale) + 'px';
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            // --- Audio Engine ---
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playSound(type) {
+                if (!audioCtx) return;
+                const t = audioCtx.currentTime;
+
+                if (type === 'punch') {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(300, t);
+                    osc.frequency.exponentialRampToValueAtTime(50, t + 0.12);
+                    gain.gain.setValueAtTime(0.25, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + 0.15);
+
+                    const noise = audioCtx.createBufferSource();
+                    const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.08, audioCtx.sampleRate);
+                    const data = buf.getChannelData(0);
+                    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1);
+                    noise.buffer = buf;
+                    const ng = audioCtx.createGain();
+                    ng.gain.setValueAtTime(0.2, t);
+                    ng.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+                    const filter = audioCtx.createBiquadFilter();
+                    filter.type = 'bandpass';
+                    filter.frequency.setValueAtTime(800, t);
+                    noise.connect(filter);
+                    filter.connect(ng);
+                    ng.connect(audioCtx.destination);
+                    noise.start(t);
+                    noise.stop(t + 0.08);
+                }
+
+                if (type === 'hit') {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(90, t);
+                    osc.frequency.exponentialRampToValueAtTime(30, t + 0.1);
+                    gain.gain.setValueAtTime(0.5, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + 0.12);
+
+                    const click = audioCtx.createOscillator();
+                    const cg = audioCtx.createGain();
+                    click.type = 'square';
+                    click.frequency.setValueAtTime(600, t);
+                    click.frequency.exponentialRampToValueAtTime(200, t + 0.04);
+                    cg.gain.setValueAtTime(0.15, t);
+                    cg.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+                    click.connect(cg);
+                    cg.connect(audioCtx.destination);
+                    click.start(t);
+                    click.stop(t + 0.05);
+                }
+
+                if (type === 'biff') {
+                    for (let i = 0; i < 3; i++) {
+                        const osc = audioCtx.createOscillator();
+                        const gain = audioCtx.createGain();
+                        osc.type = 'sine';
+                        const st = t + i * 0.03;
+                        osc.frequency.setValueAtTime(60 + i * 20, st);
+                        osc.frequency.exponentialRampToValueAtTime(20, st + 0.18);
+                        gain.gain.setValueAtTime(0.6, st);
+                        gain.gain.exponentialRampToValueAtTime(0.001, st + 0.2);
+                        osc.connect(gain);
+                        gain.connect(audioCtx.destination);
+                        osc.start(st);
+                        osc.stop(st + 0.2);
+                    }
+                    const metal = audioCtx.createOscillator();
+                    const mg = audioCtx.createGain();
+                    metal.type = 'triangle';
+                    metal.frequency.setValueAtTime(1200, t);
+                    metal.frequency.exponentialRampToValueAtTime(300, t + 0.25);
+                    mg.gain.setValueAtTime(0.25, t);
+                    mg.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+                    metal.connect(mg);
+                    mg.connect(audioCtx.destination);
+                    metal.start(t);
+                    metal.stop(t + 0.28);
+
+                    const boom = audioCtx.createBufferSource();
+                    const buf2 = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.3, audioCtx.sampleRate);
+                    const d2 = buf2.getChannelData(0);
+                    for (let i = 0; i < d2.length; i++) {
+                        d2[i] = (Math.random() * 2 - 1) * Math.exp(-i / (audioCtx.sampleRate * 0.04));
+                    }
+                    boom.buffer = buf2;
+                    const bg = audioCtx.createGain();
+                    bg.gain.setValueAtTime(0.5, t);
+                    bg.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+                    boom.connect(bg);
+                    bg.connect(audioCtx.destination);
+                    boom.start(t);
+                    boom.stop(t + 0.3);
+                }
+
+                if (type === 'miss') {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(200, t);
+                    osc.frequency.exponentialRampToValueAtTime(100, t + 0.2);
+                    gain.gain.setValueAtTime(0.12, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + 0.22);
+                }
+
+                if (type === 'hurt') {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(150, t);
+                    osc.frequency.exponentialRampToValueAtTime(40, t + 0.3);
+                    gain.gain.setValueAtTime(0.35, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + 0.35);
+                }
+
+                if (type === 'combo') {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(880, t);
+                    osc.frequency.setValueAtTime(1100, t + 0.08);
+                    osc.frequency.setValueAtTime(1320, t + 0.16);
+                    gain.gain.setValueAtTime(0.18, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + 0.25);
+                }
+            }
+
+            // --- Game State ---
+            const STATE = {
+                INTRO: 'intro',
+                PLAYING: 'playing',
+                GAMEOVER: 'gameover',
+            };
+
+            let gameState = STATE.INTRO;
+            let score = 0;
+            let combo = 0;
+            let maxCombo = 0;
+            let health = 5;
+            let maxHealth = 5;
+            let difficulty = 1;
+            let spawnTimer = 0;
+            let spawnInterval = 120;
+            let shakeAmount = 0;
+            let shakeDuration = 0;
+            let biffTexts = [];
+            let particles = [];
+            let enemies = [];
+            let player = null;
+            let frameCount = 0;
+            let gameOverTimer = 0;
+
+            // --- Player ---
+            class Player {
+                constructor() {
+                    this.bodyX = canvas.width * 0.16;
+                    this.bodyY = canvas.height * 0.72;
+                    this.bodyW = 50;
+                    this.bodyH = 70;
+                    this.headR = 20;
+                    this.headX = this.bodyX + 5;
+                    this.headY = this.bodyY - this.bodyH / 2 - this.headR + 5;
+                    this.fistX = this.bodyX + 30;
+                    this.fistY = this.bodyY - 15;
+                    this.fistR = 12;
+                    this.punching = false;
+                    this.punchTimer = 0;
+                    this.punchDuration = 22;
+                    this.punchStartup = 7;
+                    this.punchActiveStart = 7;
+                    this.punchActiveEnd = 16;
+                    this.punchCooldown = 0;
+                    this.punchExtend = 0;
+                    this.staggerTimer = 0;
+                    this.idleBob = 0;
+                }
+
+                get punchActive() {
+                    return this.punching && this.punchTimer >= this.punchActiveStart && this.punchTimer <=
+                        this.punchActiveEnd;
+                }
+
+                get punchRangeMin() {
+                    return this.bodyX + 20;
+                }
+                get punchRangeMax() {
+                    return this.bodyX + 95;
+                }
+                get sweetSpotMin() {
+                    return this.bodyX + 45;
+                }
+                get sweetSpotMax() {
+                    return this.bodyX + 75;
+                }
+
+                triggerPunch() {
+                    if (this.punching || this.punchCooldown > 0 || this.staggerTimer > 0) return false;
+                    this.punching = true;
+                    this.punchTimer = 0;
+                    this.punchExtend = 0;
+                    playSound('punch');
+                    return true;
+                }
+
+                takeDamage() {
+                    if (this.staggerTimer > 0) return;
+                    this.staggerTimer = 30;
+                    health--;
+                    combo = 0;
+                    shakeAmount = 8;
+                    shakeDuration = 15;
+                    playSound('hurt');
+                    if (health <= 0) {
+                        health = 0;
+                        gameState = STATE.GAMEOVER;
+                        gameOverTimer = 0;
+                        playSound('hurt');
+                    }
+                }
+
+                update() {
+                    this.idleBob = Math.sin(frameCount * 0.06) * 4;
+                    if (this.punching) {
+                        this.punchTimer++;
+                        if (this.punchTimer <= this.punchActiveStart) {
+                            this.punchExtend = this.punchTimer / this.punchActiveStart;
+                        } else if (this.punchTimer <= this.punchActiveEnd) {
+                            this.punchExtend = 1;
+                        } else if (this.punchTimer <= this.punchDuration) {
+                            const rec = (this.punchTimer - this.punchActiveEnd) / (this.punchDuration - this
+                                .punchActiveEnd);
+                            this.punchExtend = 1 - rec;
+                        } else {
+                            this.punching = false;
+                            this.punchTimer = 0;
+                            this.punchExtend = 0;
+                            this.punchCooldown = 8;
+                        }
+                    }
+                    if (this.punchCooldown > 0) this.punchCooldown--;
+                    if (this.staggerTimer > 0) this.staggerTimer--;
+                }
+
+                getFistPos() {
+                    const ex = this.bodyX + 30 + this.punchExtend * 60;
+                    const ey = this.bodyY - 20 + (1 - this.punchExtend) * 5;
+                    return { x: ex, y: ey, r: this.fistR };
+                }
+
+                draw(ctx) {
+                    ctx.save();
+                    const bx = this.bodyX;
+                    const by = this.bodyY + this.idleBob;
+                    const staggerOffset = this.staggerTimer > 0 ? Math.sin(this.staggerTimer * 1.2) * 8 : 0;
+                    const sx = bx + staggerOffset;
+
+                    // Shadow
+                    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+                    ctx.beginPath();
+                    ctx.ellipse(bx + 10, canvas.height * 0.88, 35, 10, 0, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Legs
+                    ctx.fillStyle = '#1a1a2e';
+                    ctx.fillRect(sx - 8, by + this.bodyH / 2 - 10, 16, 30);
+                    ctx.fillRect(sx + 12, by + this.bodyH / 2 - 10, 16, 30);
+                    // Shoes
+                    ctx.fillStyle = '#2a2a2a';
+                    ctx.fillRect(sx - 10, by + this.bodyH / 2 + 18, 20, 8);
+                    ctx.fillRect(sx + 10, by + this.bodyH / 2 + 18, 20, 8);
+
+                    // Torso
+                    const torsoGrad = ctx.createLinearGradient(sx, by - this.bodyH / 2, sx + this.bodyW, by + this
+                        .bodyH / 2);
+                    torsoGrad.addColorStop(0, '#e8e8f0');
+                    torsoGrad.addColorStop(1, '#c0c0d0');
+                    ctx.fillStyle = torsoGrad;
+                    ctx.beginPath();
+                    ctx.roundRect(sx - this.bodyW / 4, by - this.bodyH / 2, this.bodyW * 0.7, this.bodyH, 10);
+                    ctx.fill();
+                    ctx.strokeStyle = '#888';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    // Tank top stripe
+                    ctx.fillStyle = '#ff3b20';
+                    ctx.fillRect(sx - this.bodyW / 4 + 5, by - this.bodyH / 2 + 10, this.bodyW * 0.7 - 10, 14);
+
+                    // Back arm (guard)
+                    ctx.fillStyle = '#d4a574';
+                    ctx.beginPath();
+                    ctx.roundRect(sx + 5, by - 10, 10, 28, 5);
+                    ctx.fill();
+                    ctx.fillStyle = '#e03020';
+                    ctx.beginPath();
+                    ctx.arc(sx + 10, by - 10, 9, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Punching arm
+                    const fist = this.getFistPos();
+                    const armStartX = sx + 20;
+                    const armStartY = by - 18;
+                    ctx.strokeStyle = '#d4a574';
+                    ctx.lineWidth = 11;
+                    ctx.lineCap = 'round';
+                    ctx.beginPath();
+                    ctx.moveTo(armStartX, armStartY);
+                    ctx.lineTo(fist.x - (fist.r - 3) * (fist.x > armStartX ? 1 : 0), fist.y);
+                    ctx.stroke();
+                    ctx.lineWidth = 1;
+
+                    // Fist / glove
+                    const gloveGrad = ctx.createRadialGradient(fist.x, fist.y, fist.r * 0.3, fist.x, fist.y, fist.r);
+                    gloveGrad.addColorStop(0, '#ff5040');
+                    gloveGrad.addColorStop(1, '#b81020');
+                    ctx.fillStyle = gloveGrad;
+                    ctx.beginPath();
+                    ctx.arc(fist.x, fist.y, fist.r, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#700';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    ctx.lineWidth = 1;
+
+                    // Head
+                    const hx = sx + 6;
+                    const hy = by - this.bodyH / 2 - this.headR + 2;
+                    ctx.fillStyle = '#d4a574';
+                    ctx.beginPath();
+                    ctx.arc(hx, hy, this.headR, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#a08060';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    ctx.lineWidth = 1;
+
+                    // Hair
+                    ctx.fillStyle = '#1a1a1a';
+                    ctx.beginPath();
+                    ctx.arc(hx, hy - 2, this.headR + 2, Math.PI, Math.PI * 2);
+                    ctx.fill();
+
+                    // Eyes
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(hx + 5, hy - 5, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#000';
+                    ctx.beginPath();
+                    ctx.arc(hx + 6, hy - 5, 2.5, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Determined eyebrow
+                    ctx.strokeStyle = '#333';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(hx + 1, hy - 10);
+                    ctx.lineTo(hx + 12, hy - 9);
+                    ctx.stroke();
+                    ctx.lineWidth = 1;
+
+                    // Mouth
+                    ctx.strokeStyle = '#555';
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.moveTo(hx + 3, hy + 6);
+                    ctx.lineTo(hx + 10, hy + 6);
+                    ctx.stroke();
+                    ctx.lineWidth = 1;
+
+                    ctx.restore();
+                }
+            }
+
+            // --- Enemy ---
+            class Enemy {
+                constructor(type) {
+                    this.type = type;
+                    this.x = canvas.width + 30 + Math.random() * 120;
+                    this.y = canvas.height * 0.72;
+                    this.speed = type === 'fast' ? 3.5 + Math.random() * 2.5 :
+                        type === 'big' ? 1.2 + Math.random() * 1 :
+                        type === 'tricky' ? 2 + Math.random() * 3 :
+                        2 + Math.random() * 2.5;
+                    this.hp = type === 'big' ? 3 : type === 'tough' ? 2 : 1;
+                    this.maxHp = this.hp;
+                    this.size = type === 'big' ? 1.6 : type === 'small' ? 0.7 : 1;
+                    this.color = type === 'big' ? '#6b2fa0' :
+                        type === 'fast' ? '#e8601c' :
+                        type === 'tricky' ? '#1ca0d0' :
+                        type === 'tough' ? '#3a6b20' :
+                        '#c0392b';
+                    this.skinColor = type === 'big' ? '#c4956b' : '#e8c9a0';
+                    this.alive = true;
+                    this.staggered = 0;
+                    this.knockbackVx = 0;
+                    this.flashTimer = 0;
+                    this.bobOffset = Math.random() * Math.PI * 2;
+                    this.feintTimer = 0;
+                    this.feinting = false;
+                    this.baseSpeed = this.speed;
+                }
+
+                get bodyCX() { return this.x; }
+                get bodyCY() { return this.y - (25 * this.size); }
+                get bodyW() { return 38 * this.size; }
+                get bodyH() { return 55 * this.size; }
+
+                update() {
+                    if (this.staggered > 0) {
+                        this.staggered--;
+                        this.x += this.knockbackVx;
+                        this.knockbackVx *= 0.85;
+                        if (this.staggered <= 0) {
+                            this.knockbackVx = 0;
+                        }
+                    } else {
+                        if (this.type === 'tricky' && this.feintTimer <= 0 && Math.random() < 0.008 && this.x < canvas
+                            .width * 0.65 && this.x > canvas.width * 0.3) {
+                            this.feinting = true;
+                            this.feintTimer = 18;
+                            this.speed = -this.baseSpeed * 2.5;
+                        }
+                        if (this.feintTimer > 0) {
+                            this.feintTimer--;
+                            if (this.feintTimer <= 0 && this.feinting) {
+                                this.feinting = false;
+                                this.speed = this.baseSpeed * 1.6;
+                                setTimeout(() => { if (this.alive) this.speed = this.baseSpeed; }, 400);
+                            }
+                        }
+                        this.x -= this.speed;
+                        if (this.x < -80) this.alive = false;
+                    }
+                    if (this.flashTimer > 0) this.flashTimer--;
+                }
+
+                draw(ctx) {
+                    ctx.save();
+                    const cx = this.x;
+                    const cy = this.y;
+                    const s = this.size;
+                    const bob = Math.sin(frameCount * 0.08 + this.bobOffset) * 3 * s;
+                    const staggerX = this.staggered > 0 ? Math.sin(this.staggered * 0.5) * 6 : 0;
+
+                    const dx = cx + staggerX;
+                    const dy = cy + bob;
+
+                    // Shadow
+                    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+                    ctx.beginPath();
+                    ctx.ellipse(dx, canvas.height * 0.87, 28 * s, 8 * s, 0, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Legs
+                    ctx.fillStyle = '#1a1a1a';
+                    ctx.fillRect(dx - 10 * s, dy - 10 * s, 12 * s, 28 * s);
+                    ctx.fillRect(dx + 2 * s, dy - 10 * s, 12 * s, 28 * s);
+
+                    // Torso
+                    const torsoColor = this.flashTimer > 0 ? '#fff' : this.color;
+                    ctx.fillStyle = torsoColor;
+                    ctx.beginPath();
+                    ctx.roundRect(dx - 16 * s, dy - 45 * s, 32 * s, 38 * s, 8 * s);
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    ctx.lineWidth = 1;
+
+                    // Belt
+                    ctx.fillStyle = '#222';
+                    ctx.fillRect(dx - 16 * s, dy - 12 * s, 32 * s, 6 * s);
+                    ctx.fillStyle = '#d4a010';
+                    ctx.fillRect(dx - 2 * s, dy - 14 * s, 5 * s, 8 * s);
+
+                    // Arms
+                    ctx.fillStyle = this.skinColor;
+                    ctx.beginPath();
+                    ctx.roundRect(dx - 22 * s, dy - 38 * s, 9 * s, 20 * s, 4 * s);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.roundRect(dx + 13 * s, dy - 38 * s, 9 * s, 20 * s, 4 * s);
+                    ctx.fill();
+
+                    // Fists
+                    ctx.fillStyle = '#333';
+                    ctx.beginPath();
+                    ctx.arc(dx - 17 * s, dy - 18 * s, 6 * s, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(dx + 18 * s, dy - 18 * s, 6 * s, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Head
+                    const hx = dx;
+                    const hy = dy - 52 * s;
+                    ctx.fillStyle = this.skinColor;
+                    ctx.beginPath();
+                    ctx.arc(hx, hy, 15 * s, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    ctx.lineWidth = 1;
+
+                    // Hair / bandana
+                    if (this.type === 'big') {
+                        ctx.fillStyle = '#1a1a1a';
+                        ctx.beginPath();
+                        ctx.arc(hx, hy - 2 * s, 16 * s, Math.PI, Math.PI * 2);
+                        ctx.fill();
+                    } else if (this.type === 'fast') {
+                        ctx.fillStyle = '#ff3b20';
+                        ctx.beginPath();
+                        ctx.arc(hx, hy - 1 * s, 16 * s, Math.PI * 1.1, Math.PI * 1.9);
+                        ctx.fill();
+                        ctx.fillRect(hx - 11 * s, hy - 16 * s, 22 * s, 5 * s);
+                    }
+
+                    // Eyes
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(hx + 4 * s, hy - 4 * s, 4 * s, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#000';
+                    ctx.beginPath();
+                    ctx.arc(hx + 5 * s, hy - 4 * s, 2 * s, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Angry eyebrow
+                    ctx.strokeStyle = '#333';
+                    ctx.lineWidth = 2 * s;
+                    ctx.beginPath();
+                    ctx.moveTo(hx, hy - 9 * s);
+                    ctx.lineTo(hx + 10 * s, hy - 10 * s);
+                    ctx.stroke();
+                    ctx.lineWidth = 1;
+
+                    // HP bar for multi-hp enemies
+                    if (this.maxHp > 1 && this.hp > 0) {
+                        const barW = 30 * s;
+                        const barH = 4 * s;
+                        const barX = dx - barW / 2;
+                        const barY = dy - 58 * s;
+                        ctx.fillStyle = '#333';
+                        ctx.fillRect(barX, barY, barW, barH);
+                        ctx.fillStyle = '#ff3b20';
+                        ctx.fillRect(barX, barY, barW * (this.hp / this.maxHp), barH);
+                    }
+
+                    ctx.restore();
+                }
+
+                hit(damage = 1) {
+                    this.hp -= damage;
+                    this.flashTimer = 6;
+                    this.staggered = 16;
+                    this.knockbackVx = 8 + Math.random() * 6;
+                    if (this.hp <= 0) {
+                        this.alive = false;
+                        return true;
+                    }
+                    return false;
+                }
+            }
+
+            // --- Particle ---
+            class Particle {
+                constructor(x, y, vx, vy, color, size, life) {
+                    this.x = x;
+                    this.y = y;
+                    this.vx = vx;
+                    this.vy = vy;
+                    this.color = color;
+                    this.size = size;
+                    this.life = life;
+                    this.maxLife = life;
+                    this.alive = true;
+                }
+                update() {
+                    this.x += this.vx;
+                    this.y += this.vy;
+                    this.vy += 0.15;
+                    this.life--;
+                    if (this.life <= 0) this.alive = false;
+                }
+                draw(ctx) {
+                    const alpha = this.life / this.maxLife;
+                    const sz = this.size * alpha;
+                    ctx.fillStyle = this.color.replace('1)', `${alpha})`).replace('rgb',
+                        'rgba');
+                    if (this.color.startsWith('#')) {
+                        ctx.globalAlpha = alpha;
+                        ctx.fillStyle = this.color;
+                    }
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, sz, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+                }
+            }
+
+            // --- Floating Text ---
+            class FloatingText {
+                constructor(x, y, text, color, size, life) {
+                    this.x = x;
+                    this.y = y;
+                    this.text = text;
+                    this.color = color;
+                    this.size = size;
+                    this.life = life;
+                    this.maxLife = life;
+                    this.alive = true;
+                }
+                update() {
+                    this.y -= 2.5;
+                    this.life--;
+                    if (this.life <= 0) this.alive = false;
+                }
+                draw(ctx) {
+                    const alpha = Math.min(1, this.life / (this.maxLife * 0.3));
+                    const scale = 1 + (1 - this.life / this.maxLife) * 0.5;
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.font = `bold ${this.size * scale}px "Arial Black", Impact, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = this.color;
+                    ctx.shadowBlur = 20;
+                    ctx.fillStyle = this.color;
+                    ctx.fillText(this.text, this.x, this.y);
+                    ctx.shadowBlur = 0;
+                    ctx.restore();
+                }
+            }
+
+            // --- Spawn Enemy ---
+            function spawnEnemy() {
+                const types = ['normal', 'normal', 'normal', 'fast', 'tough', 'normal'];
+                if (difficulty >= 3) types.push('big', 'tricky');
+                if (difficulty >= 5) types.push('big', 'fast', 'tricky');
+                const type = types[Math.floor(Math.random() * types.length)];
+                const enemy = new Enemy(type);
+                enemy.speed += difficulty * 0.3;
+                enemy.baseSpeed = enemy.speed;
+                enemies.push(enemy);
+            }
+
+            // --- Spawn Particles ---
+            function spawnImpact(x, y, count, colors) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 3 + Math.random() * 10;
+                    const vx = Math.cos(angle) * speed;
+                    const vy = Math.sin(angle) * speed - 4;
+                    const color = colors[Math.floor(Math.random() * colors.length)];
+                    const size = 2 + Math.random() * 6;
+                    const life = 15 + Math.random() * 25;
+                    particles.push(new Particle(x, y, vx, vy, color, size, life));
+                }
+            }
+
+            // --- Reset Game ---
+            function resetGame() {
+                score = 0;
+                combo = 0;
+                maxCombo = 0;
+                health = maxHealth;
+                difficulty = 1;
+                spawnTimer = 0;
+                spawnInterval = 120;
+                shakeAmount = 0;
+                shakeDuration = 0;
+                biffTexts = [];
+                particles = [];
+                enemies = [];
+                player = new Player();
+                gameState = STATE.PLAYING;
+                gameOverTimer = 0;
+                frameCount = 0;
+            }
+
+            // --- Initialize ---
+            player = new Player();
+
+            // --- Input ---
+            let spaceDown = false;
+            let mouseDown = false;
+
+            function handlePunch() {
+                initAudio();
+                if (gameState === STATE.INTRO) {
+                    resetGame();
+                    return;
+                }
+                if (gameState === STATE.GAMEOVER) {
+                    if (gameOverTimer > 40) {
+                        resetGame();
+                    }
+                    return;
+                }
+                if (gameState === STATE.PLAYING) {
+                    const punched = player.triggerPunch();
+                    if (punched) {
+                        // Check for enemies in range during active window
+                        // We'll do the actual hit detection in update when punch is active
+                    }
+                }
+            }
+
+            document.addEventListener('keydown', (e) => {
+                if (e.code === 'Space' && !spaceDown) {
+                    e.preventDefault();
+                    spaceDown = true;
+                    handlePunch();
+                }
+            });
+            document.addEventListener('keyup', (e) => {
+                if (e.code === 'Space') {
+                    spaceDown = false;
+                }
+            });
+
+            canvas.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                mouseDown = true;
+                handlePunch();
+            });
+            canvas.addEventListener('mouseup', () => { mouseDown = false; });
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                mouseDown = true;
+                handlePunch();
+            }, { passive: false });
+            canvas.addEventListener('touchend', () => { mouseDown = false; });
+
+            // --- Game Loop ---
+            function update() {
+                frameCount++;
+
+                if (gameState === STATE.GAMEOVER) {
+                    gameOverTimer++;
+                    // particles still update
+                    for (let p of particles) p.update();
+                    particles = particles.filter(p => p.alive);
+                    for (let bt of biffTexts) bt.update();
+                    biffTexts = biffTexts.filter(bt => bt.alive);
+                    if (shakeDuration > 0) {
+                        shakeDuration--;
+                        shakeAmount *= 0.8;
+                    }
+                    return;
+                }
+
+                if (gameState !== STATE.PLAYING) return;
+
+                player.update();
+
+                // Punch hit detection
+                if (player.punchActive && player.punchTimer === player.punchActiveStart) {
+                    // Check enemies at the moment punch becomes active
+                    let bestEnemy = null;
+                    let bestDist = Infinity;
+                    const fistPos = player.getFistPos();
+                    for (let enemy of enemies) {
+                        if (!enemy.alive || enemy.staggered > 6) continue;
+                        const ex = enemy.bodyCX;
+                        if (ex >= player.punchRangeMin && ex <= player.punchRangeMax) {
+                            const dist = Math.abs(ex - (player.sweetSpotMin + player.sweetSpotMax) / 2);
+                            if (dist < bestDist) {
+                                bestDist = dist;
+                                bestEnemy = enemy;
+                            }
+                        }
+                    }
+                    if (bestEnemy) {
+                        const ex = bestEnemy.bodyCX;
+                        const inSweetSpot = ex >= player.sweetSpotMin && ex <= player.sweetSpotMax;
+                        const isPerfect = inSweetSpot;
+                        const killed = bestEnemy.hit(isPerfect ? 2 : 1);
+                        const hitX = bestEnemy.bodyCX;
+                        const hitY = bestEnemy.bodyCY;
+
+                        if (isPerfect) {
+                            // BIFFFFFFF!
+                            combo++;
+                            if (combo > maxCombo) maxCombo = combo;
+                            const points = 100 * combo;
+                            score += points;
+                            spawnImpact(hitX, hitY, 40, ['#ffdd00', '#ff8800', '#ffffff', '#ff4400', '#ffe066']);
+                            biffTexts.push(new FloatingText(hitX, hitY - 20, 'BIFFFFFFF!', '#ffdd00', 38, 45));
+                            if (combo >= 5) biffTexts.push(new FloatingText(hitX, hitY + 20,
+                                `${combo}x COMBO!`, '#ff66ff', 24, 35));
+                            shakeAmount = Math.min(18, 4 + combo * 2);
+                            shakeDuration = 16;
+                            playSound('biff');
+                            if (combo % 5 === 0 && combo > 0) playSound('combo');
+                        } else {
+                            combo++;
+                            if (combo > maxCombo) maxCombo = combo;
+                            const points = 30 * Math.max(1, Math.floor(combo / 2));
+                            score += points;
+                            spawnImpact(hitX, hitY, 20, ['#ff9900', '#ffcc00', '#ffffff', '#ff6600']);
+                            biffTexts.push(new FloatingText(hitX, hitY - 15, 'BIFF!', '#ff9900', 26, 30));
+                            shakeAmount = 4;
+                            shakeDuration = 8;
+                            playSound('hit');
+                        }
+
+                        if (killed) {
+                            spawnImpact(hitX, hitY, 25, ['#ff4400', '#ff0000', '#ff8800', '#ffffff']);
+                            score += isPerfect ? 200 : 50;
+                        }
+                    } else {
+                        // Whiff
+                        playSound('miss');
+                        combo = 0;
+                    }
+                }
+
+                // Update enemies
+                for (let enemy of enemies) {
+                    enemy.update();
+                    // Check if enemy reached player
+                    if (enemy.alive && enemy.staggered <= 0 && enemy.bodyCX < player.bodyX - 15) {
+                        player.takeDamage();
+                        enemy.alive = false;
+                        spawnImpact(player.bodyX, player.bodyY - 20, 15, ['#ff0000', '#ff4444', '#ffffff']);
+                        biffTexts.push(new FloatingText(player.bodyX + 30, player.bodyY - 30, 'OUCH!', '#ff3333', 22,
+                            35));
+                    }
+                }
+
+                // Clean up
+                enemies = enemies.filter(e => e.alive || e.staggered > 0);
+                enemies = enemies.filter(e => e.alive || (e.staggered > 0 && e.x > -100));
+                // Keep staggered but alive enemies
+                enemies = enemies.filter(e => e.alive || (e.staggered > 0 && e.knockbackVx > 0.5));
+
+                // Actually, let's be cleaner:
+                const aliveEnemies = [];
+                for (let e of enemies) {
+                    if (e.alive) {
+                        aliveEnemies.push(e);
+                    } else if (e.staggered > 0 && e.x < canvas.width + 50 && e.x > -120) {
+                        aliveEnemies.push(e);
+                    }
+                }
+                enemies = aliveEnemies;
+
+                // Update particles
+                for (let p of particles) p.update();
+                particles = particles.filter(p => p.alive);
+
+                // Update floating texts
+                for (let bt of biffTexts) bt.update();
+                biffTexts = biffTexts.filter(bt => bt.alive);
+
+                // Screen shake
+                if (shakeDuration > 0) {
+                    shakeDuration--;
+                    shakeAmount *= 0.82;
+                }
+
+                // Spawn enemies
+                spawnTimer++;
+                if (spawnTimer >= spawnInterval) {
+                    spawnTimer = 0;
+                    spawnEnemy();
+                    // Increase difficulty
+                    if (score > difficulty * 500) {
+                        difficulty++;
+                        spawnInterval = Math.max(35, spawnInterval - 12);
+                    }
+                }
+
+                // Occasionally spawn extra
+                if (Math.random() < 0.003 + difficulty * 0.001) {
+                    spawnEnemy();
+                }
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                // Screen shake offset
+                let shakeX = 0;
+                let shakeY = 0;
+                if (shakeDuration > 0) {
+                    shakeX = (Math.random() - 0.5) * shakeAmount * 2;
+                    shakeY = (Math.random() - 0.5) * shakeAmount * 2;
+                }
+
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                // Background - night sky
+                const skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+                skyGrad.addColorStop(0, '#0a0a20');
+                skyGrad.addColorStop(0.35, '#111133');
+                skyGrad.addColorStop(0.7, '#1a1a3a');
+                skyGrad.addColorStop(1, '#1a1025');
+                ctx.fillStyle = skyGrad;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Stars
+                ctx.fillStyle = '#ffffff';
+                const starSeed = 42;
+                for (let i = 0; i < 60; i++) {
+                    const sx = ((i * 137 + starSeed) % canvas.width);
+                    const sy = ((i * 251 + starSeed * 3) % (canvas.height * 0.65));
+                    const ss = ((i * 79) % 3) * 0.4 + 0.5;
+                    const twinkle = Math.sin(frameCount * 0.03 + i) * 0.4 + 0.6;
+                    ctx.globalAlpha = twinkle;
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, ss, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+
+                // Distant buildings
+                ctx.fillStyle = '#0d0d1a';
+                for (let i = 0; i < 12; i++) {
+                    const bx = i * 85 - 20;
+                    const bw = 50 + Math.sin(i * 2.7) * 30;
+                    const bh = 80 + Math.cos(i * 3.1) * 60;
+                    ctx.fillRect(bx, canvas.height * 0.62 - bh, bw, bh);
+                }
+
+                // Ground
+                const groundGrad = ctx.createLinearGradient(0, canvas.height * 0.78, 0, canvas.height);
+                groundGrad.addColorStop(0, '#2a2a35');
+                groundGrad.addColorStop(0.3, '#1f1f2a');
+                groundGrad.addColorStop(1, '#14141c');
+                ctx.fillStyle = groundGrad;
+                ctx.fillRect(0, canvas.height * 0.78, canvas.width, canvas.height * 0.22);
+
+                // Ground line
+                ctx.strokeStyle = '#444460';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, canvas.height * 0.78);
+                ctx.lineTo(canvas.width, canvas.height * 0.78);
+                ctx.stroke();
+                ctx.lineWidth = 1;
+
+                // Sweet spot indicator on ground
+                const ssMin = player.sweetSpotMin;
+                const ssMax = player.sweetSpotMax;
+                const groundY = canvas.height * 0.79;
+                const glowGrad = ctx.createLinearGradient(ssMin, 0, ssMax, 0);
+                glowGrad.addColorStop(0, 'rgba(255,200,50,0)');
+                glowGrad.addColorStop(0.3, 'rgba(255,200,50,0.35)');
+                glowGrad.addColorStop(0.5, 'rgba(255,220,80,0.5)');
+                glowGrad.addColorStop(0.7, 'rgba(255,200,50,0.35)');
+                glowGrad.addColorStop(1, 'rgba(255,200,50,0)');
+                ctx.fillStyle = glowGrad;
+                ctx.fillRect(ssMin, groundY - 4, ssMax - ssMin, 8);
+                // Glow dots
+                const dotPulse = Math.sin(frameCount * 0.1) * 0.3 + 0.7;
+                ctx.fillStyle = `rgba(255,220,100,${0.6 * dotPulse})`;
+                ctx.beginPath();
+                ctx.arc((ssMin + ssMax) / 2, groundY, 6, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = `rgba(255,255,200,${0.8 * dotPulse})`;
+                ctx.beginPath();
+                ctx.arc((ssMin + ssMax) / 2, groundY, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Punch range faint indicators
+                ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+                ctx.setLineDash([4, 8]);
+                ctx.beginPath();
+                ctx.moveTo(player.punchRangeMin, groundY - 20);
+                ctx.lineTo(player.punchRangeMin, groundY + 3);
+                ctx.moveTo(player.punchRangeMax, groundY - 20);
+                ctx.lineTo(player.punchRangeMax, groundY + 3);
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // Draw enemies (sorted by y for basic depth)
+                for (let enemy of enemies) {
+                    if (enemy.alive || enemy.staggered > 0) {
+                        enemy.draw(ctx);
+                    }
+                }
+
+                // Draw player
+                player.draw(ctx);
+
+                // Draw particles
+                for (let p of particles) {
+                    p.draw(ctx);
+                }
+
+                // Draw floating texts
+                for (let bt of biffTexts) {
+                    bt.draw(ctx);
+                }
+
+                ctx.restore();
+
+                // --- UI (no shake) ---
+                // Score
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 22px "Arial Black", Impact, sans-serif';
+                ctx.textAlign = 'left';
+                ctx.shadowColor = 'rgba(0,0,0,0.6)';
+                ctx.shadowBlur = 6;
+                ctx.fillText(`SCORE: ${score}`, 20, 36);
+                ctx.shadowBlur = 0;
+
+                // Combo
+                if (combo >= 2) {
+                    ctx.fillStyle = combo >= 8 ? '#ff44ff' : combo >= 5 ? '#ffaa00' : '#ffcc44';
+                    ctx.font = `bold ${16 + Math.min(combo, 12)}px "Arial Black", Impact, sans-serif`;
+                    ctx.textAlign = 'left';
+                    ctx.shadowColor = 'rgba(255,100,0,0.7)';
+                    ctx.shadowBlur = 12;
+                    ctx.fillText(`${combo}x COMBO`, 20, 62);
+                    ctx.shadowBlur = 0;
+                }
+
+                // Health hearts
+                for (let i = 0; i < maxHealth; i++) {
+                    const hx = canvas.width - 45 - i * 38;
+                    const hy = 32;
+                    ctx.fillStyle = i < health ? '#ff3040' : '#444';
+                    ctx.font = '22px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('❤', hx, hy + 7);
+                }
+
+                // Difficulty indicator
+                ctx.fillStyle = '#8888aa';
+                ctx.font = '12px "Arial", sans-serif';
+                ctx.textAlign = 'right';
+                ctx.fillText(`LEVEL ${difficulty}`, canvas.width - 20, 60);
+
+                // Instructions
+                if (gameState === STATE.INTRO) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 48px "Arial Black", Impact, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = '#ff4400';
+                    ctx.shadowBlur = 30;
+                    ctx.fillText('BIFFFFFFF!', canvas.width / 2, canvas.height / 2 - 50);
+                    ctx.shadowBlur = 0;
+
+                    ctx.fillStyle = '#ffcc44';
+                    ctx.font = 'bold 20px "Arial Black", Impact, sans-serif';
+                    ctx.fillText('STREET PUNCH BRAWLER', canvas.width / 2, canvas.height / 2 - 10);
+
+                    ctx.fillStyle = '#dddddd';
+                    ctx.font = '16px "Arial", sans-serif';
+                    ctx.fillText('Press SPACE or TAP to PUNCH!', canvas.width / 2, canvas.height / 2 + 40);
+                    ctx.fillText('Time your punches as enemies enter the GLOW ZONE', canvas.width / 2, canvas.height / 2 +
+                        68);
+                    ctx.fillText('Perfect timing = BIFFFFFFF! 💥', canvas.width / 2, canvas.height / 2 + 96);
+
+                    const pulse = Math.sin(frameCount * 0.06) * 0.3 + 0.7;
+                    ctx.fillStyle = `rgba(255,200,60,${pulse})`;
+                    ctx.font = 'bold 18px "Arial Black", Impact, sans-serif';
+                    ctx.fillText('👉 TAP OR PRESS SPACE TO START 👈', canvas.width / 2, canvas.height / 2 + 145);
+                }
+
+                if (gameState === STATE.GAMEOVER) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    ctx.fillStyle = '#ff3333';
+                    ctx.font = 'bold 52px "Arial Black", Impact, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = '#ff0000';
+                    ctx.shadowBlur = 25;
+                    ctx.fillText('KNOCKED OUT!', canvas.width / 2, canvas.height / 2 - 50);
+                    ctx.shadowBlur = 0;
+
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 22px "Arial Black", Impact, sans-serif';
+                    ctx.fillText(`FINAL SCORE: ${score}`, canvas.width / 2, canvas.height / 2 + 5);
+
+                    ctx.fillStyle = '#ffcc44';
+                    ctx.font = '18px "Arial Black", Impact, sans-serif';
+                    ctx.fillText(`BEST COMBO: ${maxCombo}x`, canvas.width / 2, canvas.height / 2 + 38);
+
+                    if (gameOverTimer > 40) {
+                        const pulse2 = Math.sin(frameCount * 0.06) * 0.3 + 0.7;
+                        ctx.fillStyle = `rgba(255,200,60,${pulse2})`;
+                        ctx.font = 'bold 18px "Arial Black", Impact, sans-serif';
+                        ctx.fillText('TAP OR PRESS SPACE TO REMATCH!', canvas.width / 2, canvas.height / 2 + 85);
+                    }
+                }
+            }
+
+            function gameLoop() {
+                update();
+                render();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // --- Start ---
+            resetGame();
+            gameState = STATE.INTRO;
+            health = maxHealth;
+            score = 0;
+            combo = 0;
+            maxCombo = 0;
+            enemies = [];
+            particles = [];
+            biffTexts = [];
+            difficulty = 1;
+            spawnInterval = 120;
+            spawnTimer = 0;
+            frameCount = 0;
+
+            gameLoop();
+            console.log('BIFFFFFFF! - Street Punch Brawler ready! 🥊');
+            console.log('Press SPACE or TAP to punch. Time it right for maximum impact!');
+        })();
+    </script>
+</body>
+</html>
