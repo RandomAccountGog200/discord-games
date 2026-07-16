@@ -430,5 +430,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T05:22:19.496Z",
     "updatedAt": "2026-07-16T05:22:19.496Z"
+  },
+  {
+    "slug": "penalty-tycoon-goalie-edition",
+    "title": "Penalty Tycoon - Goalie Edition",
+    "description": "biffffff penalty tycoon but your the goalie",
+    "creator": "burger778",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T05:23:45.328Z",
+    "updatedAt": "2026-07-16T05:23:45.328Z"
   }
 ]
