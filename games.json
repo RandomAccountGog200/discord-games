@@ -295,5 +295,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T05:01:09.573Z",
     "updatedAt": "2026-07-16T05:01:09.573Z"
+  },
+  {
+    "slug": "biz-empire-tycoon",
+    "title": "Biz Empire Tycoon",
+    "description": "buisnessy",
+    "creator": "burger778",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T05:01:55.894Z",
+    "updatedAt": "2026-07-16T05:01:55.894Z"
   }
 ]
