@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>BIFFFFFFF! Penalty Shootout</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a0a00;
+            overflow: hidden;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            height: 100vh;
+            width: 100vw;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Arial Black', 'Impact', sans-serif;
+        }
+        canvas {
+            display: block;
+            max-width: 100vw;
+            max-height: 100vh;
+            cursor: crosshair;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+
+            // --- Audio System ---
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playBIFFFFFFF() {
+                if (!audioCtx) return;
+                const now = audioCtx.currentTime;
+                // Low thump
+                const thump = audioCtx.createOscillator();
+                thump.type = 'sine';
+                thump.frequency.setValueAtTime(80, now);
+                thump.frequency.exponentialRampToValueAtTime(20, now + 0.3);
+                const thumpGain = audioCtx.createGain();
+                thumpGain.gain.setValueAtTime(0.7, now);
+                thumpGain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+                thump.connect(thumpGain);
+                thumpGain.connect(audioCtx.destination);
+                thump.start(now);
+                thump.stop(now + 0.4);
+
+                // Bright ping - the "BIFF" sound
+                const ping = audioCtx.createOscillator();
+                ping.type = 'square';
+                ping.frequency.setValueAtTime(600, now);
+                ping.frequency.exponentialRampToValueAtTime(1200, now + 0.08);
+                ping.frequency.exponentialRampToValueAtTime(400, now + 0.2);
+                const pingGain = audioCtx.createGain();
+                pingGain.gain.setValueAtTime(0.5, now);
+                pingGain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+                ping.connect(pingGain);
+                pingGain.connect(audioCtx.destination);
+                ping.start(now);
+                ping.stop(now + 0.35);
+
+                // Noise burst for "FFFFF"
+                const bufferSize = audioCtx.sampleRate * 0.5;
+                const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = noiseBuffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (audioCtx.sampleRate * 0.15));
+                }
+                const noise = audioCtx.createBufferSource();
+                noise.buffer = noiseBuffer;
+                const noiseFilter = audioCtx.createBiquadFilter();
+                noiseFilter.type = 'bandpass';
+                noiseFilter.frequency.setValueAtTime(2000, now);
+                noiseFilter.Q.setValueAtTime(0.5, now);
+                const noiseGain = audioCtx.createGain();
+                noiseGain.gain.setValueAtTime(0.6, now);
+                noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+                noise.connect(noiseFilter);
+                noiseFilter.connect(noiseGain);
+                noiseGain.connect(audioCtx.destination);
+                noise.start(now);
+                noise.stop(now + 0.5);
+
+                // Extra high sparkle
+                const spark = audioCtx.createOscillator();
+                spark.type = 'triangle';
+                spark.frequency.setValueAtTime(2400, now);
+                spark.frequency.exponentialRampToValueAtTime(3000, now + 0.06);
+                spark.frequency.exponentialRampToValueAtTime(1800, now + 0.18);
+                const sparkGain = audioCtx.createGain();
+                sparkGain.gain.setValueAtTime(0.3, now);
+                sparkGain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+                spark.connect(sparkGain);
+                sparkGain.connect(audioCtx.destination);
+                spark.start(now);
+                spark.stop(now + 0.3);
+            }
+
+            function playSave() {
+                if (!audioCtx) return;
+                const now = audioCtx.currentTime;
+                const thud = audioCtx.createOscillator();
+                thud.type = 'sine';
+                thud.frequency.setValueAtTime(50, now);
+                thud.frequency.exponentialRampToValueAtTime(15, now + 0.25);
+                const thudGain = audioCtx.createGain();
+                thudGain.gain.setValueAtTime(0.5, now);
+                thudGain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+                thud.connect(thudGain);
+                thudGain.connect(audioCtx.destination);
+                thud.start(now);
+                thud.stop(now + 0.3);
+            }
+
+            function playMiss() {
+                if (!audioCtx) return;
+                const now = audioCtx.currentTime;
+                const whoosh = audioCtx.createOscillator();
+                whoosh.type = 'sawtooth';
+                whoosh.frequency.setValueAtTime(300, now);
+                whoosh.frequency.exponentialRampToValueAtTime(80, now + 0.4);
+                const whooshGain = audioCtx.createGain();
+                whooshGain.gain.setValueAtTime(0.3, now);
+                whooshGain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+                whoosh.connect(whooshGain);
+                whooshGain.connect(audioCtx.destination);
+                whoosh.start(now);
+                whoosh.stop(now + 0.5);
+            }
+
+            function playKick() {
+                if (!audioCtx) return;
+                const now = audioCtx.currentTime;
+                const pop = audioCtx.createOscillator();
+                pop.type = 'sine';
+                pop.frequency.setValueAtTime(200, now);
+                pop.frequency.exponentialRampToValueAtTime(40, now + 0.15);
+                const popGain = audioCtx.createGain();
+                popGain.gain.setValueAtTime(0.4, now);
+                popGain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+                pop.connect(popGain);
+                popGain.connect(audioCtx.destination);
+                pop.start(now);
+                pop.stop(now + 0.2);
+            }
+
+            // --- Resize ---
+            function resize() {
+                canvas.width = Math.min(window.innerWidth, window.innerHeight * 1.6);
+                canvas.height = Math.min(window.innerHeight, window.innerWidth / 1.6);
+                if (window.innerWidth < window.innerHeight) {
+                    canvas.width = window.innerWidth;
+                    canvas.height = window.innerWidth * 1.4;
+                }
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            const W = () => canvas.width;
+            const H = () => canvas.height;
+
+            // --- Game State ---
+            const TOTAL_ROUNDS = 5;
+            let gameState = 'AIMING'; // AIMING | SHOOTING | RESULT | GAMEOVER
+            let score = 0;
+            let kicksTaken = 0;
+            let saves = 0;
+            let misses = 0;
+
+            // Goal geometry (recalculated each frame based on canvas size)
+            function getGoalGeometry() {
+                const w = W();
+                const h = H();
+                const goalWidth = w * 0.62;
+                const goalHeight = h * 0.26;
+                const goalTop = h * 0.07;
+                const goalLeft = (w - goalWidth) / 2;
+                const goalRight = goalLeft + goalWidth;
+                const goalBottom = goalTop + goalHeight;
+                const postThickness = Math.max(6, w * 0.012);
+                const crossbarThickness = Math.max(6, h * 0.014);
+                return {
+                    goalWidth,
+                    goalHeight,
+                    goalTop,
+                    goalLeft,
+                    goalRight,
+                    goalBottom,
+                    postThickness,
+                    crossbarThickness,
+                    centerX: w / 2,
+                    centerY: goalTop + goalHeight / 2,
+                    penaltySpotX: w / 2,
+                    penaltySpotY: h * 0.74,
+                };
+            }
+
+            // Target cursor position (in goal area)
+            let targetX = W() / 2;
+            let targetY = H() * 0.18;
+
+            // Power
+            let power = 50;
+            let powerTime = 0;
+            const POWER_CYCLE = 1.8; // seconds for full oscillation
+
+            // Ball animation
+            let ballX, ballY;
+            let ballStartX, ballStartY;
+            let ballTargetX, ballTargetY;
+            let ballProgress = 0;
+            let ballSpeed = 0;
+            let ballTrail = [];
+
+            // Keeper
+            let keeperX, keeperY;
+            let keeperBaseX, keeperBaseY;
+            let keeperTargetX, keeperTargetY;
+            let keeperDiveProgress = 0;
+            let keeperDiveDelay = 0;
+            let keeperReachRadius = 0;
+            let keeperDiving = false;
+            let keeperDiveDirection = 0;
+
+            // Particles
+            let particles = [];
+
+            // BIFFFFFFF text effect
+            let biffEffect = null;
+
+            // Screen shake
+            let shakeAmount = 0;
+            let shakeDuration = 0;
+
+            // Result display
+            let resultText = '';
+            let resultTimer = 0;
+            let resultColor = '';
+
+            function resetForKick() {
+                const geo = getGoalGeometry();
+                ballX = geo.penaltySpotX;
+                ballY = geo.penaltySpotY;
+                ballStartX = ballX;
+                ballStartY = ballY;
+                ballTargetX = targetX;
+                ballTargetY = targetY;
+                ballProgress = 0;
+                ballTrail = [];
+                keeperBaseX = geo.centerX;
+                keeperBaseY = geo.goalTop + geo.goalHeight * 0.55;
+                keeperX = keeperBaseX;
+                keeperY = keeperBaseY;
+                keeperDiveProgress = 0;
+                keeperDiveDelay = 0.08 + Math.random() * 0.1;
+                keeperDiving = false;
+                keeperReachRadius = geo.goalWidth * 0.22;
+                // Random keeper dive target within goal
+                const margin = geo.goalWidth * 0.1;
+                keeperTargetX = geo.goalLeft + margin + Math.random() * (geo.goalWidth - margin * 2);
+                keeperTargetY = geo.goalTop + geo.goalHeight * 0.2 + Math.random() * geo.goalHeight * 0.65;
+                keeperDiveDirection = keeperTargetX > geo.centerX ? 1 : -1;
+                particles = [];
+                biffEffect = null;
+                shakeAmount = 0;
+                shakeDuration = 0;
+                resultText = '';
+                resultTimer = 0;
+            }
+
+            function initGame() {
+                score = 0;
+                kicksTaken = 0;
+                saves = 0;
+                misses = 0;
+                gameState = 'AIMING';
+                targetX = W() / 2;
+                targetY = H() * 0.18;
+                powerTime = Math.random() * POWER_CYCLE * 2;
+                resetForKick();
+                ballX = getGoalGeometry().penaltySpotX;
+                ballY = getGoalGeometry().penaltySpotY;
+                particles = [];
+                biffEffect = null;
+                shakeAmount = 0;
+                shakeDuration = 0;
+                resultText = '';
+                resultTimer = 0;
+            }
+
+            function spawnGoalParticles(x, y) {
+                const count = 80;
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 3 + Math.random() * 14;
+                    const life = 0.6 + Math.random() * 1.2;
+                    particles.push({
+                        x,
+                        y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - Math.random() * 8,
+                        life,
+                        maxLife: life,
+                        size: 2 + Math.random() * 8,
+                        color: Math.random() < 0.6 ?
+                            `hsl(${40 + Math.random() * 30}, 100%, ${50 + Math.random() * 40}%)` :
+                            `hsl(${Math.random() * 360}, 90%, ${55 + Math.random() * 35}%)`,
+                        gravity: 0.15 + Math.random() * 0.3,
+                    });
+                }
+            }
+
+            function spawnSaveParticles(x, y) {
+                const count = 35;
+                for (let i = 0; i < count; i++) {
+                    const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI;
+                    const speed = 2 + Math.random() * 8;
+                    const life = 0.3 + Math.random() * 0.6;
+                    particles.push({
+                        x,
+                        y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        life,
+                        maxLife: life,
+                        size: 1.5 + Math.random() * 5,
+                        color: `hsl(${200 + Math.random() * 40}, 60%, ${40 + Math.random() * 30}%)`,
+                        gravity: 0.1,
+                    });
+                }
+            }
+
+            // --- Input ---
+            let mouseX = W() / 2;
+            let mouseY = H() * 0.18;
+            let mouseOnCanvas = false;
+
+            canvas.addEventListener('mousemove', (e) => {
+                const rect = canvas.getBoundingClientRect();
+                mouseX = (e.clientX - rect.left) * (W() / rect.width);
+                mouseY = (e.clientY - rect.top) * (H() / rect.height);
+                mouseOnCanvas = true;
+                updateTargetFromMouse();
+            });
+
+            canvas.addEventListener('mouseleave', () => {
+                mouseOnCanvas = false;
+            });
+
+            canvas.addEventListener('mouseenter', (e) => {
+                mouseOnCanvas = true;
+                const rect = canvas.getBoundingClientRect();
+                mouseX = (e.clientX - rect.left) * (W() / rect.width);
+                mouseY = (e.clientY - rect.top) * (H() / rect.height);
+                updateTargetFromMouse();
+            });
+
+            canvas.addEventListener('click', (e) => {
+                initAudio();
+                if (gameState === 'AIMING') {
+                    triggerKick();
+                } else if (gameState === 'GAMEOVER') {
+                    initGame();
+                } else if (gameState === 'RESULT' && resultTimer < 0.2) {
+                    // Debounce - wait for result to play out
+                }
+            });
+
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                const rect = canvas.getBoundingClientRect();
+                const touch = e.touches[0];
+                mouseX = (touch.clientX - rect.left) * (W() / rect.width);
+                mouseY = (touch.clientY - rect.top) * (H() / rect.height);
+                mouseOnCanvas = true;
+                updateTargetFromMouse();
+            }, { passive: false });
+
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                initAudio();
+                const rect = canvas.getBoundingClientRect();
+                const touch = e.touches[0];
+                mouseX = (touch.clientX - rect.left) * (W() / rect.width);
+                mouseY = (touch.clientY - rect.top) * (H() / rect.height);
+                mouseOnCanvas = true;
+                updateTargetFromMouse();
+                if (gameState === 'AIMING') {
+                    triggerKick();
+                } else if (gameState === 'GAMEOVER') {
+                    initGame();
+                }
+            }, { passive: false });
+
+            function updateTargetFromMouse() {
+                const geo = getGoalGeometry();
+                const margin = geo.postThickness + 4;
+                targetX = Math.max(geo.goalLeft + margin, Math.min(geo.goalRight - margin, mouseX));
+                targetY = Math.max(geo.goalTop + margin, Math.min(geo.goalBottom - margin, mouseY));
+            }
+
+            function triggerKick() {
+                if (gameState !== 'AIMING') return;
+                gameState = 'SHOOTING';
+                kicksTaken++;
+                resetForKick();
+                ballTargetX = targetX;
+                ballTargetY = targetY;
+                // Accuracy penalty for high power
+                const geo = getGoalGeometry();
+                const accuracyOffset = power > 75 ? (power - 75) / 25 * geo.goalWidth * 0.06 * (Math.random() - 0.5) * 2 : 0;
+                const accuracyOffsetY = power > 75 ? (power - 75) / 25 * geo.goalHeight * 0.05 * (Math.random() - 0.5) * 2 :
+                0;
+                ballTargetX += accuracyOffset;
+                ballTargetY += accuracyOffsetY;
+                ballTargetX = Math.max(geo.goalLeft + 2, Math.min(geo.goalRight - 2, ballTargetX));
+                ballTargetY = Math.max(geo.goalTop + 2, Math.min(geo.goalBottom - 2, ballTargetY));
+                ballSpeed = 0.4 + (power / 100) * 1.1;
+                playKick();
+            }
+
+            // --- Update ---
+            function update(dt) {
+                const geo = getGoalGeometry();
+                // Clamp dt
+                const clampedDt = Math.min(dt, 0.1);
+
+                // Update power oscillation
+                powerTime += clampedDt;
+                power = 50 + Math.sin(powerTime / POWER_CYCLE * Math.PI * 2) * 50;
+
+                // Update particles
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx * clampedDt * 60;
+                    p.y += p.vy * clampedDt * 60;
+                    p.vy += p.gravity * clampedDt * 60;
+                    p.life -= clampedDt;
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+
+                // Update BIFF effect
+                if (biffEffect) {
+                    biffEffect.age += clampedDt;
+                    if (biffEffect.age > biffEffect.duration) {
+                        biffEffect = null;
+                    }
+                }
+
+                // Update screen shake
+                if (shakeDuration > 0) {
+                    shakeDuration -= clampedDt;
+                    shakeAmount = shakeDuration > 0 ? shakeAmount * 0.85 : 0;
+                }
+
+                // Update result timer
+                if (resultTimer > 0) {
+                    resultTimer -= clampedDt;
+                    if (resultTimer <= 0 && gameState === 'RESULT') {
+                        if (kicksTaken >= TOTAL_ROUNDS) {
+                            gameState = 'GAMEOVER';
+                        } else {
+                            gameState = 'AIMING';
+                            resetForKick();
+                            ballX = geo.penaltySpotX;
+                            ballY = geo.penaltySpotY;
+                            ballProgress = 0;
+                            ballTrail = [];
+                            keeperDiving = false;
+                            keeperDiveProgress = 0;
+                            keeperX = keeperBaseX;
+                            keeperY = keeperBaseY;
+                            resultText = '';
+                            particles = [];
+                            biffEffect = null;
+                            shakeAmount = 0;
+                            shakeDuration = 0;
+                        }
+                    }
+                }
+
+                // Update shooting
+                if (gameState === 'SHOOTING') {
+                    ballProgress += ballSpeed * clampedDt;
+                    if (ballProgress >= 1.0) {
+                        ballProgress = 1.0;
+                        // Determine result
+                        const ballEndX = ballStartX + (ballTargetX - ballStartX) * ballProgress;
+                        const ballEndY = ballStartY + (ballTargetY - ballStartY) * ballProgress;
+                        const distToKeeper = Math.hypot(ballEndX - keeperX, ballEndY - keeperY);
+                        const isGoal = distToKeeper > keeperReachRadius &&
+                            ballEndX > geo.goalLeft + geo.postThickness &&
+                            ballEndX < geo.goalRight - geo.postThickness &&
+                            ballEndY > geo.goalTop + geo.crossbarThickness &&
+                            ballEndY < geo.goalBottom;
+
+                        if (isGoal) {
+                            score++;
+                            resultText = 'GOAL!';
+                            resultColor = '#FFD700';
+                            spawnGoalParticles(ballEndX, ballEndY);
+                            biffEffect = {
+                                age: 0,
+                                duration: 1.4,
+                                x: W() / 2,
+                                y: H() / 2,
+                            };
+                            shakeAmount = 14;
+                            shakeDuration = 0.5;
+                            playBIFFFFFFF();
+                        } else if (distToKeeper <= keeperReachRadius) {
+                            saves++;
+                            resultText = 'SAVED!';
+                            resultColor = '#FF4444';
+                            spawnSaveParticles(ballEndX, ballEndY);
+                            playSave();
+                        } else {
+                            misses++;
+                            resultText = 'MISS!';
+                            resultColor = '#FF8844';
+                            playMiss();
+                        }
+                        resultTimer = 1.6;
+                        gameState = 'RESULT';
+                    }
+                    // Update ball position
+                    ballX = ballStartX + (ballTargetX - ballStartX) * ballProgress;
+                    ballY = ballStartY + (ballTargetY - ballStartY) * ballProgress;
+                    // Arc
+                    const arcHeight = -80 * (1 - Math.pow(2 * ballProgress - 1, 2));
+                    const displayY = ballY + arcHeight;
+                    // Trail
+                    ballTrail.push({ x: ballX, y: displayY, life: 0.25 });
+                    for (let i = ballTrail.length - 1; i >= 0; i--) {
+                        ballTrail[i].life -= clampedDt;
+                        if (ballTrail[i].life <= 0) ballTrail.splice(i, 1);
+                    }
+                    // Update keeper dive
+                    if (ballProgress > keeperDiveDelay && !keeperDiving) {
+                        keeperDiving = true;
+                    }
+                    if (keeperDiving) {
+                        keeperDiveProgress += clampedDt * 3.5;
+                        if (keeperDiveProgress > 1) keeperDiveProgress = 1;
+                        const t = easeOutCubic(keeperDiveProgress);
+                        keeperX = keeperBaseX + (keeperTargetX - keeperBaseX) * t;
+                        keeperY = keeperBaseY + (keeperTargetY - keeperBaseY) * t;
+                    }
+                }
+            }
+
+            function easeOutCubic(t) {
+                return 1 - Math.pow(1 - t, 3);
+            }
+
+            // --- Render ---
+            function drawSky() {
+                const h = H();
+                const w = W();
+                const grad = ctx.createLinearGradient(0, 0, 0, h * 0.5);
+                grad.addColorStop(0, '#1a2a6c');
+                grad.addColorStop(0.5, '#3a5098');
+                grad.addColorStop(1, '#5a7ab0');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, w, h * 0.55);
+            }
+
+            function drawStands() {
+                const w = W();
+                const h = H();
+                const geo = getGoalGeometry();
+                // Crowd silhouettes behind goal
+                ctx.fillStyle = '#0d1b3e';
+                const standTop = geo.goalTop - h * 0.03;
+                const standHeight = h * 0.12;
+                ctx.fillRect(0, standTop, w, standHeight);
+                // Crowd dots
+                const dotRows = 5;
+                const dotCols = Math.floor(w / 14);
+                const dotSize = 4;
+                for (let row = 0; row < dotRows; row++) {
+                    for (let col = 0; col < dotCols; col++) {
+                        const dx = col * (w / dotCols) + (row % 2) * (w / dotCols / 2);
+                        const dy = standTop + row * (standHeight / dotRows) + standHeight / dotRows * 0.5;
+                        const brightness = 15 + Math.random() * 20;
+                        ctx.fillStyle = `rgb(${brightness},${brightness + 5},${brightness + 15})`;
+                        ctx.beginPath();
+                        ctx.arc(dx, dy, dotSize * (0.7 + Math.random() * 0.6), 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            function drawField() {
+                const w = W();
+                const h = H();
+                const geo = getGoalGeometry();
+                // Grass
+                const grassGrad = ctx.createLinearGradient(0, geo.goalBottom, 0, h);
+                grassGrad.addColorStop(0, '#3d8b37');
+                grassGrad.addColorStop(0.3, '#4a9e3f');
+                grassGrad.addColorStop(0.7, '#357a30');
+                grassGrad.addColorStop(1, '#2d6b28');
+                ctx.fillStyle = grassGrad;
+                ctx.fillRect(0, geo.goalBottom - 5, w, h - geo.goalBottom + 5);
+
+                // Grass stripes
+                ctx.globalAlpha = 0.08;
+                const stripeWidth = w / 16;
+                for (let i = 0; i < 16; i++) {
+                    if (i % 2 === 0) {
+                        ctx.fillStyle = '#ffffff';
+                    } else {
+                        ctx.fillStyle = '#000000';
+                    }
+                    ctx.fillRect(i * stripeWidth, geo.goalBottom, stripeWidth, h - geo.goalBottom);
+                }
+                ctx.globalAlpha = 1;
+
+                // Penalty area
+                const areaWidth = geo.goalWidth * 1.5;
+                const areaHeight = h * 0.22;
+                const areaLeft = geo.centerX - areaWidth / 2;
+                const areaTop = geo.goalBottom;
+                ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+                ctx.lineWidth = 2.5;
+                ctx.strokeRect(areaLeft, areaTop, areaWidth, areaHeight);
+
+                // Penalty arc
+                ctx.beginPath();
+                ctx.arc(geo.penaltySpotX, geo.penaltySpotY, areaWidth * 0.35, Math.PI, 0);
+                ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                ctx.setLineDash([8, 6]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // Penalty spot
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(geo.penaltySpotX, geo.penaltySpotY, 6, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+
+            function drawGoalNet() {
+                const geo = getGoalGeometry();
+                const netDepth = geo.goalHeight * 0.35;
+                // Net background
+                ctx.fillStyle = 'rgba(240,240,240,0.25)';
+                ctx.fillRect(geo.goalLeft, geo.goalTop, geo.goalWidth, geo.goalHeight);
+                // Net lines
+                ctx.strokeStyle = 'rgba(200,200,210,0.5)';
+                ctx.lineWidth = 1;
+                const gridX = 14;
+                const gridY = 10;
+                const cellW = geo.goalWidth / gridX;
+                const cellH = geo.goalHeight / gridY;
+                // Vertical lines with perspective
+                for (let i = 0; i <= gridX; i++) {
+                    const x = geo.goalLeft + i * cellW;
+                    const depthOffset = netDepth * (1 - Math.abs(i - gridX / 2) / (gridX / 2)) * 0.6;
+                    ctx.beginPath();
+                    ctx.moveTo(x, geo.goalTop);
+                    ctx.lineTo(x + depthOffset * 0.3, geo.goalBottom + depthOffset);
+                    ctx.stroke();
+                }
+                // Horizontal lines
+                for (let j = 0; j <= gridY; j++) {
+                    const y = geo.goalTop + j * cellH;
+                    const depthOffset = netDepth * (j / gridY) * 1.2;
+                    ctx.beginPath();
+                    ctx.moveTo(geo.goalLeft, y);
+                    ctx.lineTo(geo.goalRight, y + depthOffset * 0.2);
+                    ctx.stroke();
+                }
+            }
+
+            function drawGoalPosts() {
+                const geo = getGoalGeometry();
+                ctx.fillStyle = '#f8f8f8';
+                ctx.strokeStyle = '#cccccc';
+                ctx.lineWidth = 2;
+                // Left post
+                ctx.fillRect(geo.goalLeft - geo.postThickness / 2, geo.goalTop - geo.crossbarThickness,
+                    geo.postThickness, geo.goalHeight + geo.crossbarThickness);
+                ctx.strokeRect(geo.goalLeft - geo.postThickness / 2, geo.goalTop - geo.crossbarThickness,
+                    geo.postThickness, geo.goalHeight + geo.crossbarThickness);
+                // Right post
+                ctx.fillRect(geo.goalRight - geo.postThickness / 2, geo.goalTop - geo.crossbarThickness,
+                    geo.postThickness, geo.goalHeight + geo.crossbarThickness);
+                ctx.strokeRect(geo.goalRight - geo.postThickness / 2, geo.goalTop - geo.crossbarThickness,
+                    geo.postThickness, geo.goalHeight + geo.crossbarThickness);
+                // Crossbar
+                ctx.fillRect(geo.goalLeft - geo.postThickness / 2, geo.goalTop - geo.crossbarThickness,
+                    geo.goalWidth + geo.postThickness, geo.crossbarThickness);
+                ctx.strokeRect(geo.goalLeft - geo.postThickness / 2, geo.goalTop - geo.crossbarThickness,
+                    geo.goalWidth + geo.postThickness, geo.crossbarThickness);
+
+                // Post glow
+                ctx.shadowColor = 'rgba(255,255,255,0.5)';
+                ctx.shadowBlur = 8;
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(geo.goalLeft - geo.postThickness / 2, geo.goalTop - geo.crossbarThickness,
+                    geo.postThickness, geo.goalHeight + geo.crossbarThickness);
+                ctx.fillRect(geo.goalRight - geo.postThickness / 2, geo.goalTop - geo.crossbarThickness,
+                    geo.postThickness, geo.goalHeight + geo.crossbarThickness);
+                ctx.fillRect(geo.goalLeft - geo.postThickness / 2, geo.goalTop - geo.crossbarThickness,
+                    geo.goalWidth + geo.postThickness, geo.crossbarThickness);
+                ctx.shadowColor = 'transparent';
+                ctx.shadowBlur = 0;
+            }
+
+            function drawKeeper() {
+                const geo = getGoalGeometry();
+                const kx = keeperX;
+                const ky = keeperY;
+                const scale = geo.goalHeight * 0.55;
+
+                ctx.save();
+                ctx.translate(kx, ky);
+
+                // Shadow on ground
+                ctx.fillStyle = 'rgba(0,0,0,0.35)';
+                ctx.beginPath();
+                ctx.ellipse(0, scale * 0.3, scale * 0.35, scale * 0.08, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // If diving, rotate the keeper
+                if (keeperDiving && keeperDiveProgress > 0.05) {
+                    const rotAmount = keeperDiveDirection * (keeperDiveProgress * 0.8);
+                    ctx.rotate(rotAmount);
+                }
+
+                // Legs
+                ctx.fillStyle = '#1a1a2e';
+                ctx.fillRect(-scale * 0.15, scale * 0.05, scale * 0.12, scale * 0.4);
+                ctx.fillRect(scale * 0.03, scale * 0.05, scale * 0.12, scale * 0.4);
+                // Shorts
+                ctx.fillStyle = '#1a3a5c';
+                ctx.fillRect(-scale * 0.2, -scale * 0.05, scale * 0.4, scale * 0.18);
+
+                // Body / Jersey
+                const jerseyGrad = ctx.createLinearGradient(0, -scale * 0.3, 0, 0);
+                jerseyGrad.addColorStop(0, '#ff6b35');
+                jerseyGrad.addColorStop(1, '#e85520');
+                ctx.fillStyle = jerseyGrad;
+                ctx.beginPath();
+                ctx.roundRect(-scale * 0.22, -scale * 0.32, scale * 0.44, scale * 0.38, scale * 0.06);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                // Jersey number
+                ctx.fillStyle = '#ffffff';
+                ctx.font = `bold ${scale * 0.2}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.fillText('1', 0, -scale * 0.08);
+
+                // Arms
+                ctx.fillStyle = '#ff6b35';
+                ctx.save();
+                // Left arm
+                ctx.translate(-scale * 0.24, -scale * 0.28);
+                if (keeperDiving && keeperDiveProgress > 0.2) {
+                    ctx.rotate(-0.5 - keeperDiveProgress * 1.2);
+                } else {
+                    ctx.rotate(-0.3);
+                }
+                ctx.fillRect(-scale * 0.05, 0, scale * 0.1, scale * 0.35);
+                // Glove
+                ctx.fillStyle = '#ffdd00';
+                ctx.fillRect(-scale * 0.08, scale * 0.3, scale * 0.16, scale * 0.13);
+                ctx.fillStyle = '#ff6b35';
+                ctx.restore();
+
+                ctx.save();
+                // Right arm
+                ctx.translate(scale * 0.24, -scale * 0.28);
+                if (keeperDiving && keeperDiveProgress > 0.2) {
+                    ctx.rotate(0.5 + keeperDiveProgress * 1.2);
+                } else {
+                    ctx.rotate(0.3);
+                }
+                ctx.fillRect(-scale * 0.05, 0, scale * 0.1, scale * 0.35);
+                // Glove
+                ctx.fillStyle = '#ffdd00';
+                ctx.fillRect(-scale * 0.08, scale * 0.3, scale * 0.16, scale * 0.13);
+                ctx.restore();
+
+                // Head
+                ctx.fillStyle = '#f4c7a3';
+                ctx.beginPath();
+                ctx.arc(0, -scale * 0.36, scale * 0.16, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+
+                // Hair
+                ctx.fillStyle = '#2a1a0a';
+                ctx.beginPath();
+                ctx.arc(0, -scale * 0.4, scale * 0.17, Math.PI, Math.PI * 2);
+                ctx.fill();
+
+                // Cap
+                ctx.fillStyle = '#ff6b35';
+                ctx.beginPath();
+                ctx.ellipse(0, -scale * 0.43, scale * 0.18, scale * 0.06, 0, Math.PI, Math.PI * 2);
+                ctx.fill();
+                ctx.fillRect(-scale * 0.17, -scale * 0.46, scale * 0.34, scale * 0.07);
+                ctx.fillStyle = '#e85520';
+                ctx.fillRect(-scale * 0.2, -scale * 0.39, scale * 0.4, scale * 0.04);
+
+                ctx.restore();
+            }
+
+            function drawBall(x, y, size) {
+                ctx.save();
+                ctx.translate(x, y);
+                const r = size || 14;
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.beginPath();
+                ctx.arc(2, 2, r, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Main ball
+                const ballGrad = ctx.createRadialGradient(-r * 0.2, -r * 0.2, r * 0.1, 0, 0, r);
+                ballGrad.addColorStop(0, '#ffffff');
+                ballGrad.addColorStop(0.7, '#e8e8e8');
+                ballGrad.addColorStop(1, '#c0c0c0');
+                ctx.fillStyle = ballGrad;
+                ctx.beginPath();
+                ctx.arc(0, 0, r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                // Pentagon pattern (simplified)
+                ctx.fillStyle = '#1a1a1a';
+                // Center pentagon
+                ctx.beginPath();
+                const pr = r * 0.35;
+                for (let i = 0; i < 5; i++) {
+                    const angle = -Math.PI / 2 + i * Math.PI * 2 / 5;
+                    const px = Math.cos(angle) * pr;
+                    const py = Math.sin(angle) * pr;
+                    if (i === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                }
+                ctx.closePath();
+                ctx.fill();
+
+                // Surrounding black patches
+                for (let i = 0; i < 5; i++) {
+                    const angle = -Math.PI / 2 + i * Math.PI * 2 / 5;
+                    const cx = Math.cos(angle) * r * 0.55;
+                    const cy = Math.sin(angle) * r * 0.55;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, r * 0.22, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Highlight
+                ctx.fillStyle = 'rgba(255,255,255,0.35)';
+                ctx.beginPath();
+                ctx.arc(-r * 0.25, -r * 0.3, r * 0.25, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.restore();
+            }
+
+            function drawTargetCursor() {
+                if (gameState !== 'AIMING') return;
+                const geo = getGoalGeometry();
+                const tx = targetX;
+                const ty = targetY;
+
+                // Glow
+                const glowGrad = ctx.createRadialGradient(tx, ty, 5, tx, ty, 28);
+                glowGrad.addColorStop(0, 'rgba(255,255,200,0.7)');
+                glowGrad.addColorStop(0.5, 'rgba(255,200,50,0.3)');
+                glowGrad.addColorStop(1, 'rgba(255,150,0,0)');
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(tx, ty, 28, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Crosshair
+                ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(tx, ty, 14, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.arc(tx, ty, 8, 0, Math.PI * 2);
+                ctx.stroke();
+                // Cross lines
+                ctx.beginPath();
+                ctx.moveTo(tx - 20, ty);
+                ctx.lineTo(tx - 10, ty);
+                ctx.moveTo(tx + 10, ty);
+                ctx.lineTo(tx + 20, ty);
+                ctx.moveTo(tx, ty - 20);
+                ctx.lineTo(tx, ty - 10);
+                ctx.moveTo(tx, ty + 10);
+                ctx.lineTo(tx, ty + 20);
+                ctx.stroke();
+                // Center dot
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(tx, ty, 3, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Dotted trajectory line
+                if (gameState === 'AIMING') {
+                    const bx = getGoalGeometry().penaltySpotX;
+                    const by = getGoalGeometry().penaltySpotY;
+                    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([6, 8]);
+                    ctx.beginPath();
+                    ctx.moveTo(bx, by);
+                    // Curved trajectory
+                    const midX = (bx + tx) / 2;
+                    const midY = (by + ty) / 2 - 30;
+                    ctx.quadraticCurveTo(midX, midY, tx, ty);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+            }
+
+            function drawPowerMeter() {
+                const w = W();
+                const h = H();
+                const meterX = w * 0.06;
+                const meterY = h * 0.35;
+                const meterWidth = 22;
+                const meterHeight = h * 0.35;
+
+                // Background
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.beginPath();
+                ctx.roundRect(meterX - 8, meterY - 30, meterWidth + 16, meterHeight + 55, 10);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Label
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 13px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('POWER', meterX + meterWidth / 2, meterY - 12);
+
+                // Meter track
+                const trackGrad = ctx.createLinearGradient(0, meterY + meterHeight, 0, meterY);
+                trackGrad.addColorStop(0, '#22cc22');
+                trackGrad.addColorStop(0.5, '#ffcc00');
+                trackGrad.addColorStop(1, '#ff2222');
+                ctx.fillStyle = trackGrad;
+                ctx.beginPath();
+                ctx.roundRect(meterX, meterY, meterWidth, meterHeight, meterWidth / 2);
+                ctx.fill();
+
+                // Fill level
+                const fillHeight = (power / 100) * meterHeight;
+                const fillY = meterY + meterHeight - fillHeight;
+                ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                ctx.beginPath();
+                ctx.roundRect(meterX, fillY, meterWidth, fillHeight, meterWidth / 2);
+                ctx.fill();
+
+                // Indicator line
+                const indY = meterY + meterHeight - fillHeight;
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 3;
+                ctx.shadowColor = 'rgba(255,255,255,0.8)';
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.moveTo(meterX - 6, indY);
+                ctx.lineTo(meterX + meterWidth + 6, indY);
+                ctx.stroke();
+                ctx.shadowColor = 'transparent';
+                ctx.shadowBlur = 0;
+
+                // Indicator circle
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(meterX + meterWidth / 2, indY, 7, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Power number
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 15px Arial';
+                ctx.fillText(Math.round(power), meterX + meterWidth / 2, indY - 16);
+            }
+
+            function drawScoreboard() {
+                const w = W();
+                const h = H();
+                const sbX = w * 0.75;
+                const sbY = h * 0.04;
+                const sbW = w * 0.2;
+                const sbH = h * 0.1;
+
+                ctx.fillStyle = 'rgba(0,0,0,0.65)';
+                ctx.beginPath();
+                ctx.roundRect(sbX, sbY, sbW, sbH, 12);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                ctx.fillStyle = '#ffffff';
+                ctx.font = `bold ${Math.max(12, sbH * 0.25)}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.fillText(`Kick ${kicksTaken + 1}/${TOTAL_ROUNDS}`, sbX + sbW / 2, sbY + sbH * 0.3);
+                ctx.fillText(`Goals: ${score}`, sbX + sbW / 2, sbY + sbH * 0.65);
+                ctx.textAlign = 'start';
+            }
+
+            function drawBIFFFFFFF() {
+                if (!biffEffect) return;
+                const age = biffEffect.age;
+                const duration = biffEffect.duration;
+                const x = biffEffect.x;
+                const y = biffEffect.y;
+                const progress = age / duration;
+
+                // Scale: quick burst then settle
+                let scale;
+                if (progress < 0.15) {
+                    scale = easeOutCubic(progress / 0.15) * 2.5;
+                } else if (progress < 0.5) {
+                    scale = 2.5 - (progress - 0.15) / 0.35 * 1.5;
+                } else {
+                    scale = 1.0 - (progress - 0.5) / 0.5 * 0.6;
+                }
+                scale = Math.max(0.3, scale);
+
+                const alpha = progress < 0.7 ? 1 : 1 - (progress - 0.7) / 0.3;
+
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.translate(x, y);
+                ctx.scale(scale, scale);
+
+                // Shadow layers
+                ctx.fillStyle = '#000000';
+                ctx.font = `bold ${Math.max(28, W() * 0.09)}px "Arial Black", Impact, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                for (let i = 3; i >= 0; i--) {
+                    ctx.fillText('BIFFFFFFF!', i * 2, i * 2);
+                }
+
+                // Main text with gradient
+                const textGrad = ctx.createLinearGradient(0, -40, 0, 40);
+                textGrad.addColorStop(0, '#ffffff');
+                textGrad.addColorStop(0.4, '#ffff88');
+                textGrad.addColorStop(0.6, '#ffdd44');
+                textGrad.addColorStop(1, '#ffaa00');
+                ctx.fillStyle = textGrad;
+                ctx.fillText('BIFFFFFFF!', 0, 0);
+
+                // Glow
+                ctx.shadowColor = 'rgba(255,200,0,0.9)';
+                ctx.shadowBlur = 30 * scale;
+                ctx.fillStyle = 'rgba(255,255,200,0.5)';
+                ctx.fillText('BIFFFFFFF!', 0, 0);
+                ctx.shadowColor = 'transparent';
+                ctx.shadowBlur = 0;
+
+                ctx.restore();
+            }
+
+            function drawResultText() {
+                if (!resultText || resultTimer <= 0) return;
+                const alpha = Math.min(1, resultTimer / 0.3);
+                const w = W();
+                const h = H();
+                const y = h * 0.5;
+
+                ctx.save();
+                ctx.globalAlpha = alpha;
+
+                // Background banner
+                const bannerWidth = w * 0.55;
+                const bannerHeight = 60;
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.beginPath();
+                ctx.roundRect(w / 2 - bannerWidth / 2, y - bannerHeight / 2, bannerWidth, bannerHeight, 16);
+                ctx.fill();
+                ctx.strokeStyle = resultColor;
+                ctx.lineWidth = 3;
+                ctx.shadowColor = resultColor;
+                ctx.shadowBlur = 15;
+                ctx.stroke();
+                ctx.shadowColor = 'transparent';
+                ctx.shadowBlur = 0;
+
+                ctx.fillStyle = resultColor;
+                ctx.font = `bold ${Math.max(30, w * 0.06)}px "Arial Black", Impact, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(resultText, w / 2, y);
+                ctx.restore();
+            }
+
+            function drawGameOver() {
+                if (gameState !== 'GAMEOVER') return;
+                const w = W();
+                const h = H();
+
+                // Overlay
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, w, h);
+
+                // Panel
+                const panelW = w * 0.7;
+                const panelH = h * 0.45;
+                const panelX = w / 2 - panelW / 2;
+                const panelY = h / 2 - panelH / 2;
+                ctx.fillStyle = 'rgba(20,20,40,0.95)';
+                ctx.beginPath();
+                ctx.roundRect(panelX, panelY, panelW, panelH, 20);
+                ctx.fill();
+                ctx.strokeStyle = '#ffd700';
+                ctx.lineWidth = 3;
+                ctx.shadowColor = '#ffd700';
+                ctx.shadowBlur = 20;
+                ctx.stroke();
+                ctx.shadowColor = 'transparent';
+                ctx.shadowBlur = 0;
+
+                ctx.fillStyle = '#ffd700';
+                ctx.font = `bold ${Math.max(26, w * 0.05)}px "Arial Black", Impact, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText('PENALTY SHOOTOUT', w / 2, panelY + panelH * 0.18);
+
+                ctx.fillStyle = '#ffffff';
+                ctx.font = `bold ${Math.max(18, w * 0.035)}px Arial`;
+                ctx.fillText(`Final Score: ${score} / ${TOTAL_ROUNDS}`, w / 2, panelY + panelH * 0.38);
+
+                // Stats
+                const statsY = panelY + panelH * 0.55;
+                ctx.fillStyle = '#cccccc';
+                ctx.font = `${Math.max(14, w * 0.025)}px Arial`;
+                ctx.fillText(`Goals: ${score}    Saved: ${saves}    Missed: ${misses}`, w / 2, statsY);
+
+                // Rating
+                let rating = '';
+                if (score >= 5) rating = 'PERFECT! LEGEND!';
+                else if (score >= 4) rating = 'AMAZING!';
+                else if (score >= 3) rating = 'GOOD JOB!';
+                else if (score >= 2) rating = 'NOT BAD...';
+                else if (score >= 1) rating = 'NEEDS PRACTICE';
+                else rating = 'BETTER LUCK NEXT TIME';
+                ctx.fillStyle = '#ffd700';
+                ctx.font = `bold ${Math.max(18, w * 0.035)}px "Arial Black", Impact, sans-serif`;
+                ctx.fillText(rating, w / 2, panelY + panelH * 0.72);
+
+                ctx.fillStyle = '#ffffff';
+                ctx.font = `bold ${Math.max(15, w * 0.028)}px Arial`;
+                ctx.fillText('TAP OR CLICK TO PLAY AGAIN', w / 2, panelY + panelH * 0.9);
+                ctx.textAlign = 'start';
+            }
+
+            function drawParticles() {
+                for (const p of particles) {
+                    const alpha = p.life / p.maxLife;
+                    ctx.fillStyle = p.color.replace(')', `, ${alpha})`).replace('rgb',
+                        'rgba').replace('hsl', 'hsla');
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function render() {
+                const w = W();
+                const h = H();
+                ctx.clearRect(0, 0, w, h);
+
+                // Apply screen shake
+                let shakeX = 0;
+                let shakeY = 0;
+                if (shakeDuration > 0 && shakeAmount > 0.5) {
+                    shakeX = (Math.random() - 0.5) * shakeAmount * 2;
+                    shakeY = (Math.random() - 0.5) * shakeAmount * 2;
+                }
+
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                drawSky();
+                drawStands();
+                drawField();
+                drawGoalNet();
+                drawGoalPosts();
+                drawKeeper();
+
+                // Draw ball trail
+                for (const t of ballTrail) {
+                    const alpha = t.life / 0.25;
+                    ctx.fillStyle = `rgba(255,255,255,${alpha * 0.5})`;
+                    ctx.beginPath();
+                    ctx.arc(t.x, t.y, 10, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Draw ball
+                if (gameState === 'AIMING') {
+                    drawBall(getGoalGeometry().penaltySpotX, getGoalGeometry().penaltySpotY, 15);
+                } else {
+                    const arcHeight = -80 * (1 - Math.pow(2 * ballProgress - 1, 2));
+                    drawBall(ballX, ballY + arcHeight, 15);
+                }
+
+                drawTargetCursor();
+                drawPowerMeter();
+                drawScoreboard();
+                drawParticles();
+                drawBIFFFFFFF();
+                drawResultText();
+
+                ctx.restore();
+
+                // Game over overlay (not affected by shake)
+                if (gameState === 'GAMEOVER') {
+                    drawGameOver();
+                }
+
+                // Brief instructions at bottom
+                if (gameState === 'AIMING' && kicksTaken === 0 && !resultText) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                    ctx.font = `${Math.max(12, w * 0.022)}px Arial`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText('Move to aim • Tap/Click to kick • Time the power!', w / 2, h * 0.94);
+                    ctx.textAlign = 'start';
+                }
+            }
+
+            // --- Game Loop ---
+            let lastTime = performance.now();
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.2) dt = 0.2;
+                lastTime = timestamp;
+
+                update(dt);
+                render();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // --- Initialize ---
+            function init() {
+                resize();
+                initGame();
+                const geo = getGoalGeometry();
+                ballX = geo.penaltySpotX;
+                ballY = geo.penaltySpotY;
+                targetX = geo.centerX;
+                targetY = geo.centerY;
+                mouseX = targetX;
+                mouseY = targetY;
+                powerTime = Math.random() * POWER_CYCLE * 2;
+                lastTime = performance.now();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // Polyfill roundRect if needed
+            if (!ctx.roundRect) {
+                ctx.roundRect = function(x, y, w, h, r) {
+                    if (typeof r === 'number') r = { tl: r, tr: r, br: r, bl: r };
+                    ctx.beginPath();
+                    ctx.moveTo(x + r.tl, y);
+                    ctx.lineTo(x + w - r.tr, y);
+                    ctx.quadraticCurveTo(x + w, y, x + w, y + r.tr);
+                    ctx.lineTo(x + w, y + h - r.br);
+                    ctx.quadraticCurveTo(x + w, y + h, x + w - r.br, y + h);
+                    ctx.lineTo(x + r.bl, y + h);
+                    ctx.quadraticCurveTo(x, y + h, x, y + h - r.bl);
+                    ctx.lineTo(x, y + r.tl);
+                    ctx.quadraticCurveTo(x, y, x + r.tl, y);
+                    ctx.closePath();
+                };
+            }
+
+            init();
+        })();
+    </script>
+</body>
+</html>
