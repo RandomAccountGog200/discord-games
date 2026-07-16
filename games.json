@@ -448,5 +448,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T05:25:24.307Z",
     "updatedAt": "2026-07-16T05:25:24.307Z"
+  },
+  {
+    "slug": "destroy-all-milo-s-girlfriends",
+    "title": "Destroy All Milo's Girlfriends! 💔",
+    "description": "destroy all milo girlfriends",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T05:25:45.818Z",
+    "updatedAt": "2026-07-16T05:25:45.818Z"
   }
 ]
