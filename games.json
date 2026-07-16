@@ -214,5 +214,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T04:45:27.357Z",
     "updatedAt": "2026-07-16T04:45:27.357Z"
+  },
+  {
+    "slug": "match-x-gem-puzzle",
+    "title": "Match X - Gem Puzzle",
+    "description": "game ma x",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T04:45:40.594Z",
+    "updatedAt": "2026-07-16T04:45:40.594Z"
   }
 ]
