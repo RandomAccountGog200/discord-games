@@ -349,5 +349,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T05:07:07.606Z",
     "updatedAt": "2026-07-16T05:07:07.606Z"
+  },
+  {
+    "slug": "stream-chat-simulator-moderate-the-chaos",
+    "title": "Stream Chat Simulator - Moderate the Chaos!",
+    "description": "stream chat simulator",
+    "creator": "burger778",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T05:09:24.428Z",
+    "updatedAt": "2026-07-16T05:09:24.428Z"
   }
 ]
