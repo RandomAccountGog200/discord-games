@@ -70,5 +70,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T04:23:15.920Z",
     "updatedAt": "2026-07-16T04:23:15.920Z"
+  },
+  {
+    "slug": "jude-stoops-you-next-tomorrow",
+    "title": "Jude Stoops You Next Tomorrow",
+    "description": "Jude Stoops you next tomorrow when you shoot him",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T04:32:08.265Z",
+    "updatedAt": "2026-07-16T04:32:08.265Z"
   }
 ]
