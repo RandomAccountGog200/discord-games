@@ -1,0 +1,1525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>SUPER GAMEBOY17 SUPER TIME SMASH</title>
+    <style>
+        :root {
+            --gb-darkest: #0f380f;
+            --gb-dark: #306230;
+            --gb-mid: #4e8c30;
+            --gb-light: #8bac0f;
+            --gb-lightest: #9bbc0f;
+            --gb-white: #c8d878;
+            --gb-bg: #e0f0c0;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #1a1a0a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Courier New', monospace;
+            touch-action: manipulation;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            image-rendering: pixelated;
+        }
+
+        .gameboy-frame {
+            position: relative;
+            background: #6b5b8a;
+            background: linear-gradient(180deg, #8b7baa 0%, #5b4b7a 30%, #3b2b5a 50%, #5b4b7a 70%, #8b7baa 100%);
+            border-radius: 18px;
+            padding: 20px 16px 28px 16px;
+            box-shadow:
+                0 0 0 3px #2a1a3a,
+                0 0 0 7px #4a3a6a,
+                0 0 0 10px #1a0a2a,
+                0 8px 30px rgba(0, 0, 0, 0.6),
+                0 0 60px rgba(139, 172, 15, 0.25),
+                inset 0 2px 4px rgba(255, 255, 255, 0.08);
+            max-width: 95vw;
+            max-height: 95vh;
+        }
+
+        .screen-bezel {
+            position: relative;
+            background: #1a1a1a;
+            border-radius: 8px;
+            padding: 10px;
+            box-shadow:
+                inset 0 0 0 3px #0a0a0a,
+                inset 0 0 0 8px #2a2a2a,
+                0 0 0 2px #3a2a5a;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            border-radius: 3px;
+            image-rendering: auto;
+            width: 100%;
+            height: auto;
+            max-width: 420px;
+            box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.5);
+        }
+
+        .scanlines {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            bottom: 10px;
+            background: repeating-linear-gradient(0deg,
+                    rgba(0, 0, 0, 0.06) 0px,
+                    rgba(0, 0, 0, 0.06) 1px,
+                    transparent 1px,
+                    transparent 3px);
+            pointer-events: none;
+            border-radius: 3px;
+            z-index: 2;
+        }
+
+        .screen-glare {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 60%;
+            bottom: 60%;
+            background: linear-gradient(135deg,
+                    rgba(255, 255, 255, 0.12) 0%,
+                    rgba(255, 255, 255, 0.03) 40%,
+                    transparent 70%);
+            pointer-events: none;
+            border-radius: 3px 0 0 0;
+            z-index: 3;
+        }
+
+        .brand-label {
+            text-align: center;
+            margin-top: 10px;
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            font-size: 11px;
+            letter-spacing: 2px;
+            color: #c8d878;
+            text-shadow: 0 0 8px rgba(200, 216, 120, 0.6);
+            text-transform: uppercase;
+        }
+
+        .serial-number {
+            text-align: center;
+            font-family: 'Courier New', monospace;
+            font-size: 7px;
+            color: #8bac0f;
+            letter-spacing: 1px;
+            margin-top: 2px;
+            opacity: 0.7;
+            word-break: break-all;
+            line-height: 1.2;
+        }
+
+        @media (max-width: 500px) {
+            .gameboy-frame {
+                padding: 10px 8px 16px 8px;
+                border-radius: 12px;
+            }
+            .screen-bezel {
+                padding: 6px;
+                border-radius: 5px;
+            }
+            canvas {
+                max-width: 88vw;
+            }
+            .brand-label {
+                font-size: 9px;
+                margin-top: 6px;
+            }
+            .serial-number {
+                font-size: 5px;
+            }
+            .scanlines {
+                top: 6px;
+                left: 6px;
+                right: 6px;
+                bottom: 6px;
+            }
+            .screen-glare {
+                top: 6px;
+                left: 6px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="gameboy-frame">
+        <div class="screen-bezel">
+            <canvas id="gameCanvas"></canvas>
+            <div class="scanlines"></div>
+            <div class="screen-glare"></div>
+        </div>
+        <div class="brand-label">▲ SUPER GAMEBOY17 ▲</div>
+        <div class="serial-number">SN:9010101010101010110101010101010101914141412314334344134</div>
+    </div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            // Internal resolution
+            const GAME_WIDTH = 400;
+            const GAME_HEIGHT = 650;
+            canvas.width = GAME_WIDTH;
+            canvas.height = GAME_HEIGHT;
+
+            // Gameboy palette
+            const GB_DARKEST = '#0f380f';
+            const GB_DARK = '#306230';
+            const GB_MID = '#4e8c30';
+            const GB_LIGHT = '#8bac0f';
+            const GB_LIGHTEST = '#9bbc0f';
+            const GB_WHITE = '#c8d878';
+            const GB_BG = '#d8e8a0';
+
+            // Audio
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playBeep(freq, duration, type = 'square', vol = 0.08) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    osc.frequency.exponentialRampToValueAtTime(freq * 0.3, t + duration);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) {
+                    // silent
+                }
+            }
+
+            function sfxSmash() { playBeep(600, 0.1, 'square', 0.07);
+                playBeep(900, 0.06, 'square', 0.05); }
+
+            function sfxBonus() { playBeep(400, 0.08, 'square', 0.06);
+                playBeep(600, 0.06, 'square', 0.05);
+                playBeep(800, 0.1, 'triangle', 0.07); }
+
+            function sfxBomb() { playBeep(80, 0.3, 'sawtooth', 0.12);
+                playBeep(40, 0.4, 'sawtooth', 0.1); }
+
+            function sfxCombo() { playBeep(1000, 0.05, 'square', 0.04);
+                playBeep(1200, 0.05, 'square', 0.04);
+                playBeep(1400, 0.08, 'triangle', 0.06); }
+
+            function sfxGameOver() { playBeep(200, 0.2, 'sawtooth', 0.1);
+                playBeep(100, 0.4, 'sawtooth', 0.12); }
+
+            function sfxSuperActivate() {
+                playBeep(500, 0.06, 'square', 0.05);
+                playBeep(700, 0.05, 'square', 0.04);
+                playBeep(900, 0.05, 'square', 0.04);
+                playBeep(1100, 0.08, 'triangle', 0.07);
+                playBeep(1400, 0.12, 'triangle', 0.08);
+            }
+
+            // Game State
+            const STATE = { TITLE: 'title', PLAYING: 'playing', GAMEOVER: 'gameover' };
+            let gameState = STATE.TITLE;
+            let score = 0;
+            let highScore = 0;
+            let timeLeft = 60;
+            let maxTime = 60;
+            let combo = 0;
+            let maxCombo = 0;
+            let comboTimer = 0;
+            let superTimeSmash = false;
+            let superTier = 0; // 0=none, 1=SUPER, 2=HYPER, 3=ULTRA
+            let shakeAmount = 0;
+            let shakeDuration = 0;
+            let flashAlpha = 0;
+            let difficultyLevel = 1;
+            let spawnTimer = 0;
+            let spawnInterval = 1.0;
+            let gameTime = 0;
+            let lastTime = performance.now();
+
+            // Player
+            const player = {
+                x: GAME_WIDTH / 2,
+                y: GAME_HEIGHT - 60,
+                width: 64,
+                height: 16,
+                speed: 350,
+                targetX: GAME_WIDTH / 2,
+                glowPulse: 0,
+            };
+
+            // Arrays
+            let fallingObjects = [];
+            let particles = [];
+            let scorePopups = [];
+            let bgParticles = [];
+
+            // Input
+            const keys = {};
+            let touchActive = false;
+            let touchX = GAME_WIDTH / 2;
+            let touchY = 0;
+
+            // Load high score
+            try {
+                const saved = localStorage.getItem('superTimeSmashHighScore');
+                if (saved) highScore = parseInt(saved);
+            } catch (e) { /* ignore */ }
+
+            function saveHighScore() {
+                try {
+                    localStorage.setItem('superTimeSmashHighScore', highScore.toString());
+                } catch (e) { /* ignore */ }
+            }
+
+            // Helper: random range
+            function rand(min, max) { return min + Math.random() * (max - min); }
+
+            function randInt(min, max) { return Math.floor(rand(min, max + 1)); }
+
+            // Spawn background particles (ambient dust in gameboy green)
+            function spawnBgParticle() {
+                bgParticles.push({
+                    x: rand(0, GAME_WIDTH),
+                    y: -5,
+                    vx: rand(-8, 8),
+                    vy: rand(15, 40),
+                    size: rand(1, 3),
+                    life: rand(2, 6),
+                    maxLife: rand(2, 6),
+                    color: Math.random() < 0.5 ? GB_LIGHT : GB_LIGHTEST,
+                });
+            }
+
+            // Spawn falling object
+            function spawnObject() {
+                const types = ['clock', 'clock', 'gem', 'gem', 'gem', 'enemy', 'enemy', 'star'];
+                // Adjust based on difficulty
+                if (difficultyLevel >= 3) types.push('bomb', 'bomb', 'enemy');
+                if (difficultyLevel >= 5) types.push('bomb', 'bomb', 'enemy', 'enemy');
+                if (difficultyLevel >= 7) types.push('bomb', 'enemy', 'enemy');
+                if (superTimeSmash && superTier >= 2) types.push('star', 'star', 'gem');
+
+                const type = types[randInt(0, types.length - 1)];
+                const obj = {
+                    x: rand(30, GAME_WIDTH - 30),
+                    y: -30,
+                    type: type,
+                    width: 28,
+                    height: 28,
+                    speed: rand(80 + difficultyLevel * 15, 150 + difficultyLevel * 25),
+                    wobble: rand(-0.5, 0.5),
+                    wobbleAmp: rand(0, 1.5),
+                    wobbleFreq: rand(2, 5),
+                    rotation: rand(0, Math.PI * 2),
+                    rotSpeed: rand(-3, 3),
+                    pulsePhase: rand(0, Math.PI * 2),
+                };
+                fallingObjects.push(obj);
+            }
+
+            // Spawn particles
+            function spawnParticles(x, y, count, color1, color2, spread, life) {
+                for (let i = 0; i < count; i++) {
+                    const angle = rand(0, Math.PI * 2);
+                    const speed = rand(spread * 0.3, spread);
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - rand(30, 120),
+                        life: rand(life * 0.5, life),
+                        maxLife: life,
+                        size: rand(2, 6),
+                        color: Math.random() < 0.5 ? color1 : color2,
+                        gravity: true,
+                    });
+                }
+            }
+
+            function spawnScorePopup(x, y, text, color) {
+                scorePopups.push({
+                    x: x,
+                    y: y,
+                    text: text,
+                    life: 0.8,
+                    maxLife: 0.8,
+                    color: color || GB_WHITE,
+                    vy: -80,
+                });
+            }
+
+            // Reset game
+            function resetGame() {
+                score = 0;
+                timeLeft = maxTime;
+                combo = 0;
+                maxCombo = 0;
+                comboTimer = 0;
+                superTimeSmash = false;
+                superTier = 0;
+                shakeAmount = 0;
+                shakeDuration = 0;
+                flashAlpha = 0;
+                difficultyLevel = 1;
+                spawnTimer = 0;
+                spawnInterval = 1.0;
+                gameTime = 0;
+                fallingObjects = [];
+                particles = [];
+                scorePopups = [];
+                bgParticles = [];
+                player.x = GAME_WIDTH / 2;
+                player.targetX = GAME_WIDTH / 2;
+                player.glowPulse = 0;
+            }
+
+            function startGame() {
+                initAudio();
+                resetGame();
+                gameState = STATE.PLAYING;
+                lastTime = performance.now();
+                sfxBonus();
+            }
+
+            // Handle collisions
+            function checkCollisions() {
+                const px = player.x;
+                const py = player.y;
+                const pw = player.width;
+                const ph = player.height;
+                const pLeft = px - pw / 2;
+                const pRight = px + pw / 2;
+                const pTop = py - ph / 2;
+                const pBottom = py + ph / 2;
+
+                for (let i = fallingObjects.length - 1; i >= 0; i--) {
+                    const obj = fallingObjects[i];
+                    const ox = obj.x;
+                    const oy = obj.y;
+                    const ow = obj.width;
+                    const oh = obj.height;
+                    const oLeft = ox - ow / 2;
+                    const oRight = ox + ow / 2;
+                    const oTop = oy - oh / 2;
+                    const oBottom = oy + oh / 2;
+
+                    // Check overlap
+                    if (pLeft < oRight && pRight > oLeft && pTop < oBottom && pBottom > oTop) {
+                        // Collision!
+                        const impactX = ox;
+                        const impactY = (oy + py) / 2;
+
+                        switch (obj.type) {
+                            case 'clock':
+                                timeLeft += 3;
+                                if (timeLeft > maxTime) timeLeft = maxTime;
+                                score += 10 + (superTimeSmash ? 10 : 0);
+                                combo++;
+                                comboTimer = 0;
+                                spawnParticles(impactX, impactY, 8, GB_LIGHTEST, GB_WHITE, 60, 0.4);
+                                spawnScorePopup(impactX, impactY - 10, '+' + (10 + (superTimeSmash ? 10 : 0)),
+                                    GB_WHITE);
+                                sfxSmash();
+                                break;
+                            case 'gem':
+                                score += 50 + (superTimeSmash ? 50 : 0);
+                                combo++;
+                                comboTimer = 0;
+                                spawnParticles(impactX, impactY, 12, GB_LIGHT, GB_LIGHTEST, 80, 0.5);
+                                spawnScorePopup(impactX, impactY - 10, '+' + (50 + (superTimeSmash ? 50 : 0)),
+                                    GB_LIGHTEST);
+                                sfxSmash();
+                                break;
+                            case 'star':
+                                score += 100 + (superTimeSmash ? 100 : 0);
+                                timeLeft += 5;
+                                if (timeLeft > maxTime) timeLeft = maxTime;
+                                combo += 2;
+                                comboTimer = 0;
+                                spawnParticles(impactX, impactY, 18, GB_WHITE, '#ffffcc', 100, 0.6);
+                                spawnScorePopup(impactX, impactY - 10, 'â˜†' + (100 + (superTimeSmash ? 100 : 0)),
+                                    '#ffffcc');
+                                sfxBonus();
+                                flashAlpha = 0.4;
+                                break;
+                            case 'enemy':
+                                score += 25 + (superTimeSmash ? 25 : 0);
+                                timeLeft += 1;
+                                if (timeLeft > maxTime) timeLeft = maxTime;
+                                combo++;
+                                comboTimer = 0;
+                                spawnParticles(impactX, impactY, 10, GB_MID, GB_LIGHT, 70, 0.45);
+                                spawnScorePopup(impactX, impactY - 10, '+' + (25 + (superTimeSmash ? 25 : 0)),
+                                    GB_LIGHT);
+                                sfxSmash();
+                                break;
+                            case 'bomb':
+                                timeLeft -= 10;
+                                score -= 20;
+                                if (score < 0) score = 0;
+                                combo = 0;
+                                comboTimer = 0;
+                                superTimeSmash = false;
+                                superTier = 0;
+                                spawnParticles(impactX, impactY, 25, '#ff4444', '#ff8800', 130, 0.7);
+                                spawnScorePopup(impactX, impactY - 10, '-10s!', '#ff6644');
+                                shakeAmount = 8;
+                                shakeDuration = 0.35;
+                                sfxBomb();
+                                break;
+                        }
+
+                        // Remove the object
+                        fallingObjects.splice(i, 1);
+
+                        // Update combo tier
+                        updateComboTier();
+
+                        if (obj.type !== 'bomb') {
+                            // Spawn some extra sparkle particles
+                            spawnParticles(impactX, impactY, 4, GB_WHITE, GB_LIGHTEST, 40, 0.3);
+                        }
+                    }
+                }
+            }
+
+            function updateComboTier() {
+                if (combo >= 50) {
+                    if (superTier < 3) {
+                        superTier = 3;
+                        superTimeSmash = true;
+                        sfxSuperActivate();
+                        flashAlpha = 0.6;
+                    }
+                } else if (combo >= 25) {
+                    if (superTier < 2) {
+                        superTier = 2;
+                        superTimeSmash = true;
+                        sfxSuperActivate();
+                        flashAlpha = 0.4;
+                    }
+                } else if (combo >= 10) {
+                    if (superTier < 1) {
+                        superTier = 1;
+                        superTimeSmash = true;
+                        sfxSuperActivate();
+                        flashAlpha = 0.3;
+                    }
+                } else {
+                    superTimeSmash = false;
+                    superTier = 0;
+                }
+            }
+
+            function update(dt) {
+                if (gameState !== STATE.PLAYING) return;
+
+                // Cap dt to avoid huge jumps
+                const cappedDt = Math.min(dt, 0.1);
+                gameTime += cappedDt;
+
+                // Update difficulty
+                difficultyLevel = 1 + Math.floor(gameTime / 15);
+                spawnInterval = Math.max(0.25, 1.0 - difficultyLevel * 0.08);
+
+                // Update timer
+                timeLeft -= cappedDt;
+                if (timeLeft <= 0) {
+                    timeLeft = 0;
+                    endGame();
+                    return;
+                }
+
+                // Update combo timer
+                if (combo > 0) {
+                    comboTimer += cappedDt;
+                    if (comboTimer > 3.0) {
+                        combo = 0;
+                        comboTimer = 0;
+                        superTimeSmash = false;
+                        superTier = 0;
+                    }
+                }
+
+                // Update spawn timer
+                spawnTimer += cappedDt;
+                while (spawnTimer >= spawnInterval) {
+                    spawnTimer -= spawnInterval;
+                    spawnObject();
+                    // Occasionally spawn double
+                    if (difficultyLevel >= 4 && Math.random() < 0.3) spawnObject();
+                    if (superTimeSmash && superTier >= 2 && Math.random() < 0.4) spawnObject();
+                }
+
+                // Update player position
+                const dx = player.targetX - player.x;
+                const moveSpeed = player.speed * cappedDt;
+                if (Math.abs(dx) < moveSpeed) {
+                    player.x = player.targetX;
+                } else {
+                    player.x += Math.sign(dx) * moveSpeed;
+                }
+                // Clamp player
+                player.x = Math.max(player.width / 2 + 5, Math.min(GAME_WIDTH - player.width / 2 - 5, player.x));
+                player.glowPulse += cappedDt * 4;
+
+                // Update falling objects
+                for (let i = fallingObjects.length - 1; i >= 0; i--) {
+                    const obj = fallingObjects[i];
+                    obj.y += obj.speed * cappedDt;
+                    obj.x += Math.sin(gameTime * obj.wobbleFreq + obj.wobble) * obj.wobbleAmp * cappedDt * 30;
+                    obj.rotation += obj.rotSpeed * cappedDt;
+                    obj.pulsePhase += cappedDt * 5;
+
+                    // Check if object fell off screen
+                    if (obj.y > GAME_HEIGHT + 40) {
+                        // Object missed
+                        if (obj.type === 'enemy') {
+                            timeLeft -= 5;
+                            combo = 0;
+                            comboTimer = 0;
+                            superTimeSmash = false;
+                            superTier = 0;
+                            shakeAmount = 3;
+                            shakeDuration = 0.2;
+                            spawnScorePopup(obj.x, GAME_HEIGHT - 20, '-5s', '#ff6644');
+                            sfxBomb();
+                        } else if (obj.type === 'bomb') {
+                            timeLeft -= 3;
+                            shakeAmount = 4;
+                            shakeDuration = 0.25;
+                            spawnScorePopup(obj.x, GAME_HEIGHT - 20, '-3s', '#ff8844');
+                            sfxBomb();
+                        }
+                        fallingObjects.splice(i, 1);
+                        if (timeLeft < 0) timeLeft = 0;
+                    }
+                }
+
+                // Check collisions
+                checkCollisions();
+
+                // Update particles
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.life -= cappedDt;
+                    if (p.life <= 0) {
+                        particles.splice(i, 1);
+                        continue;
+                    }
+                    p.x += p.vx * cappedDt;
+                    p.y += p.vy * cappedDt;
+                    if (p.gravity) p.vy += 200 * cappedDt;
+                    p.vx *= 0.98;
+                }
+
+                // Update score popups
+                for (let i = scorePopups.length - 1; i >= 0; i--) {
+                    const sp = scorePopups[i];
+                    sp.life -= cappedDt;
+                    if (sp.life <= 0) {
+                        scorePopups.splice(i, 1);
+                        continue;
+                    }
+                    sp.y += sp.vy * cappedDt;
+                    sp.vy *= 0.95;
+                }
+
+                // Update shake
+                if (shakeDuration > 0) {
+                    shakeDuration -= cappedDt;
+                    if (shakeDuration <= 0) {
+                        shakeAmount = 0;
+                        shakeDuration = 0;
+                    } else {
+                        shakeAmount *= 0.85;
+                    }
+                }
+
+                // Update flash
+                if (flashAlpha > 0) {
+                    flashAlpha -= cappedDt * 2;
+                    if (flashAlpha < 0) flashAlpha = 0;
+                }
+
+                // Update background particles
+                for (let i = bgParticles.length - 1; i >= 0; i--) {
+                    const bp = bgParticles[i];
+                    bp.life -= cappedDt;
+                    if (bp.life <= 0) {
+                        bgParticles.splice(i, 1);
+                        continue;
+                    }
+                    bp.x += bp.vx * cappedDt;
+                    bp.y += bp.vy * cappedDt;
+                    if (bp.y > GAME_HEIGHT + 10) bp.life = 0;
+                }
+
+                // Spawn bg particles
+                if (bgParticles.length < 15 && Math.random() < 0.4) {
+                    spawnBgParticle();
+                }
+
+                // Update max combo
+                if (combo > maxCombo) maxCombo = combo;
+            }
+
+            function endGame() {
+                gameState = STATE.GAMEOVER;
+                if (score > highScore) {
+                    highScore = score;
+                    saveHighScore();
+                }
+                sfxGameOver();
+                shakeAmount = 10;
+                shakeDuration = 0.6;
+                // Big explosion particles
+                spawnParticles(player.x, player.y, 40, '#ff6644', '#ffaa00', 150, 0.8);
+                spawnParticles(player.x, player.y, 25, GB_WHITE, '#ffff88', 100, 0.6);
+            }
+
+            // Drawing functions
+            function drawBgParticle(bp) {
+                const alpha = bp.life / bp.maxLife;
+                ctx.fillStyle = bp.color;
+                ctx.globalAlpha = alpha * 0.5;
+                ctx.fillRect(bp.x - bp.size / 2, bp.y - bp.size / 2, bp.size, bp.size);
+                ctx.globalAlpha = 1;
+            }
+
+            function drawClock(obj) {
+                const cx = obj.x;
+                const cy = obj.y;
+                const r = obj.width / 2;
+                // Clock face
+                ctx.fillStyle = GB_LIGHTEST;
+                ctx.strokeStyle = GB_DARK;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+                // Clock hands
+                ctx.strokeStyle = GB_DARKEST;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(cx, cy);
+                ctx.lineTo(cx, cy - r * 0.6);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(cx, cy);
+                ctx.lineTo(cx + r * 0.35, cy);
+                ctx.stroke();
+                // Center dot
+                ctx.fillStyle = GB_DARKEST;
+                ctx.beginPath();
+                ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            function drawGem(obj) {
+                const cx = obj.x;
+                const cy = obj.y;
+                const s = obj.width / 2;
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.rotate(obj.rotation);
+                ctx.fillStyle = GB_LIGHTEST;
+                ctx.strokeStyle = GB_DARK;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, -s);
+                ctx.lineTo(s * 0.7, 0);
+                ctx.lineTo(0, s);
+                ctx.lineTo(-s * 0.7, 0);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                // Highlight
+                ctx.fillStyle = GB_WHITE;
+                ctx.beginPath();
+                ctx.moveTo(0, -s);
+                ctx.lineTo(s * 0.2, -s * 0.2);
+                ctx.lineTo(0, 0);
+                ctx.lineTo(-s * 0.2, -s * 0.2);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+            }
+
+            function drawStarShape(obj) {
+                const cx = obj.x;
+                const cy = obj.y;
+                const outerR = obj.width / 2;
+                const innerR = outerR * 0.4;
+                const spikes = 5;
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.rotate(obj.rotation);
+                ctx.fillStyle = '#ffffaa';
+                ctx.strokeStyle = GB_MID;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                for (let i = 0; i < spikes * 2; i++) {
+                    const r = i % 2 === 0 ? outerR : innerR;
+                    const angle = (i * Math.PI) / spikes - Math.PI / 2;
+                    const sx = Math.cos(angle) * r;
+                    const sy = Math.sin(angle) * r;
+                    if (i === 0) ctx.moveTo(sx, sy);
+                    else ctx.lineTo(sx, sy);
+                }
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                // Inner glow
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(0, 0, innerR * 0.6, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            function drawEnemy(obj) {
+                const cx = obj.x;
+                const cy = obj.y;
+                const r = obj.width / 2;
+                // Spiky body
+                ctx.fillStyle = GB_DARK;
+                ctx.strokeStyle = GB_DARKEST;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                const spikes = 8;
+                for (let i = 0; i < spikes * 2; i++) {
+                    const radius = i % 2 === 0 ? r : r * 0.65;
+                    const angle = (i * Math.PI) / spikes;
+                    const sx = cx + Math.cos(angle) * radius;
+                    const sy = cy + Math.sin(angle) * radius;
+                    if (i === 0) ctx.moveTo(sx, sy);
+                    else ctx.lineTo(sx, sy);
+                }
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                // Eyes
+                const eyeR = r * 0.22;
+                ctx.fillStyle = GB_WHITE;
+                ctx.beginPath();
+                ctx.arc(cx - r * 0.28, cy - r * 0.2, eyeR, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(cx + r * 0.28, cy - r * 0.2, eyeR, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = GB_DARKEST;
+                ctx.beginPath();
+                ctx.arc(cx - r * 0.28, cy - r * 0.2, eyeR * 0.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(cx + r * 0.28, cy - r * 0.2, eyeR * 0.5, 0, Math.PI * 2);
+                ctx.fill();
+                // Mouth
+                ctx.strokeStyle = GB_DARKEST;
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.arc(cx, cy + r * 0.15, r * 0.3, 0, Math.PI);
+                ctx.stroke();
+            }
+
+            function drawBomb(obj) {
+                const cx = obj.x;
+                const cy = obj.y;
+                const r = obj.width / 2;
+                // Bomb body
+                const bombGrad = ctx.createRadialGradient(cx - r * 0.2, cy - r * 0.3, r * 0.1, cx, cy, r);
+                bombGrad.addColorStop(0, '#555');
+                bombGrad.addColorStop(1, '#1a1a1a');
+                ctx.fillStyle = bombGrad;
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+                // Fuse
+                ctx.strokeStyle = '#888';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(cx + r * 0.4, cy - r);
+                ctx.quadraticCurveTo(cx + r * 0.8, cy - r * 1.5, cx + r * 0.3, cy - r * 1.7);
+                ctx.stroke();
+                // Spark at tip
+                const sparkAlpha = 0.6 + Math.sin(obj.pulsePhase * 3) * 0.4;
+                ctx.fillStyle = `rgba(255,180,30,${sparkAlpha})`;
+                ctx.beginPath();
+                ctx.arc(cx + r * 0.3, cy - r * 1.7, 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = `rgba(255,255,200,${sparkAlpha})`;
+                ctx.beginPath();
+                ctx.arc(cx + r * 0.3, cy - r * 1.7, 2, 0, Math.PI * 2);
+                ctx.fill();
+                // Skull warning
+                ctx.fillStyle = '#ff4444';
+                ctx.font = 'bold 10px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText('â˜ ', cx, cy + 4);
+            }
+
+            function drawPlayer() {
+                const px = player.x;
+                const py = player.y;
+                const pw = player.width;
+                const ph = player.height;
+                const glowIntensity = 0.5 + Math.sin(player.glowPulse) * 0.3;
+
+                // Glow aura
+                const glowGrad = ctx.createRadialGradient(px, py, ph * 0.3, px, py, pw * 1.2);
+                if (superTimeSmash) {
+                    const tierColors = ['rgba(200,216,120,0.6)', 'rgba(255,220,100,0.7)', 'rgba(255,180,60,0.8)',
+                        'rgba(255,100,200,0.9)'
+                    ];
+                    glowGrad.addColorStop(0, tierColors[Math.min(superTier, 3)]);
+                    glowGrad.addColorStop(1, 'rgba(200,216,120,0)');
+                } else {
+                    glowGrad.addColorStop(0, `rgba(200,216,120,${glowIntensity})`);
+                    glowGrad.addColorStop(1, 'rgba(200,216,120,0)');
+                }
+                ctx.fillStyle = glowGrad;
+                ctx.fillRect(px - pw * 1.2, py - ph * 1.5, pw * 2.4, ph * 4);
+
+                // Main body
+                const bodyGrad = ctx.createLinearGradient(px, py - ph / 2, px, py + ph / 2);
+                bodyGrad.addColorStop(0, GB_LIGHTEST);
+                bodyGrad.addColorStop(0.5, GB_LIGHT);
+                bodyGrad.addColorStop(1, GB_MID);
+                ctx.fillStyle = bodyGrad;
+                ctx.strokeStyle = GB_DARK;
+                ctx.lineWidth = 2;
+                roundRect(px - pw / 2, py - ph / 2, pw, ph, 6);
+                ctx.fill();
+                ctx.stroke();
+
+                // Highlight strip
+                ctx.fillStyle = GB_WHITE;
+                ctx.globalAlpha = 0.5;
+                roundRect(px - pw / 2 + 4, py - ph / 2 + 2, pw - 8, ph / 3, 3);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+
+                // Smash indicators (side spikes)
+                if (superTimeSmash) {
+                    ctx.fillStyle = superTier >= 2 ? '#ffcc00' : GB_WHITE;
+                    const spikeSize = 6 + superTier * 2;
+                    // Left spikes
+                    ctx.beginPath();
+                    ctx.moveTo(px - pw / 2, py - ph / 2);
+                    ctx.lineTo(px - pw / 2 - spikeSize, py - ph / 4);
+                    ctx.lineTo(px - pw / 2, py);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.moveTo(px - pw / 2, py);
+                    ctx.lineTo(px - pw / 2 - spikeSize, py + ph / 4);
+                    ctx.lineTo(px - pw / 2, py + ph / 2);
+                    ctx.fill();
+                    // Right spikes
+                    ctx.beginPath();
+                    ctx.moveTo(px + pw / 2, py - ph / 2);
+                    ctx.lineTo(px + pw / 2 + spikeSize, py - ph / 4);
+                    ctx.lineTo(px + pw / 2, py);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.moveTo(px + pw / 2, py);
+                    ctx.lineTo(px + pw / 2 + spikeSize, py + ph / 4);
+                    ctx.lineTo(px + pw / 2, py + ph / 2);
+                    ctx.fill();
+                }
+
+                // Center indicator
+                ctx.fillStyle = superTimeSmash ? '#ffdd00' : GB_DARKEST;
+                ctx.beginPath();
+                ctx.arc(px, py, ph * 0.3, 0, Math.PI * 2);
+                ctx.fill();
+                if (superTimeSmash) {
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(px, py, ph * 0.15, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function roundRect(x, y, w, h, r) {
+                ctx.beginPath();
+                ctx.moveTo(x + r, y);
+                ctx.lineTo(x + w - r, y);
+                ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+                ctx.lineTo(x + w, y + h - r);
+                ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+                ctx.lineTo(x + r, y + h);
+                ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+                ctx.lineTo(x, y + r);
+                ctx.quadraticCurveTo(x, y, x + r, y);
+                ctx.closePath();
+            }
+
+            function drawParticle(p) {
+                const alpha = p.life / p.maxLife;
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = alpha;
+                ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+                ctx.globalAlpha = 1;
+            }
+
+            function drawScorePopup(sp) {
+                const alpha = sp.life / sp.maxLife;
+                ctx.fillStyle = sp.color;
+                ctx.globalAlpha = alpha;
+                ctx.font = 'bold 14px "Courier New", monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText(sp.text, sp.x, sp.y);
+                ctx.globalAlpha = 1;
+            }
+
+            function drawScanlinesOverlay() {
+                // Subtle in-canvas scanlines
+                ctx.fillStyle = 'rgba(0,0,0,0.03)';
+                for (let y = 0; y < GAME_HEIGHT; y += 3) {
+                    ctx.fillRect(0, y, GAME_WIDTH, 1);
+                }
+            }
+
+            function drawBackgroundGrid() {
+                ctx.strokeStyle = 'rgba(48,98,48,0.08)';
+                ctx.lineWidth = 0.5;
+                const gridSize = 30;
+                for (let x = gridSize; x < GAME_WIDTH; x += gridSize) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, 0);
+                    ctx.lineTo(x, GAME_HEIGHT);
+                    ctx.stroke();
+                }
+                for (let y = gridSize; y < GAME_HEIGHT; y += gridSize) {
+                    ctx.beginPath();
+                    ctx.moveTo(0, y);
+                    ctx.lineTo(GAME_WIDTH, y);
+                    ctx.stroke();
+                }
+            }
+
+            function drawTitleScreen() {
+                // Background
+                ctx.fillStyle = GB_BG;
+                ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+                drawBackgroundGrid();
+
+                // Title with glitch effect
+                const glitchOffset = Math.sin(gameTime * 8) * 2;
+                const titleY = 140;
+
+                // Shadow/glitch layer
+                ctx.fillStyle = GB_DARK;
+                ctx.font = 'bold 26px "Courier New", monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText('SUPER TIME', GAME_WIDTH / 2 + glitchOffset + 2, titleY - 5);
+                ctx.fillText('SMASH', GAME_WIDTH / 2 - glitchOffset - 2, titleY + 30);
+
+                // Main title
+                ctx.fillStyle = GB_DARKEST;
+                ctx.fillText('SUPER TIME', GAME_WIDTH / 2, titleY - 3);
+                ctx.fillText('SMASH', GAME_WIDTH / 2, titleY + 32);
+
+                // Glitch line through title
+                ctx.fillStyle = GB_LIGHTEST;
+                ctx.fillRect(GAME_WIDTH / 2 - 100 + Math.sin(gameTime * 20) * 30, titleY + 18,
+                    80 + Math.cos(gameTime * 15) * 20, 3);
+
+                // Subtitle
+                ctx.fillStyle = GB_MID;
+                ctx.font = 'bold 12px "Courier New", monospace';
+                ctx.fillText('SUPER GAMEBOY17 EDITION', GAME_WIDTH / 2, titleY + 60);
+
+                // High score
+                ctx.fillStyle = GB_DARK;
+                ctx.font = 'bold 14px "Courier New", monospace';
+                ctx.fillText('HIGH SCORE: ' + highScore, GAME_WIDTH / 2, titleY + 100);
+
+                // Animated character preview
+                const previewY = titleY + 160;
+                const previewX = GAME_WIDTH / 2;
+                const bounce = Math.sin(gameTime * 3) * 15;
+                ctx.fillStyle = GB_LIGHTEST;
+                ctx.strokeStyle = GB_DARK;
+                ctx.lineWidth = 2;
+                roundRect(previewX - 30, previewY - 8 + bounce, 60, 16, 5);
+                ctx.fill();
+                ctx.stroke();
+                ctx.fillStyle = GB_WHITE;
+                ctx.globalAlpha = 0.5;
+                roundRect(previewX - 26, previewY - 6 + bounce, 52, 5, 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+                ctx.fillStyle = GB_DARKEST;
+                ctx.beginPath();
+                ctx.arc(previewX, previewY + bounce, 5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Falling demo objects
+                const demoObjects = ['clock', 'gem', 'star', 'enemy'];
+                const demoT = gameTime % 3;
+                for (let i = 0; i < 3; i++) {
+                    const dx = GAME_WIDTH / 2 - 60 + i * 60;
+                    const dy = previewY - 60 + Math.sin(gameTime * 2 + i) * 20;
+                    const demoType = demoObjects[(i + Math.floor(gameTime * 0.7)) % demoObjects.length];
+                    const demoObj = { x: dx, y: dy, width: 24, height: 24, rotation: gameTime * 2 + i, pulsePhase: gameTime *
+                            5 + i };
+                    ctx.globalAlpha = 0.7;
+                    switch (demoType) {
+                        case 'clock':
+                            drawClock(demoObj);
+                            break;
+                        case 'gem':
+                            drawGem(demoObj);
+                            break;
+                        case 'star':
+                            drawStarShape(demoObj);
+                            break;
+                        case 'enemy':
+                            drawEnemy(demoObj);
+                            break;
+                    }
+                    ctx.globalAlpha = 1;
+                }
+
+                // Instructions
+                ctx.fillStyle = GB_DARKEST;
+                ctx.font = 'bold 13px "Courier New", monospace';
+                const instrY = previewY + 90;
+                ctx.fillText('â–² MOVE: ARROWS / TOUCH DRAG', GAME_WIDTH / 2, instrY);
+                ctx.fillText('SMASH OBJECTS FOR POINTS!', GAME_WIDTH / 2, instrY + 25);
+                ctx.fillText('DODGE BOMBS â˜  - THEY HURT!', GAME_WIDTH / 2, instrY + 50);
+
+                // Start prompt
+                const promptAlpha = 0.5 + Math.sin(gameTime * 4) * 0.4;
+                ctx.fillStyle = `rgba(15,56,15,${promptAlpha})`;
+                ctx.font = 'bold 18px "Courier New", monospace';
+                ctx.fillText('PRESS SPACE OR TAP', GAME_WIDTH / 2, instrY + 95);
+                ctx.fillText('TO START', GAME_WIDTH / 2, instrY + 118);
+
+                // Serial number at bottom
+                ctx.fillStyle = 'rgba(48,98,48,0.5)';
+                ctx.font = '7px "Courier New", monospace';
+                ctx.fillText('CODE: 9010101010101010110101010101010101914141412314334344134',
+                    GAME_WIDTH / 2, GAME_HEIGHT - 12);
+            }
+
+            function drawGameOverScreen() {
+                // Dimmed background
+                ctx.fillStyle = 'rgba(15,56,15,0.75)';
+                ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+                // Game over box
+                const boxX = GAME_WIDTH / 2 - 140;
+                const boxY = 180;
+                const boxW = 280;
+                const boxH = 280;
+                ctx.fillStyle = GB_BG;
+                ctx.strokeStyle = GB_DARKEST;
+                ctx.lineWidth = 3;
+                roundRect(boxX, boxY, boxW, boxH, 10);
+                ctx.fill();
+                ctx.stroke();
+
+                // Title
+                ctx.fillStyle = GB_DARKEST;
+                ctx.font = 'bold 22px "Courier New", monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER', GAME_WIDTH / 2, boxY + 40);
+
+                // Score
+                ctx.fillStyle = GB_DARK;
+                ctx.font = 'bold 16px "Courier New", monospace';
+                ctx.fillText('SCORE: ' + score, GAME_WIDTH / 2, boxY + 80);
+                ctx.fillText('HIGH SCORE: ' + highScore, GAME_WIDTH / 2, boxY + 105);
+
+                // New high score indicator
+                if (score >= highScore && score > 0) {
+                    const hsAlpha = 0.6 + Math.sin(gameTime * 6) * 0.4;
+                    ctx.fillStyle = `rgba(255,200,50,${hsAlpha})`;
+                    ctx.font = 'bold 15px "Courier New", monospace';
+                    ctx.fillText('â˜… NEW HIGH SCORE! â˜…', GAME_WIDTH / 2, boxY + 130);
+                }
+
+                // Stats
+                ctx.fillStyle = GB_MID;
+                ctx.font = '13px "Courier New", monospace';
+                ctx.fillText('MAX COMBO: ' + maxCombo, GAME_WIDTH / 2, boxY + 160);
+                const tierName = maxCombo >= 50 ? 'ULTRA' : maxCombo >= 25 ? 'HYPER' : maxCombo >= 10 ? 'SUPER' : 'NONE';
+                ctx.fillText('BEST TIER: ' + tierName, GAME_WIDTH / 2, boxY + 180);
+
+                // Restart prompt
+                const promptAlpha = 0.5 + Math.sin(gameTime * 4) * 0.4;
+                ctx.fillStyle = `rgba(15,56,15,${promptAlpha})`;
+                ctx.font = 'bold 15px "Courier New", monospace';
+                ctx.fillText('PRESS SPACE OR TAP', GAME_WIDTH / 2, boxY + 220);
+                ctx.fillText('TO RESTART', GAME_WIDTH / 2, boxY + 242);
+            }
+
+            function drawHUD() {
+                // Score
+                ctx.fillStyle = GB_DARKEST;
+                ctx.font = 'bold 15px "Courier New", monospace';
+                ctx.textAlign = 'left';
+                ctx.fillText('SCORE: ' + score, 12, 25);
+
+                // Time
+                const timeColor = timeLeft <= 10 ? '#cc3333' : timeLeft <= 20 ? '#cc8800' : GB_DARKEST;
+                ctx.fillStyle = timeColor;
+                ctx.textAlign = 'right';
+                const timeText = 'TIME: ' + timeLeft.toFixed(1) + 's';
+                ctx.fillText(timeText, GAME_WIDTH - 12, 25);
+
+                // Time bar
+                const barWidth = GAME_WIDTH - 24;
+                const barHeight = 6;
+                const barX = 12;
+                const barY = 32;
+                const timeRatio = timeLeft / maxTime;
+                ctx.fillStyle = 'rgba(15,56,15,0.2)';
+                roundRect(barX, barY, barWidth, barHeight, 3);
+                ctx.fill();
+                const barColor = timeRatio > 0.5 ? GB_LIGHT : timeRatio > 0.25 ? '#cc8800' : '#cc3333';
+                ctx.fillStyle = barColor;
+                roundRect(barX, barY, barWidth * timeRatio, barHeight, 3);
+                ctx.fill();
+                ctx.strokeStyle = GB_DARK;
+                ctx.lineWidth = 1;
+                roundRect(barX, barY, barWidth, barHeight, 3);
+                ctx.stroke();
+
+                // Combo
+                if (combo >= 3) {
+                    const comboAlpha = 0.7 + Math.sin(gameTime * 6) * 0.3;
+                    ctx.fillStyle = `rgba(48,98,48,${comboAlpha})`;
+                    ctx.font = 'bold 13px "Courier New", monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('COMBO x' + combo, GAME_WIDTH / 2, 60);
+                }
+
+                // Super tier indicator
+                if (superTimeSmash && superTier >= 1) {
+                    const tierNames = ['', 'SUPER TIME SMASH!', 'HYPER TIME SMASH!!', 'ULTRA TIME SMASH!!!'];
+                    const tierColors = ['', '#cc8800', '#ff6600', '#ff2288'];
+                    const tierAlpha = 0.6 + Math.sin(gameTime * 8) * 0.4;
+                    ctx.fillStyle = tierColors[Math.min(superTier, 3)];
+                    ctx.globalAlpha = tierAlpha;
+                    ctx.font = 'bold 16px "Courier New", monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(tierNames[Math.min(superTier, 3)], GAME_WIDTH / 2, 82);
+                    ctx.globalAlpha = 1;
+
+                    // Glitchy number code for ULTRA tier
+                    if (superTier >= 3) {
+                        ctx.fillStyle = 'rgba(255,100,180,0.3)';
+                        ctx.font = '8px "Courier New", monospace';
+                        const numStr = '9010101010101010110101010101010101914141412314334344134';
+                        const scrollX = (gameTime * 60) % (numStr.length * 5 + GAME_WIDTH);
+                        ctx.fillText(numStr, GAME_WIDTH - scrollX, 95);
+                        ctx.fillText(numStr, GAME_WIDTH - scrollX + numStr.length * 5, 95);
+                    }
+                }
+            }
+
+            function render() {
+                // Clear
+                ctx.fillStyle = GB_BG;
+                ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+                // Apply shake
+                let shakeX = 0;
+                let shakeY = 0;
+                if (shakeDuration > 0 && shakeAmount > 0.1) {
+                    shakeX = (Math.random() - 0.5) * shakeAmount * 2;
+                    shakeY = (Math.random() - 0.5) * shakeAmount * 2;
+                }
+
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                if (gameState === STATE.TITLE) {
+                    drawTitleScreen();
+                    ctx.restore();
+                    drawScanlinesOverlay();
+                    return;
+                }
+
+                // Background grid
+                drawBackgroundGrid();
+
+                // Background particles
+                for (const bp of bgParticles) {
+                    drawBgParticle(bp);
+                }
+
+                // Draw falling objects
+                for (const obj of fallingObjects) {
+                    switch (obj.type) {
+                        case 'clock':
+                            drawClock(obj);
+                            break;
+                        case 'gem':
+                            drawGem(obj);
+                            break;
+                        case 'star':
+                            drawStarShape(obj);
+                            break;
+                        case 'enemy':
+                            drawEnemy(obj);
+                            break;
+                        case 'bomb':
+                            drawBomb(obj);
+                            break;
+                    }
+                }
+
+                // Draw player
+                drawPlayer();
+
+                // Draw particles
+                for (const p of particles) {
+                    drawParticle(p);
+                }
+
+                // Draw score popups
+                for (const sp of scorePopups) {
+                    drawScorePopup(sp);
+                }
+
+                // Flash overlay
+                if (flashAlpha > 0.01) {
+                    ctx.fillStyle = `rgba(255,255,255,${flashAlpha})`;
+                    ctx.fillRect(-10, -10, GAME_WIDTH + 20, GAME_HEIGHT + 20);
+                }
+
+                ctx.restore();
+
+                // Scanlines (not affected by shake)
+                drawScanlinesOverlay();
+
+                // HUD (not affected by shake)
+                if (gameState === STATE.PLAYING) {
+                    drawHUD();
+                } else if (gameState === STATE.GAMEOVER) {
+                    drawHUD();
+                    drawGameOverScreen();
+                }
+            }
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.2) dt = 0.2; // Cap to avoid spiral
+                lastTime = timestamp;
+
+                // Always update gameTime for animations even on title/gameover screens
+                if (gameState !== STATE.PLAYING) {
+                    gameTime += Math.min(dt, 0.1);
+                    // Update shake on gameover screen too
+                    if (shakeDuration > 0) {
+                        shakeDuration -= dt;
+                        if (shakeDuration <= 0) { shakeAmount = 0;
+                            shakeDuration = 0; } else shakeAmount *= 0.85;
+                    }
+                    if (flashAlpha > 0) { flashAlpha -= dt * 2; if (flashAlpha < 0) flashAlpha = 0; }
+                    // Update particles on gameover
+                    for (let i = particles.length - 1; i >= 0; i--) {
+                        const p = particles[i];
+                        p.life -= dt;
+                        if (p.life <= 0) { particles.splice(i, 1);
+                            continue; }
+                        p.x += p.vx * dt;
+                        p.y += p.vy * dt;
+                        if (p.gravity) p.vy += 200 * dt;
+                        p.vx *= 0.98;
+                    }
+                } else {
+                    update(dt);
+                }
+
+                render();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // Input handling
+            window.addEventListener('keydown', (e) => {
+                keys[e.code] = true;
+                if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'ArrowDown') {
+                    e.preventDefault();
+                }
+                if (e.code === 'Space') {
+                    initAudio();
+                    if (gameState === STATE.TITLE) {
+                        startGame();
+                    } else if (gameState === STATE.GAMEOVER) {
+                        startGame();
+                    }
+                }
+            });
+
+            window.addEventListener('keyup', (e) => {
+                keys[e.code] = false;
+            });
+
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                initAudio();
+                touchActive = true;
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = GAME_WIDTH / rect.width;
+                const scaleY = GAME_HEIGHT / rect.height;
+                touchX = (e.touches[0].clientX - rect.left) * scaleX;
+                touchY = (e.touches[0].clientY - rect.top) * scaleY;
+                player.targetX = touchX;
+
+                if (gameState === STATE.TITLE) {
+                    startGame();
+                } else if (gameState === STATE.GAMEOVER) {
+                    startGame();
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                if (!touchActive) return;
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = GAME_WIDTH / rect.width;
+                touchX = (e.touches[0].clientX - rect.left) * scaleX;
+                touchY = (e.touches[0].clientY - rect.top) * scaleY;
+                player.targetX = touchX;
+            }, { passive: false });
+
+            canvas.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                touchActive = false;
+            }, { passive: false });
+
+            canvas.addEventListener('touchcancel', () => {
+                touchActive = false;
+            });
+
+            // Mouse click for desktop
+            canvas.addEventListener('click', (e) => {
+                initAudio();
+                if (gameState === STATE.TITLE) {
+                    startGame();
+                } else if (gameState === STATE.GAMEOVER) {
+                    startGame();
+                }
+            });
+
+            canvas.addEventListener('mousemove', (e) => {
+                if (gameState === STATE.PLAYING) {
+                    const rect = canvas.getBoundingClientRect();
+                    const scaleX = GAME_WIDTH / rect.width;
+                    player.targetX = (e.clientX - rect.left) * scaleX;
+                }
+            });
+
+            // Keyboard movement for player
+            function handleKeyboardMovement(dt) {
+                if (gameState !== STATE.PLAYING) return;
+                const moveSpeed = player.speed * dt;
+                if (keys['ArrowLeft'] || keys['KeyA']) {
+                    player.targetX = player.x - moveSpeed * 2;
+                }
+                if (keys['ArrowRight'] || keys['KeyD']) {
+                    player.targetX = player.x + moveSpeed * 2;
+                }
+                // Clamp target
+                player.targetX = Math.max(player.width / 2 + 5, Math.min(GAME_WIDTH - player.width / 2 - 5, player
+                    .targetX));
+            }
+
+            // Override update to include keyboard movement
+            const originalUpdate = update;
+            update = function(dt) {
+                handleKeyboardMovement(dt);
+                originalUpdate(dt);
+            };
+
+            // Handle window resize for canvas display
+            function handleResize() {
+                const frame = document.querySelector('.gameboy-frame');
+                if (!frame) return;
+                const maxWidth = Math.min(window.innerWidth * 0.92, 440);
+                const maxHeight = Math.min(window.innerHeight * 0.9, 800);
+                const scaleFromWidth = maxWidth / GAME_WIDTH;
+                const scaleFromHeight = maxHeight / GAME_HEIGHT;
+                const scale = Math.min(scaleFromWidth, scaleFromHeight);
+                canvas.style.width = (GAME_WIDTH * scale) + 'px';
+                canvas.style.height = (GAME_HEIGHT * scale) + 'px';
+            }
+
+            window.addEventListener('resize', handleResize);
+            window.addEventListener('orientationchange', () => {
+                setTimeout(handleResize, 200);
+            });
+
+            // Initialize
+            handleResize();
+            resetGame();
+            gameState = STATE.TITLE;
+            lastTime = performance.now();
+            // Pre-spawn some bg particles for title screen
+            for (let i = 0; i < 10; i++) {
+                bgParticles.push({
+                    x: rand(0, GAME_WIDTH),
+                    y: rand(0, GAME_HEIGHT),
+                    vx: rand(-5, 5),
+                    vy: rand(10, 30),
+                    size: rand(1, 3),
+                    life: rand(1, 5),
+                    maxLife: rand(2, 5),
+                    color: Math.random() < 0.5 ? GB_LIGHT : GB_LIGHTEST,
+                });
+            }
+            requestAnimationFrame(gameLoop);
+
+            console.log('ðŸŽ® SUPER GAMEBOY17 SUPER TIME SMASH - READY!');
+            console.log('   SN: 9010101010101010110101010101010101914141412314334344134');
+            console.log('   Arrow keys or touch to move | Dodge bombs | Smash everything else!');
+        })();
+    </script>
+</body>
+</html>
