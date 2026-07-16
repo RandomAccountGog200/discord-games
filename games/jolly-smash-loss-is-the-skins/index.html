@@ -1,0 +1,1232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Jolly Smash - Loss Is The Skins</title>
+    <style>
+        :root {
+            --bg: #1a0a2e;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Segoe UI', 'Arial', sans-serif;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-user-select: none;
+            user-select: none;
+            cursor: none;
+        }
+
+        canvas {
+            display: block;
+            border-radius: 16px;
+            box-shadow: 0 0 60px rgba(255, 120, 40, 0.4), 0 0 120px rgba(255, 60, 100, 0.25);
+            max-width: 100vw;
+            max-height: 100vh;
+            cursor: none;
+        }
+
+        #ui-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            // Responsive canvas sizing
+            function resizeCanvas() {
+                const maxW = Math.min(window.innerWidth - 20, 600);
+                const maxH = Math.min(window.innerHeight - 20, 800);
+                const ratio = 3 / 4;
+                let w, h;
+                if (maxW / maxH > ratio) {
+                    h = maxH;
+                    w = h * ratio;
+                } else {
+                    w = maxW;
+                    h = w / ratio;
+                }
+                canvas.width = Math.floor(w);
+                canvas.height = Math.floor(h);
+            }
+            resizeCanvas();
+            window.addEventListener('resize', () => {
+                resizeCanvas();
+                updateHolePositions();
+            });
+            window.addEventListener('orientationchange', () => {
+                setTimeout(() => {
+                    resizeCanvas();
+                    updateHolePositions();
+                }, 300);
+            });
+
+            // Audio context
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playSound(freq, type, duration, vol = 0.15, glideTo = null) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (glideTo) osc.frequency.linearRampToValueAtTime(glideTo, t + duration);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) { /* silent */ }
+            }
+
+            function sfxSmash() {
+                playSound(200, 'square', 0.08, 0.2, 60);
+                playSound(500, 'triangle', 0.06, 0.15, 800);
+                playSound(80, 'sawtooth', 0.04, 0.1, 30);
+            }
+
+            function sfxMiss() {
+                playSound(120, 'sawtooth', 0.15, 0.25, 40);
+                playSound(60, 'triangle', 0.1, 0.3, 25);
+            }
+
+            function sfxPop() {
+                playSound(600, 'sine', 0.05, 0.1, 900);
+            }
+
+            function sfxGameOver() {
+                playSound(80, 'sawtooth', 0.2, 0.5, 30);
+                playSound(150, 'triangle', 0.1, 0.4, 60);
+                setTimeout(() => playSound(60, 'sine', 0.15, 0.6, 20), 200);
+            }
+
+            function sfxClick() {
+                playSound(800, 'sine', 0.03, 0.06, 1000);
+            }
+
+            // Game state
+            const STATE = {
+                PLAYING: 'playing',
+                GAMEOVER: 'gameover',
+                READY: 'ready',
+            };
+
+            let gameState = STATE.READY;
+            let score = 0;
+            let skinsRemaining = 8;
+            let maxSkins = 8;
+            let comboCount = 0;
+            let comboTimer = 0;
+            let maxCombo = 0;
+            let difficulty = 1;
+            let gameTime = 0;
+            let shakeAmount = 0;
+            let particles = [];
+            let floatingTexts = [];
+            let holes = [];
+            let jollyCharacters = [];
+            const NUM_HOLES = 6;
+            const HOLE_ROWS = 2;
+            const HOLE_COLS = 3;
+
+            // Hammer cursor
+            let hammerX = -100;
+            let hammerY = -100;
+            let hammerAngle = -30;
+            let hammerSmashing = false;
+            let hammerSmashTimer = 0;
+            let mouseOnCanvas = false;
+
+            // Star background particles
+            let bgStars = [];
+
+            function updateHolePositions() {
+                const w = canvas.width;
+                const h = canvas.height;
+                const topOffset = h * 0.22;
+                const bottomOffset = h * 0.12;
+                const availableHeight = h - topOffset - bottomOffset;
+                const rowSpacing = availableHeight / HOLE_ROWS;
+                const colSpacing = w / (HOLE_COLS + 1);
+
+                holes = [];
+                for (let row = 0; row < HOLE_ROWS; row++) {
+                    for (let col = 0; col < HOLE_COLS; col++) {
+                        const idx = row * HOLE_COLS + col;
+                        holes[idx] = {
+                            x: colSpacing * (col + 1),
+                            y: topOffset + rowSpacing * (row + 0.5),
+                            radius: Math.min(w * 0.12, h * 0.08),
+                            occupied: false,
+                            cooldown: 0,
+                        };
+                    }
+                }
+                // Reinitialize bg stars
+                bgStars = [];
+                for (let i = 0; i < 80; i++) {
+                    bgStars.push({
+                        x: Math.random() * w,
+                        y: Math.random() * h,
+                        r: Math.random() * 2 + 0.5,
+                        twinkle: Math.random() * Math.PI * 2,
+                        speed: Math.random() * 0.03 + 0.01,
+                        alpha: Math.random() * 0.6 + 0.3,
+                    });
+                }
+            }
+
+            function createJollyCharacter(holeIndex) {
+                const hole = holes[holeIndex];
+                if (!hole || hole.occupied || hole.cooldown > 0) return null;
+                hole.occupied = true;
+
+                const colors = [
+                    { body: '#ff6b6b', cheek: '#ff9999', eye: '#fff' },
+                    { body: '#ffd93d', cheek: '#ffe68a', eye: '#fff' },
+                    { body: '#6bcb77', cheek: '#a0e0a8', eye: '#fff' },
+                    { body: '#4d96ff', cheek: '#8ab8ff', eye: '#fff' },
+                    { body: '#ff8c42', cheek: '#ffb380', eye: '#fff' },
+                    { body: '#c77dff', cheek: '#ddb5ff', eye: '#fff' },
+                    { body: '#ff6fa7', cheek: '#ffa3c8', eye: '#fff' },
+                    { body: '#00c9a7', cheek: '#5ce0c8', eye: '#fff' },
+                ];
+                const colorSet = colors[Math.floor(Math.random() * colors.length)];
+
+                const char = {
+                    holeIndex: holeIndex,
+                    x: hole.x,
+                    y: hole.y + hole.radius * 1.6,
+                    targetY: hole.y - hole.radius * 0.15,
+                    radius: hole.radius * 0.85,
+                    color: colorSet,
+                    state: 'rising', // 'rising', 'idle', 'falling', 'smashed'
+                    timer: 0,
+                    idleTime: 0.5 + Math.random() * 1.2 - difficulty * 0.04,
+                    riseSpeed: 0.06 + difficulty * 0.003,
+                    fallSpeed: 0.08,
+                    eyeBlinkTimer: Math.random() * 3,
+                    eyeBlinkState: false,
+                    bounceOffset: 0,
+                    bounceVel: 0,
+                    squish: 1,
+                };
+                hole.occupied = true;
+                sfxPop();
+                return char;
+            }
+
+            function smashCharacter(char) {
+                if (!char || char.state === 'smashed' || char.state === 'falling') return false;
+                char.state = 'smashed';
+                char.squish = 0.3;
+                sfxSmash();
+                score += 10 + Math.floor(comboCount * 5);
+                comboCount++;
+                comboTimer = 1.5;
+                if (comboCount > maxCombo) maxCombo = comboCount;
+                shakeAmount = Math.min(shakeAmount + 3, 12);
+
+                // Particles
+                const cx = char.x;
+                const cy = char.y - char.radius * 0.3;
+                for (let i = 0; i < 20; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * 5 + 3;
+                    particles.push({
+                        x: cx,
+                        y: cy,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - Math.random() * 6,
+                        life: 0.5 + Math.random() * 0.6,
+                        maxLife: 0.5 + Math.random() * 0.6,
+                        color: char.color.body,
+                        radius: Math.random() * 4 + 2,
+                    });
+                }
+                // Star particles
+                for (let i = 0; i < 8; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * 7 + 4;
+                    particles.push({
+                        x: cx,
+                        y: cy,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - Math.random() * 8,
+                        life: 0.7 + Math.random() * 0.8,
+                        maxLife: 0.7 + Math.random() * 0.8,
+                        color: '#ffdd57',
+                        radius: Math.random() * 3 + 1.5,
+                        star: true,
+                    });
+                }
+                // Floating score
+                floatingTexts.push({
+                    x: cx,
+                    y: cy - 30,
+                    text: '+' + (10 + Math.floor((comboCount - 1) * 5)),
+                    life: 0.8,
+                    maxLife: 0.8,
+                    color: comboCount > 3 ? '#ffdd57' : '#ffffff',
+                    size: comboCount > 5 ? 22 : 16,
+                });
+                if (comboCount > 1 && comboCount % 3 === 0) {
+                    floatingTexts.push({
+                        x: cx,
+                        y: cy - 50,
+                        text: comboCount + 'x COMBO!',
+                        life: 1.2,
+                        maxLife: 1.2,
+                        color: '#ff6b6b',
+                        size: 20,
+                    });
+                }
+
+                // Clear hole after short delay
+                const hole = holes[char.holeIndex];
+                setTimeout(() => {
+                    if (hole) {
+                        hole.occupied = false;
+                        hole.cooldown = 0.3 + Math.random() * 0.4;
+                    }
+                }, 200);
+
+                return true;
+            }
+
+            function missCharacter(char) {
+                if (!char || char.state === 'smashed') return;
+                char.state = 'falling';
+                sfxMiss();
+                comboCount = 0;
+                comboTimer = 0;
+                skinsRemaining--;
+                shakeAmount = Math.min(shakeAmount + 5, 15);
+                floatingTexts.push({
+                    x: char.x,
+                    y: char.y - 30,
+                    text: '-1 SKIN!',
+                    life: 1.0,
+                    maxLife: 1.0,
+                    color: '#ff4444',
+                    size: 18,
+                });
+                // Red particles
+                for (let i = 0; i < 12; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * 3 + 2;
+                    particles.push({
+                        x: char.x,
+                        y: char.y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - 3,
+                        life: 0.4 + Math.random() * 0.5,
+                        maxLife: 0.4 + Math.random() * 0.5,
+                        color: '#ff3333',
+                        radius: Math.random() * 3 + 1,
+                    });
+                }
+                const hole = holes[char.holeIndex];
+                setTimeout(() => {
+                    if (hole) {
+                        hole.occupied = false;
+                        hole.cooldown = 0.5 + Math.random() * 0.6;
+                    }
+                }, 350);
+                if (skinsRemaining <= 0) {
+                    endGame();
+                }
+            }
+
+            function endGame() {
+                gameState = STATE.GAMEOVER;
+                sfxGameOver();
+                shakeAmount = 20;
+                // Big explosion particles
+                for (let i = 0; i < 60; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * 8 + 4;
+                    particles.push({
+                        x: canvas.width / 2,
+                        y: canvas.height / 2,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - Math.random() * 6,
+                        life: 1 + Math.random() * 1.5,
+                        maxLife: 1 + Math.random() * 1.5,
+                        color: ['#ff6b6b', '#ffd93d', '#ff4444', '#ff8c42', '#ffffff'][Math.floor(Math.random() *
+                            5)],
+                        radius: Math.random() * 6 + 3,
+                    });
+                }
+                // Clear all jolly characters
+                jollyCharacters.forEach(c => {
+                    const hole = holes[c.holeIndex];
+                    if (hole) hole.occupied = false;
+                });
+                jollyCharacters = [];
+            }
+
+            function resetGame() {
+                score = 0;
+                skinsRemaining = maxSkins;
+                comboCount = 0;
+                comboTimer = 0;
+                maxCombo = 0;
+                difficulty = 1;
+                gameTime = 0;
+                shakeAmount = 0;
+                particles = [];
+                floatingTexts = [];
+                jollyCharacters = [];
+                holes.forEach(h => {
+                    h.occupied = false;
+                    h.cooldown = 0;
+                });
+                gameState = STATE.PLAYING;
+                // Spawn initial character
+                spawnRandomCharacter();
+            }
+
+            function spawnRandomCharacter() {
+                if (gameState !== STATE.PLAYING) return;
+                const available = [];
+                holes.forEach((h, i) => {
+                    if (!h.occupied && h.cooldown <= 0) available.push(i);
+                });
+                if (available.length === 0) return;
+                const idx = available[Math.floor(Math.random() * available.length)];
+                const char = createJollyCharacter(idx);
+                if (char) jollyCharacters.push(char);
+            }
+
+            // Spawn timer
+            let spawnTimer = 0;
+            const baseSpawnInterval = 1.2;
+
+            // Mouse / touch handling
+            function getCanvasPos(e) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                let clientX, clientY;
+                if (e.touches && e.touches.length > 0) {
+                    clientX = e.touches[0].clientX;
+                    clientY = e.touches[0].clientY;
+                } else if (e.changedTouches && e.changedTouches.length > 0) {
+                    clientX = e.changedTouches[0].clientX;
+                    clientY = e.changedTouches[0].clientY;
+                } else {
+                    clientX = e.clientX;
+                    clientY = e.clientY;
+                }
+                return {
+                    x: (clientX - rect.left) * scaleX,
+                    y: (clientY - rect.top) * scaleY,
+                };
+            }
+
+            function handleSmash(e) {
+                e.preventDefault();
+                initAudio();
+                const pos = getCanvasPos(e);
+                hammerX = pos.x;
+                hammerY = pos.y;
+                hammerSmashing = true;
+                hammerSmashTimer = 0.2;
+                hammerAngle = -60;
+
+                if (gameState === STATE.READY) {
+                    resetGame();
+                    sfxClick();
+                    return;
+                }
+                if (gameState === STATE.GAMEOVER) {
+                    resetGame();
+                    sfxClick();
+                    return;
+                }
+
+                // Check if we hit any jolly character
+                let hitAny = false;
+                for (let i = jollyCharacters.length - 1; i >= 0; i--) {
+                    const char = jollyCharacters[i];
+                    if (char.state === 'smashed' || char.state === 'falling') continue;
+                    const dx = pos.x - char.x;
+                    const dy = pos.y - (char.y + char.bounceOffset);
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const hitRadius = char.radius * 1.3;
+                    if (dist < hitRadius) {
+                        smashCharacter(char);
+                        hitAny = true;
+                        break;
+                    }
+                }
+                if (!hitAny && gameState === STATE.PLAYING) {
+                    // Check near misses
+                    let nearMiss = false;
+                    for (const char of jollyCharacters) {
+                        if (char.state === 'smashed' || char.state === 'falling') continue;
+                        const dx = pos.x - char.x;
+                        const dy = pos.y - (char.y + char.bounceOffset);
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist < char.radius * 2.2) {
+                            nearMiss = true;
+                            break;
+                        }
+                    }
+                    if (!nearMiss) {
+                        sfxClick();
+                    }
+                }
+            }
+
+            function handleMove(e) {
+                const pos = getCanvasPos(e);
+                hammerX = pos.x;
+                hammerY = pos.y;
+                mouseOnCanvas = true;
+            }
+
+            function handleLeave() {
+                mouseOnCanvas = false;
+                hammerX = -100;
+                hammerY = -100;
+            }
+
+            canvas.addEventListener('mousedown', handleSmash);
+            canvas.addEventListener('touchstart', handleSmash, { passive: false });
+            canvas.addEventListener('mousemove', handleMove);
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                handleMove(e);
+            }, { passive: false });
+            canvas.addEventListener('mouseleave', handleLeave);
+            canvas.addEventListener('touchend', handleLeave);
+            canvas.addEventListener('touchcancel', handleLeave);
+
+            // Prevent scrolling on canvas
+            canvas.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+
+            // Drawing functions
+            function drawBackground() {
+                const w = canvas.width;
+                const h = canvas.height;
+                // Gradient sky
+                const skyGrad = ctx.createRadialGradient(w / 2, h * 0.3, 0, w / 2, h * 0.3, h * 1.2);
+                skyGrad.addColorStop(0, '#2d1b4e');
+                skyGrad.addColorStop(0.5, '#1a0a2e');
+                skyGrad.addColorStop(1, '#0a0015');
+                ctx.fillStyle = skyGrad;
+                ctx.fillRect(0, 0, w, h);
+
+                // Stars
+                bgStars.forEach(star => {
+                    star.twinkle += star.speed;
+                    const alpha = star.alpha * (0.5 + 0.5 * Math.sin(star.twinkle));
+                    ctx.fillStyle = `rgba(255,255,240,${alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(star.x, star.y, star.r, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+
+                // Ground
+                const groundGrad = ctx.createLinearGradient(0, h * 0.55, 0, h);
+                groundGrad.addColorStop(0, '#3d2a1a');
+                groundGrad.addColorStop(0.3, '#5c3d28');
+                groundGrad.addColorStop(1, '#2a1808');
+                ctx.fillStyle = groundGrad;
+                ctx.fillRect(0, h * 0.55, w, h * 0.45);
+
+                // Grass tufts on ground
+                ctx.fillStyle = '#4a7a3a';
+                for (let i = 0; i < 30; i++) {
+                    const gx = (i * w / 30) + Math.sin(i * 3.7) * 10;
+                    const gy = h * 0.55 + Math.cos(i * 2.1) * 8;
+                    ctx.beginPath();
+                    ctx.moveTo(gx - 3, gy + 5);
+                    ctx.lineTo(gx, gy - 8 - Math.random() * 6);
+                    ctx.lineTo(gx + 3, gy + 5);
+                    ctx.fill();
+                }
+            }
+
+            function drawHole(hole) {
+                const { x, y, radius } = hole;
+                // Hole shadow/depth
+                ctx.fillStyle = '#0a0000';
+                ctx.beginPath();
+                ctx.ellipse(x, y + radius * 0.4, radius * 1.15, radius * 0.45, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Hole rim
+                const rimGrad = ctx.createRadialGradient(x, y - radius * 0.1, radius * 0.6, x, y, radius * 1.2);
+                rimGrad.addColorStop(0, '#1a0800');
+                rimGrad.addColorStop(0.6, '#2a1508');
+                rimGrad.addColorStop(1, '#4a2a15');
+                ctx.fillStyle = rimGrad;
+                ctx.beginPath();
+                ctx.ellipse(x, y, radius * 1.2, radius * 0.5, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Inner hole
+                const innerGrad = ctx.createRadialGradient(x, y - radius * 0.15, 0, x, y, radius * 0.9);
+                innerGrad.addColorStop(0, '#000000');
+                innerGrad.addColorStop(0.7, '#0a0505');
+                innerGrad.addColorStop(1, '#1a0a05');
+                ctx.fillStyle = innerGrad;
+                ctx.beginPath();
+                ctx.ellipse(x, y, radius * 0.95, radius * 0.38, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            function drawJollyCharacter(char) {
+                if (char.state === 'smashed') {
+                    // Draw squished remains
+                    const cx = char.x;
+                    const cy = char.y + char.radius * 0.5;
+                    const squishH = char.radius * 0.2 * char.squish;
+                    const squishW = char.radius * 1.5 * (2 - char.squish);
+                    ctx.fillStyle = char.color.body;
+                    ctx.beginPath();
+                    ctx.ellipse(cx, cy, squishW, squishH, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Eyes as X marks
+                    ctx.strokeStyle = '#333';
+                    ctx.lineWidth = 2;
+                    const eyeY = cy - squishH * 0.5;
+                    for (let sx = -1; sx <= 1; sx += 2) {
+                        const ex = cx + sx * squishW * 0.25;
+                        ctx.beginPath();
+                        ctx.moveTo(ex - 5, eyeY - 5);
+                        ctx.lineTo(ex + 5, eyeY + 5);
+                        ctx.moveTo(ex + 5, eyeY - 5);
+                        ctx.lineTo(ex - 5, eyeY + 5);
+                        ctx.stroke();
+                    }
+                    return;
+                }
+
+                const { x, y, radius, color, bounceOffset, squish } = char;
+                const cy = y + bounceOffset;
+                const scaleX = squish;
+                const scaleY = 1 / Math.max(squish, 0.3);
+
+                ctx.save();
+                ctx.translate(x, cy);
+                ctx.scale(scaleX, scaleY);
+
+                // Body glow
+                const glowGrad = ctx.createRadialGradient(0, -radius * 0.2, radius * 0.3, 0, 0, radius * 1.3);
+                glowGrad.addColorStop(0, 'rgba(255,255,255,0.25)');
+                glowGrad.addColorStop(1, 'rgba(255,255,255,0)');
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(0, 0, radius * 1.3, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Main body
+                const bodyGrad = ctx.createRadialGradient(-radius * 0.25, -radius * 0.35, radius * 0.1, 0, 0, radius);
+                bodyGrad.addColorStop(0, '#ffffff');
+                bodyGrad.addColorStop(0.15, color.body);
+                bodyGrad.addColorStop(0.7, color.body);
+                bodyGrad.addColorStop(1, '#00000033');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.arc(0, 0, radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Cheeks
+                ctx.fillStyle = color.cheek;
+                ctx.beginPath();
+                ctx.ellipse(-radius * 0.4, radius * 0.15, radius * 0.22, radius * 0.16, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(radius * 0.4, radius * 0.15, radius * 0.22, radius * 0.16, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Eyes
+                const eyeY = -radius * 0.15;
+                const eyeSpacing = radius * 0.3;
+                if (char.eyeBlinkState) {
+                    // Closed eyes
+                    ctx.strokeStyle = '#333';
+                    ctx.lineWidth = radius * 0.06;
+                    ctx.lineCap = 'round';
+                    for (let sx = -1; sx <= 1; sx += 2) {
+                        ctx.beginPath();
+                        ctx.moveTo(sx * eyeSpacing - radius * 0.12, eyeY);
+                        ctx.lineTo(sx * eyeSpacing + radius * 0.12, eyeY);
+                        ctx.stroke();
+                    }
+                } else {
+                    // Open eyes
+                    for (let sx = -1; sx <= 1; sx += 2) {
+                        const ex = sx * eyeSpacing;
+                        ctx.fillStyle = color.eye;
+                        ctx.beginPath();
+                        ctx.arc(ex, eyeY, radius * 0.18, 0, Math.PI * 2);
+                        ctx.fill();
+                        // Pupil
+                        ctx.fillStyle = '#111';
+                        ctx.beginPath();
+                        ctx.arc(ex, eyeY, radius * 0.08, 0, Math.PI * 2);
+                        ctx.fill();
+                        // Tiny highlight
+                        ctx.fillStyle = '#fff';
+                        ctx.beginPath();
+                        ctx.arc(ex - radius * 0.04, eyeY - radius * 0.05, radius * 0.04, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+
+                // Big smile
+                ctx.strokeStyle = '#3a1a0a';
+                ctx.lineWidth = radius * 0.07;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.arc(0, radius * 0.05, radius * 0.45, 0.15 * Math.PI, 0.85 * Math.PI);
+                ctx.stroke();
+
+                // Tiny tongue
+                ctx.fillStyle = '#ff7799';
+                ctx.beginPath();
+                ctx.arc(0, radius * 0.3, radius * 0.14, 0, Math.PI);
+                ctx.fill();
+
+                ctx.restore();
+            }
+
+            function drawHammer() {
+                if (!mouseOnCanvas && hammerSmashTimer <= 0) return;
+                if (hammerX < -50 || hammerY < -50) return;
+
+                const hx = hammerX;
+                const hy = hammerY;
+
+                ctx.save();
+                ctx.translate(hx, hy);
+                const angle = hammerSmashing ? hammerAngle : -25 + Math.sin(Date.now() * 0.01) * 3;
+                ctx.rotate(angle * Math.PI / 180);
+
+                // Handle
+                const handleGrad = ctx.createLinearGradient(-4, 0, 4, 0);
+                handleGrad.addColorStop(0, '#8B5E3C');
+                handleGrad.addColorStop(0.3, '#D2A679');
+                handleGrad.addColorStop(0.5, '#E8C99B');
+                handleGrad.addColorStop(0.7, '#D2A679');
+                handleGrad.addColorStop(1, '#6B3F1F');
+                ctx.fillStyle = handleGrad;
+                ctx.fillRect(-5, 0, 10, 48);
+                // Handle grip lines
+                ctx.strokeStyle = '#5a3a1a';
+                ctx.lineWidth = 1;
+                for (let i = 8; i < 40; i += 8) {
+                    ctx.beginPath();
+                    ctx.moveTo(-5, i);
+                    ctx.lineTo(5, i);
+                    ctx.stroke();
+                }
+
+                // Mallet head
+                const headY = -8;
+                const headW = 28;
+                const headH = 22;
+                const headGrad = ctx.createLinearGradient(0, headY - headH / 2, 0, headY + headH / 2);
+                headGrad.addColorStop(0, '#555');
+                headGrad.addColorStop(0.3, '#888');
+                headGrad.addColorStop(0.5, '#aaa');
+                headGrad.addColorStop(0.7, '#777');
+                headGrad.addColorStop(1, '#444');
+                ctx.fillStyle = headGrad;
+                ctx.beginPath();
+                ctx.roundRect(-headW / 2, headY - headH / 2, headW, headH, 6);
+                ctx.fill();
+                // Highlight
+                ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                ctx.beginPath();
+                ctx.roundRect(-headW / 2 + 3, headY - headH / 2 + 2, headW - 6, headH / 2 - 2, 4);
+                ctx.fill();
+                // Metal bands
+                ctx.fillStyle = '#666';
+                ctx.fillRect(-headW / 2 - 2, headY - 2, headW + 4, 5);
+                ctx.fillStyle = '#888';
+                ctx.fillRect(-headW / 2 - 1, headY - 1, headW + 2, 2);
+
+                ctx.restore();
+            }
+
+            function drawParticles() {
+                particles.forEach(p => {
+                    const alpha = p.life / p.maxLife;
+                    const size = p.radius * alpha;
+                    if (p.star) {
+                        // Draw star shape
+                        ctx.fillStyle = `rgba(255,220,80,${alpha})`;
+                        ctx.save();
+                        ctx.translate(p.x, p.y);
+                        ctx.rotate(p.life * 5);
+                        ctx.beginPath();
+                        const spikes = 5;
+                        const outerR = size;
+                        const innerR = size * 0.4;
+                        for (let i = 0; i < spikes * 2; i++) {
+                            const r = i % 2 === 0 ? outerR : innerR;
+                            const angle = (i * Math.PI) / spikes - Math.PI / 2;
+                            const sx = Math.cos(angle) * r;
+                            const sy = Math.sin(angle) * r;
+                            if (i === 0) ctx.moveTo(sx, sy);
+                            else ctx.lineTo(sx, sy);
+                        }
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.restore();
+                    } else {
+                        ctx.fillStyle = p.color.replace(')', `,${alpha})`).replace('rgb',
+                            'rgba');
+                        if (p.color.startsWith('#')) {
+                            const hex = p.color;
+                            const r = parseInt(hex.slice(1, 3), 16);
+                            const g = parseInt(hex.slice(3, 5), 16);
+                            const b = parseInt(hex.slice(5, 7), 16);
+                            ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+                        }
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                });
+
+                // Floating texts
+                floatingTexts.forEach(ft => {
+                    const alpha = ft.life / ft.maxLife;
+                    const yOffset = (1 - alpha) * 40;
+                    ctx.fillStyle = ft.color.replace(')', `,${alpha})`);
+                    if (ft.color.startsWith('#')) {
+                        const hex = ft.color;
+                        const r = parseInt(hex.slice(1, 3), 16);
+                        const g = parseInt(hex.slice(3, 5), 16);
+                        const b = parseInt(hex.slice(5, 7), 16);
+                        ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+                    }
+                    ctx.font = `bold ${ft.size}px 'Segoe UI', Arial, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                    ctx.shadowBlur = 4;
+                    ctx.fillText(ft.text, ft.x, ft.y - yOffset);
+                    ctx.shadowBlur = 0;
+                });
+            }
+
+            function drawUI() {
+                const w = canvas.width;
+                const h = canvas.height;
+
+                // Top bar background
+                const topBarGrad = ctx.createLinearGradient(0, 0, 0, h * 0.15);
+                topBarGrad.addColorStop(0, 'rgba(0,0,0,0.7)');
+                topBarGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = topBarGrad;
+                ctx.fillRect(0, 0, w, h * 0.15);
+
+                // Score
+                ctx.fillStyle = '#fff';
+                ctx.font = `bold ${Math.floor(w*0.05)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.textAlign = 'left';
+                ctx.shadowColor = 'rgba(255,180,50,0.6)';
+                ctx.shadowBlur = 8;
+                ctx.fillText(`⭐ ${score}`, w * 0.04, h * 0.07);
+                ctx.shadowBlur = 0;
+
+                // Skins remaining
+                const skinLabelX = w * 0.55;
+                const skinLabelY = h * 0.065;
+                ctx.fillStyle = '#ffcc80';
+                ctx.font = `bold ${Math.floor(w*0.035)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.textAlign = 'right';
+                ctx.fillText('SKINS:', skinLabelX - 5, skinLabelY);
+
+                // Skin icons
+                const skinStartX = skinLabelX + 5;
+                const skinSize = Math.floor(w * 0.04);
+                for (let i = 0; i < maxSkins; i++) {
+                    const sx = skinStartX + i * (skinSize + 4);
+                    const sy = skinLabelY - skinSize * 0.6;
+                    if (i < skinsRemaining) {
+                        // Active skin
+                        const skinGrad = ctx.createLinearGradient(sx, sy, sx, sy + skinSize);
+                        skinGrad.addColorStop(0, '#ffd700');
+                        skinGrad.addColorStop(0.5, '#ffaa00');
+                        skinGrad.addColorStop(1, '#cc7700');
+                        ctx.fillStyle = skinGrad;
+                        ctx.beginPath();
+                        ctx.roundRect(sx, sy, skinSize, skinSize, skinSize * 0.25);
+                        ctx.fill();
+                        ctx.fillStyle = '#fff';
+                        ctx.font = `${skinSize*0.7}px 'Segoe UI', Arial, sans-serif`;
+                        ctx.textAlign = 'center';
+                        ctx.fillText('🦊', sx + skinSize / 2, sy + skinSize * 0.75);
+                    } else {
+                        // Lost skin
+                        ctx.fillStyle = 'rgba(80,80,80,0.5)';
+                        ctx.beginPath();
+                        ctx.roundRect(sx, sy, skinSize, skinSize, skinSize * 0.25);
+                        ctx.fill();
+                        ctx.strokeStyle = 'rgba(255,100,100,0.5)';
+                        ctx.lineWidth = 1.5;
+                        ctx.stroke();
+                        ctx.fillStyle = 'rgba(255,100,100,0.7)';
+                        ctx.font = `${skinSize*0.7}px 'Segoe UI', Arial, sans-serif`;
+                        ctx.textAlign = 'center';
+                        ctx.fillText('💔', sx + skinSize / 2, sy + skinSize * 0.75);
+                    }
+                }
+
+                // Combo display
+                if (comboCount > 1 && comboTimer > 0) {
+                    const comboAlpha = Math.min(1, comboTimer);
+                    ctx.fillStyle = `rgba(255,200,50,${comboAlpha})`;
+                    ctx.font = `bold ${Math.floor(w*0.045)}px 'Segoe UI', Arial, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = 'rgba(255,100,0,0.7)';
+                    ctx.shadowBlur = 10;
+                    ctx.fillText(`🔥 ${comboCount}x COMBO!`, w / 2, h * 0.12);
+                    ctx.shadowBlur = 0;
+                }
+
+                // Difficulty indicator
+                if (difficulty > 1) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                    ctx.font = `${Math.floor(w*0.025)}px 'Segoe UI', Arial, sans-serif`;
+                    ctx.textAlign = 'right';
+                    ctx.fillText(`Level ${difficulty}`, w - 10, h * 0.04);
+                }
+            }
+
+            function drawReadyScreen() {
+                const w = canvas.width;
+                const h = canvas.height;
+                // Overlay
+                ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                ctx.fillRect(0, 0, w, h);
+
+                // Title
+                ctx.fillStyle = '#ffd93d';
+                ctx.font = `bold ${Math.floor(w*0.09)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.shadowColor = 'rgba(255,120,30,0.8)';
+                ctx.shadowBlur = 20;
+                ctx.fillText('JOLLY SMASH', w / 2, h * 0.28);
+                ctx.shadowBlur = 0;
+
+                // Subtitle
+                ctx.fillStyle = '#ff8c8c';
+                ctx.font = `bold ${Math.floor(w*0.045)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.fillText('Loss Is The Skins!', w / 2, h * 0.36);
+
+                // Instructions
+                ctx.fillStyle = '#fff';
+                ctx.font = `${Math.floor(w*0.032)}px 'Segoe UI', Arial, sans-serif`;
+                const lines = [
+                    '🦊 Smash the jolly creatures!',
+                    '💔 Miss them = lose a skin',
+                    '🔥 Keep combos for bonus points',
+                    '⚡ Game speeds up over time',
+                ];
+                lines.forEach((line, i) => {
+                    ctx.fillText(line, w / 2, h * 0.48 + i * h * 0.06);
+                });
+
+                // Start button
+                const btnW = w * 0.4;
+                const btnH = h * 0.07;
+                const btnX = w / 2 - btnW / 2;
+                const btnY = h * 0.78;
+                const btnGrad = ctx.createLinearGradient(0, btnY, 0, btnY + btnH);
+                btnGrad.addColorStop(0, '#ff6b6b');
+                btnGrad.addColorStop(1, '#cc3333');
+                ctx.fillStyle = btnGrad;
+                ctx.beginPath();
+                ctx.roundRect(btnX, btnY, btnW, btnH, btnH / 2);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.font = `bold ${Math.floor(w*0.04)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.fillText('🔨 SMASH & PLAY!', w / 2, btnY + btnH * 0.65);
+
+                // Pulsing effect
+                const pulse = 1 + Math.sin(Date.now() * 0.005) * 0.05;
+                ctx.strokeStyle = `rgba(255,255,255,${0.4+Math.sin(Date.now()*0.005)*0.3})`;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.roundRect(btnX - 4, btnY - 4, btnW + 8, btnH + 8, btnH / 2 + 2);
+                ctx.stroke();
+            }
+
+            function drawGameOverScreen() {
+                const w = canvas.width;
+                const h = canvas.height;
+                // Overlay
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, w, h);
+
+                // Game Over text
+                ctx.fillStyle = '#ff4444';
+                ctx.font = `bold ${Math.floor(w*0.08)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.shadowColor = 'rgba(255,0,0,0.7)';
+                ctx.shadowBlur = 25;
+                ctx.fillText('GAME OVER', w / 2, h * 0.25);
+                ctx.shadowBlur = 0;
+
+                ctx.fillStyle = '#ffcc80';
+                ctx.font = `bold ${Math.floor(w*0.04)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.fillText('All skins lost! 💔', w / 2, h * 0.33);
+
+                // Stats
+                ctx.fillStyle = '#fff';
+                ctx.font = `${Math.floor(w*0.035)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.fillText(`Final Score: ${score}`, w / 2, h * 0.43);
+                ctx.fillText(`Max Combo: ${maxCombo}x`, w / 2, h * 0.50);
+                ctx.fillText(`Level Reached: ${difficulty}`, w / 2, h * 0.57);
+
+                // Restart button
+                const btnW = w * 0.45;
+                const btnH = h * 0.07;
+                const btnX = w / 2 - btnW / 2;
+                const btnY = h * 0.68;
+                const btnGrad = ctx.createLinearGradient(0, btnY, 0, btnY + btnH);
+                btnGrad.addColorStop(0, '#4d96ff');
+                btnGrad.addColorStop(1, '#2255cc');
+                ctx.fillStyle = btnGrad;
+                ctx.beginPath();
+                ctx.roundRect(btnX, btnY, btnW, btnH, btnH / 2);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.font = `bold ${Math.floor(w*0.038)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.fillText('🔄 TRY AGAIN', w / 2, btnY + btnH * 0.65);
+
+                const pulse = 1 + Math.sin(Date.now() * 0.005) * 0.05;
+                ctx.strokeStyle = `rgba(255,255,255,${0.4+Math.sin(Date.now()*0.005)*0.3})`;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.roundRect(btnX - 4, btnY - 4, btnW + 8, btnH + 8, btnH / 2 + 2);
+                ctx.stroke();
+            }
+
+            // Main game loop
+            function update(delta) {
+                const dt = Math.min(delta, 0.1); // Cap delta
+
+                if (gameState === STATE.PLAYING) {
+                    gameTime += dt;
+                    // Increase difficulty
+                    difficulty = 1 + Math.floor(gameTime / 18);
+                    if (difficulty > 20) difficulty = 20;
+
+                    // Combo timer
+                    if (comboTimer > 0) {
+                        comboTimer -= dt;
+                        if (comboTimer <= 0) {
+                            comboCount = 0;
+                            comboTimer = 0;
+                        }
+                    }
+
+                    // Spawn timer
+                    spawnTimer -= dt;
+                    const spawnInterval = Math.max(0.35, baseSpawnInterval - difficulty * 0.04);
+                    if (spawnTimer <= 0) {
+                        spawnTimer = spawnInterval + (Math.random() - 0.5) * 0.4;
+                        spawnRandomCharacter();
+                    }
+
+                    // Update jolly characters
+                    for (let i = jollyCharacters.length - 1; i >= 0; i--) {
+                        const char = jollyCharacters[i];
+                        char.timer += dt;
+
+                        if (char.state === 'rising') {
+                            char.y -= char.riseSpeed * char.radius * 8;
+                            if (char.y <= char.targetY) {
+                                char.y = char.targetY;
+                                char.state = 'idle';
+                                char.timer = 0;
+                                char.bounceVel = -char.radius * 0.3;
+                            }
+                        } else if (char.state === 'idle') {
+                            // Bounce animation
+                            char.bounceVel += 0.5 * char.radius * 8 * dt;
+                            char.bounceOffset += char.bounceVel * dt;
+                            if (char.bounceOffset > 0) {
+                                char.bounceOffset = 0;
+                                char.bounceVel *= -0.5;
+                                if (Math.abs(char.bounceVel) < 0.3) char.bounceVel = 0;
+                            }
+                            // Idle timer
+                            if (char.timer > char.idleTime) {
+                                char.state = 'falling';
+                                char.timer = 0;
+                            }
+                            // Eye blink
+                            char.eyeBlinkTimer -= dt;
+                            if (char.eyeBlinkTimer <= 0) {
+                                char.eyeBlinkState = !char.eyeBlinkState;
+                                char.eyeBlinkTimer = char.eyeBlinkState ? 0.1 : 2 + Math.random() * 3;
+                            }
+                        } else if (char.state === 'falling') {
+                            char.y += char.fallSpeed * char.radius * 8;
+                            char.bounceOffset *= 0.85;
+                            if (char.y > holes[char.holeIndex].y + char.radius * 1.8) {
+                                // Missed!
+                                missCharacter(char);
+                                jollyCharacters.splice(i, 1);
+                                continue;
+                            }
+                        } else if (char.state === 'smashed') {
+                            char.squish += (1 - char.squish) * 0.3;
+                            char.bounceOffset *= 0.8;
+                            char.timer += dt;
+                            if (char.timer > 0.35) {
+                                const hole = holes[char.holeIndex];
+                                if (hole) hole.occupied = false;
+                                jollyCharacters.splice(i, 1);
+                                continue;
+                            }
+                        }
+                    }
+
+                    // Update hole cooldowns
+                    holes.forEach(h => {
+                        if (h.cooldown > 0) h.cooldown -= dt;
+                    });
+                }
+
+                // Update particles
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.vy += 8 * dt; // gravity
+                    p.life -= dt;
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+
+                // Update floating texts
+                for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                    floatingTexts[i].life -= dt;
+                    if (floatingTexts[i].life <= 0) floatingTexts.splice(i, 1);
+                }
+
+                // Update hammer
+                if (hammerSmashTimer > 0) {
+                    hammerSmashTimer -= dt;
+                    if (hammerSmashTimer <= 0) {
+                        hammerSmashing = false;
+                        hammerAngle = -25;
+                    }
+                }
+
+                // Shake decay
+                if (shakeAmount > 0) {
+                    shakeAmount *= Math.pow(0.05, dt);
+                    if (shakeAmount < 0.1) shakeAmount = 0;
+                }
+            }
+
+            function draw() {
+                const w = canvas.width;
+                const h = canvas.height;
+                ctx.clearRect(0, 0, w, h);
+
+                // Apply shake
+                let shakeX = 0;
+                let shakeY = 0;
+                if (shakeAmount > 0.1) {
+                    shakeX = (Math.random() - 0.5) * shakeAmount * 2;
+                    shakeY = (Math.random() - 0.5) * shakeAmount * 2;
+                }
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                drawBackground();
+
+                // Draw holes
+                holes.forEach(hole => drawHole(hole));
+
+                // Draw jolly characters (behind holes partially)
+                jollyCharacters.forEach(char => drawJollyCharacter(char));
+
+                ctx.restore();
+
+                // Draw particles (not affected by shake much)
+                drawParticles();
+                drawUI();
+
+                // Draw hammer (not affected by shake)
+                drawHammer();
+
+                // Overlay screens
+                if (gameState === STATE.READY) {
+                    drawReadyScreen();
+                } else if (gameState === STATE.GAMEOVER) {
+                    drawGameOverScreen();
+                }
+            }
+
+            let lastTime = performance.now();
+
+            function gameLoop(timestamp) {
+                const delta = (timestamp - lastTime) / 1000;
+                lastTime = timestamp;
+
+                update(delta);
+                draw();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // Initialize
+            updateHolePositions();
+            spawnTimer = baseSpawnInterval;
+            lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+
+            console.log('🦊 Jolly Smash - Loss Is The Skins! Ready to play!');
+            console.log('   Smash the jolly creatures, keep your skins, build combos!');
+        })();
+    </script>
+</body>
+</html>
