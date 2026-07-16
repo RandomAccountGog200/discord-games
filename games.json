@@ -205,5 +205,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T04:45:04.544Z",
     "updatedAt": "2026-07-16T04:45:04.544Z"
+  },
+  {
+    "slug": "stealth-heist-nightfall",
+    "title": "🔷 Stealth Heist: Nightfall",
+    "description": "steals and",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T04:45:27.357Z",
+    "updatedAt": "2026-07-16T04:45:27.357Z"
   }
 ]
