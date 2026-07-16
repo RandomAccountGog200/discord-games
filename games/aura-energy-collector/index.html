@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>AURA - Energy Collector</title>
+    <style>
+        :root {
+            --bg: #0a0a14;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Segoe UI', 'Georgia', serif;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: none;
+            cursor: none;
+        }
+
+        canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        #ui-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            align-items: center;
+            z-index: 10;
+        }
+
+        #score-display {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: clamp(1.2rem, 3vw, 1.8rem);
+            color: #ffe8c0;
+            text-shadow: 0 0 20px #ffaa44, 0 0 40px #ff8844, 0 0 80px #ff6622;
+            letter-spacing: 0.1em;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            text-align: center;
+        }
+
+        #message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: clamp(1rem, 2.5vw, 1.5rem);
+            color: #e0d0ff;
+            text-shadow: 0 0 15px #aa88ff, 0 0 30px #8866dd;
+            text-align: center;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+            letter-spacing: 0.05em;
+            line-height: 1.6;
+        }
+
+        #message.visible {
+            opacity: 1;
+        }
+
+        #restart-btn {
+            position: absolute;
+            bottom: 15%;
+            left: 50%;
+            transform: translateX(-50%);
+            pointer-events: auto;
+            padding: 14px 36px;
+            font-size: clamp(1rem, 2vw, 1.3rem);
+            background: transparent;
+            color: #ffe8c0;
+            border: 2px solid #ffaa44;
+            border-radius: 50px;
+            cursor: pointer;
+            letter-spacing: 0.15em;
+            font-weight: bold;
+            text-shadow: 0 0 10px #ffaa44;
+            box-shadow: 0 0 20px rgba(255, 150, 40, 0.3), inset 0 0 20px rgba(255, 150, 40, 0.1);
+            transition: all 0.3s ease;
+            opacity: 0;
+            pointer-events: none;
+            font-family: inherit;
+        }
+
+        #restart-btn.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        #restart-btn:hover {
+            background: rgba(255, 150, 40, 0.15);
+            box-shadow: 0 0 35px rgba(255, 150, 40, 0.6), 0 0 60px rgba(255, 120, 30, 0.3), inset 0 0 30px rgba(255, 150, 40, 0.2);
+            border-color: #ffcc77;
+            color: #fff;
+            text-shadow: 0 0 20px #ffcc88, 0 0 40px #ffaa44;
+        }
+
+        #restart-btn:active {
+            transform: translateX(-50%) scale(0.95);
+            box-shadow: 0 0 15px rgba(255, 150, 40, 0.8), 0 0 40px rgba(255, 100, 20, 0.5);
+        }
+
+        @keyframes pulse-text {
+            0%,
+            100% {
+                text-shadow: 0 0 20px #ffaa44, 0 0 40px #ff8844, 0 0 80px #ff6622;
+            }
+            50% {
+                text-shadow: 0 0 30px #ffcc66, 0 0 60px #ffaa44, 0 0 100px #ff8833;
+            }
+        }
+
+        #score-display.pulsing {
+            animation: pulse-text 1.5s ease-in-out infinite;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div id="ui-overlay">
+        <div id="score-display">✦ AURA ✦<br><span style="font-size:0.7em;">Score: 0</span></div>
+        <div id="message" class="visible">Move your cursor<br>to guide the Aura<br><span style="font-size:0.7em;opacity:0.8;">Collect ✦ Light — Avoid ● Shadow</span></div>
+        <button id="restart-btn">RESTART</button>
+    </div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+            const scoreDisplay = document.getElementById('score-display');
+            const messageEl = document.getElementById('message');
+            const restartBtn = document.getElementById('restart-btn');
+
+            let W, H;
+            let mouseX, mouseY;
+            let targetX, targetY;
+            let playerX, playerY;
+            let score = 0;
+            let gameRunning = true;
+            let gameOverTriggered = false;
+            let playerRadius = 18;
+            let auraRadius = 45;
+            let auraPulse = 0;
+            let difficulty = 1;
+            let frameCount = 0;
+            let shakeAmount = 0;
+            let playerHue = 35; // Golden hue
+
+            // Entities
+            let lightParticles = [];
+            let shadowEntities = [];
+            let trailParticles = [];
+            let bgParticles = [];
+            let sparkBursts = [];
+
+            // Audio context
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    try {
+                        audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                    } catch (e) {
+                        audioCtx = null;
+                    }
+                }
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            }
+
+            function playSound(freq, type, duration, vol = 0.08, glideTo = null) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (glideTo) {
+                        osc.frequency.linearRampToValueAtTime(glideTo, t + duration);
+                    }
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) { /* silent */ }
+            }
+
+            function playCollectSound() {
+                playSound(800, 'sine', 0.15, 0.1, 1200);
+                setTimeout(() => playSound(600, 'triangle', 0.1, 0.08, 900), 60);
+            }
+
+            function playHitSound() {
+                playSound(60, 'sawtooth', 0.3, 0.15, 30);
+                playSound(100, 'square', 0.2, 0.12, 50);
+            }
+
+            function playGameOverSound() {
+                playSound(40, 'sawtooth', 0.5, 0.2, 20);
+                setTimeout(() => playSound(30, 'triangle', 0.6, 0.3, 15), 200);
+            }
+
+            function playSpawnSound() {
+                playSound(300, 'sine', 0.08, 0.05, 500);
+            }
+
+            function resize() {
+                W = canvas.width = window.innerWidth;
+                H = canvas.height = window.innerHeight;
+                if (!playerX) {
+                    playerX = W / 2;
+                    playerY = H / 2;
+                    targetX = playerX;
+                    targetY = playerY;
+                    mouseX = playerX;
+                    mouseY = playerY;
+                }
+            }
+
+            function resetGame() {
+                playerX = W / 2;
+                playerY = H / 2;
+                targetX = playerX;
+                targetY = playerY;
+                mouseX = playerX;
+                mouseY = playerY;
+                score = 0;
+                gameRunning = true;
+                gameOverTriggered = false;
+                playerRadius = 18;
+                auraRadius = 45;
+                auraPulse = 0;
+                difficulty = 1;
+                frameCount = 0;
+                shakeAmount = 0;
+                playerHue = 35;
+                lightParticles = [];
+                shadowEntities = [];
+                trailParticles = [];
+                sparkBursts = [];
+                messageEl.classList.add('visible');
+                messageEl.innerHTML =
+                    'Move your cursor<br>to guide the Aura<br><span style="font-size:0.7em;opacity:0.8;">Collect ✦ Light — Avoid ● Shadow</span>';
+                restartBtn.classList.remove('visible');
+                scoreDisplay.classList.remove('pulsing');
+                scoreDisplay.innerHTML = '✦ AURA ✦<br><span style="font-size:0.7em;">Score: 0</span>';
+                spawnInitialParticles();
+            }
+
+            function spawnInitialParticles() {
+                lightParticles = [];
+                shadowEntities = [];
+                bgParticles = [];
+                for (let i = 0; i < 40; i++) {
+                    bgParticles.push({
+                        x: Math.random() * W,
+                        y: Math.random() * H,
+                        radius: Math.random() * 1.5 + 0.5,
+                        speedX: (Math.random() - 0.5) * 0.3,
+                        speedY: (Math.random() - 0.5) * 0.3,
+                        alpha: Math.random() * 0.5 + 0.2,
+                        twinkle: Math.random() * Math.PI * 2,
+                        twinkleSpeed: Math.random() * 0.03 + 0.01,
+                    });
+                }
+                for (let i = 0; i < 8; i++) {
+                    spawnLightParticle(true);
+                }
+                for (let i = 0; i < 3; i++) {
+                    spawnShadowEntity(true);
+                }
+            }
+
+            function spawnLightParticle(initial = false) {
+                const margin = 60;
+                let x, y;
+                if (initial) {
+                    x = Math.random() * (W - margin * 2) + margin;
+                    y = Math.random() * (H - margin * 2) + margin;
+                } else {
+                    const side = Math.floor(Math.random() * 4);
+                    switch (side) {
+                        case 0:
+                            x = Math.random() * W;
+                            y = -margin;
+                            break;
+                        case 1:
+                            x = W + margin;
+                            y = Math.random() * H;
+                            break;
+                        case 2:
+                            x = Math.random() * W;
+                            y = H + margin;
+                            break;
+                        case 3:
+                            x = -margin;
+                            y = Math.random() * H;
+                            break;
+                    }
+                }
+                lightParticles.push({
+                    x,
+                    y,
+                    radius: Math.random() * 6 + 5,
+                    glowRadius: Math.random() * 14 + 10,
+                    hue: Math.random() * 40 + 30, // Golden-amber range
+                    pulse: Math.random() * Math.PI * 2,
+                    pulseSpeed: Math.random() * 0.06 + 0.03,
+                    wobbleAmp: Math.random() * 1.5 + 0.5,
+                    wobbleSpeed: Math.random() * 0.02 + 0.01,
+                    wobbleOffset: Math.random() * Math.PI * 2,
+                    life: 1,
+                });
+            }
+
+            function spawnShadowEntity(initial = false) {
+                const margin = 80;
+                let x, y;
+                if (initial) {
+                    // Spawn away from player
+                    do {
+                        x = Math.random() * (W - margin * 2) + margin;
+                        y = Math.random() * (H - margin * 2) + margin;
+                    } while (Math.hypot(x - playerX, y - playerY) < 200);
+                } else {
+                    const side = Math.floor(Math.random() * 4);
+                    switch (side) {
+                        case 0:
+                            x = Math.random() * W;
+                            y = -margin;
+                            break;
+                        case 1:
+                            x = W + margin;
+                            y = Math.random() * H;
+                            break;
+                        case 2:
+                            x = Math.random() * W;
+                            y = H + margin;
+                            break;
+                        case 3:
+                            x = -margin;
+                            y = Math.random() * H;
+                            break;
+                    }
+                }
+                const speed = 0.8 + difficulty * 0.4 + Math.random() * 1.2;
+                shadowEntities.push({
+                    x,
+                    y,
+                    radius: Math.random() * 10 + 10,
+                    speed,
+                    hue: 260 + Math.random() * 40, // Purple-dark blue
+                    pulse: Math.random() * Math.PI * 2,
+                    pulseSpeed: Math.random() * 0.05 + 0.02,
+                    tentacleOffset: Math.random() * Math.PI * 2,
+                });
+            }
+
+            function createSparkBurst(x, y, count, hue, spread, life) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * spread;
+                    sparkBursts.push({
+                        x,
+                        y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        life,
+                        maxLife: life,
+                        hue,
+                        radius: Math.random() * 3 + 1,
+                    });
+                }
+            }
+
+            function gameOver() {
+                if (gameOverTriggered) return;
+                gameOverTriggered = true;
+                gameRunning = false;
+                shakeAmount = 30;
+                playGameOverSound();
+                createSparkBurst(playerX, playerY, 80, playerHue, 8, 1.5);
+                createSparkBurst(playerX, playerY, 40, 280, 6, 1.2);
+                messageEl.classList.add('visible');
+                messageEl.innerHTML =
+                    'The Aura fades...<br><span style="font-size:1.3em;color:#ffcc88;">Score: ' + score +
+                    '</span><br><span style="font-size:0.7em;opacity:0.7;">Shadows consumed the light</span>';
+                restartBtn.classList.add('visible');
+                scoreDisplay.classList.add('pulsing');
+                scoreDisplay.innerHTML = '✦ AURA ✦<br><span style="font-size:0.7em;">Score: ' + score + '</span>';
+            }
+
+            function collectLight(index) {
+                const lp = lightParticles[index];
+                if (!lp || lp.life <= 0) return;
+                lp.life = 0;
+                score++;
+                playerHue = (playerHue + 3) % 60 + 25;
+                auraRadius = Math.min(80, 45 + score * 1.5);
+                playerRadius = Math.min(28, 18 + score * 0.4);
+                difficulty = 1 + Math.floor(score / 10) * 0.5;
+                createSparkBurst(lp.x, lp.y, 20, lp.hue, 4, 0.8);
+                playCollectSound();
+                scoreDisplay.innerHTML = '✦ AURA ✦<br><span style="font-size:0.7em;">Score: ' + score + '</span>';
+                if (score > 0 && score % 15 === 0 && shadowEntities.length < 12) {
+                    spawnShadowEntity();
+                    playSpawnSound();
+                }
+                if (messageEl.classList.contains('visible') && score >= 3) {
+                    messageEl.classList.remove('visible');
+                }
+            }
+
+            function update(dt) {
+                if (!gameRunning && shakeAmount < 0.3 && sparkBursts.length === 0) return;
+
+                frameCount++;
+                dt = Math.min(dt, 0.1); // Cap delta time
+
+                // Smooth player movement
+                const smoothFactor = 0.12;
+                targetX += (mouseX - targetX) * smoothFactor * (dt * 60);
+                targetY += (mouseY - targetY) * smoothFactor * (dt * 60);
+                playerX += (targetX - playerX) * smoothFactor * 1.5 * (dt * 60);
+                playerY += (targetY - playerY) * smoothFactor * 1.5 * (dt * 60);
+
+                // Clamp player
+                playerX = Math.max(playerRadius, Math.min(W - playerRadius, playerX));
+                playerY = Math.max(playerRadius, Math.min(H - playerRadius, playerY));
+
+                // Aura pulse
+                auraPulse += 0.04 * (dt * 60);
+                const currentAuraRadius = auraRadius + Math.sin(auraPulse) * 8;
+
+                // Trail particles
+                if (gameRunning && frameCount % 2 === 0) {
+                    trailParticles.push({
+                        x: playerX + (Math.random() - 0.5) * 8,
+                        y: playerY + (Math.random() - 0.5) * 8,
+                        life: 0.6,
+                        maxLife: 0.6,
+                        radius: Math.random() * 3 + 1.5,
+                        hue: playerHue + Math.random() * 20 - 10,
+                    });
+                }
+
+                // Update trail particles
+                for (let i = trailParticles.length - 1; i >= 0; i--) {
+                    trailParticles[i].life -= dt;
+                    if (trailParticles[i].life <= 0) trailParticles.splice(i, 1);
+                }
+
+                // Update spark bursts
+                for (let i = sparkBursts.length - 1; i >= 0; i--) {
+                    const s = sparkBursts[i];
+                    s.x += s.vx * dt * 60;
+                    s.y += s.vy * dt * 60;
+                    s.life -= dt;
+                    s.vx *= 0.96;
+                    s.vy *= 0.96;
+                    if (s.life <= 0) sparkBursts.splice(i, 1);
+                }
+
+                // Update background particles
+                for (let bp of bgParticles) {
+                    bp.x += bp.speedX * dt * 60;
+                    bp.y += bp.speedY * dt * 60;
+                    bp.twinkle += bp.twinkleSpeed;
+                    if (bp.x < -10) bp.x = W + 10;
+                    if (bp.x > W + 10) bp.x = -10;
+                    if (bp.y < -10) bp.y = H + 10;
+                    if (bp.y > H + 10) bp.y = -10;
+                }
+
+                if (!gameRunning) {
+                    shakeAmount *= 0.9;
+                    return;
+                }
+
+                // Update light particles
+                for (let i = lightParticles.length - 1; i >= 0; i--) {
+                    const lp = lightParticles[i];
+                    if (lp.life <= 0) {
+                        lightParticles.splice(i, 1);
+                        continue;
+                    }
+                    lp.pulse += lp.pulseSpeed;
+                    lp.wobbleOffset += lp.wobbleSpeed;
+                    const wobX = Math.cos(lp.wobbleOffset) * lp.wobbleAmp;
+                    const wobY = Math.sin(lp.wobbleOffset * 1.3) * lp.wobbleAmp;
+                    const effX = lp.x + wobX;
+                    const effY = lp.y + wobY;
+                    const dist = Math.hypot(playerX - effX, playerY - effY);
+                    const collectDist = currentAuraRadius + lp.glowRadius * 0.7;
+                    if (dist < collectDist) {
+                        collectLight(i);
+                    }
+                    // Keep in bounds
+                    if (lp.x < -40 || lp.x > W + 40 || lp.y < -40 || lp.y > H + 40) {
+                        lp.life = 0;
+                        lightParticles.splice(i, 1);
+                    }
+                }
+
+                // Update shadow entities
+                for (let i = shadowEntities.length - 1; i >= 0; i--) {
+                    const se = shadowEntities[i];
+                    se.pulse += se.pulseSpeed;
+                    const dx = playerX - se.x;
+                    const dy = playerY - se.y;
+                    const dist = Math.hypot(dx, dy);
+                    if (dist > 0.5) {
+                        const nx = dx / dist;
+                        const ny = dy / dist;
+                        se.x += nx * se.speed * dt * 60;
+                        se.y += ny * se.speed * dt * 60;
+                    }
+                    // Check collision with player
+                    const collisionDist = playerRadius + se.radius * 0.75;
+                    if (dist < collisionDist && gameRunning) {
+                        gameOver();
+                    }
+                    // Remove if far offscreen
+                    if (se.x < -100 || se.x > W + 100 || se.y < -100 || se.y > H + 100) {
+                        shadowEntities.splice(i, 1);
+                    }
+                }
+
+                // Spawn new light particles periodically
+                if (frameCount % Math.max(20, 60 - difficulty * 8) === 0 && lightParticles.length < 15) {
+                    spawnLightParticle();
+                }
+
+                // Spawn new shadow entities periodically
+                if (frameCount % Math.max(180, 400 - difficulty * 30) === 0 && shadowEntities.length < 6 + difficulty *
+                    2) {
+                    spawnShadowEntity();
+                    playSpawnSound();
+                }
+
+                // Ensure minimum light particles
+                if (lightParticles.length < 5 + Math.floor(difficulty)) {
+                    spawnLightParticle();
+                }
+                if (shadowEntities.length < 2 + Math.floor(difficulty * 0.7)) {
+                    spawnShadowEntity();
+                }
+            }
+
+            function drawGlow(x, y, radius, color1, color2, alpha) {
+                const gradient = ctx.createRadialGradient(x, y, radius * 0.1, x, y, radius);
+                gradient.addColorStop(0, color1);
+                gradient.addColorStop(0.5, color2);
+                gradient.addColorStop(1, 'transparent');
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(x, y, radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+
+            function draw() {
+                ctx.clearRect(0, 0, W, H);
+
+                // Screen shake
+                let sx = 0,
+                    sy = 0;
+                if (shakeAmount > 0.1) {
+                    sx = (Math.random() - 0.5) * shakeAmount * 2;
+                    sy = (Math.random() - 0.5) * shakeAmount * 2;
+                }
+                ctx.save();
+                ctx.translate(sx, sy);
+
+                // Background gradient
+                const bgGrad = ctx.createRadialGradient(W / 2, H / 2, W * 0.1, W / 2, H / 2, W * 0.8);
+                bgGrad.addColorStop(0, '#1a1a3a');
+                bgGrad.addColorStop(0.5, '#0d0d20');
+                bgGrad.addColorStop(1, '#050510');
+                ctx.fillStyle = bgGrad;
+                ctx.fillRect(-20, -20, W + 40, H + 40);
+
+                // Background particles
+                for (let bp of bgParticles) {
+                    const alpha = bp.alpha * (0.7 + Math.sin(bp.twinkle) * 0.3);
+                    ctx.fillStyle = `rgba(180,170,220,${alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(bp.x, bp.y, bp.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Trail particles
+                for (let tp of trailParticles) {
+                    const alpha = (tp.life / tp.maxLife) * 0.7;
+                    drawGlow(tp.x, tp.y, tp.radius * 3, `hsla(${tp.hue},80%,70%,${alpha})`,
+                        `hsla(${tp.hue},90%,50%,${alpha * 0.5})`, alpha);
+                }
+
+                // Light particles
+                for (let lp of lightParticles) {
+                    if (lp.life <= 0) continue;
+                    const wobX = Math.cos(lp.wobbleOffset) * lp.wobbleAmp;
+                    const wobY = Math.sin(lp.wobbleOffset * 1.3) * lp.wobbleAmp;
+                    const x = lp.x + wobX;
+                    const y = lp.y + wobY;
+                    const pulseScale = 1 + Math.sin(lp.pulse) * 0.25;
+                    const glowR = lp.glowRadius * pulseScale;
+
+                    // Outer glow
+                    drawGlow(x, y, glowR * 1.6, `hsla(${lp.hue},90%,75%,0.35)`, `hsla(${lp.hue},100%,60%,0.15)`, 0.8);
+                    // Inner glow
+                    drawGlow(x, y, glowR, `hsla(${lp.hue},100%,85%,0.7)`, `hsla(${lp.hue},100%,70%,0.3)`, 0.9);
+                    // Core
+                    const coreGrad = ctx.createRadialGradient(x, y, 0, x, y, lp.radius * pulseScale);
+                    coreGrad.addColorStop(0, `hsla(${lp.hue},100%,95%,1)`);
+                    coreGrad.addColorStop(0.6, `hsla(${lp.hue},100%,70%,0.8)`);
+                    coreGrad.addColorStop(1, `hsla(${lp.hue},100%,50%,0)`);
+                    ctx.fillStyle = coreGrad;
+                    ctx.beginPath();
+                    ctx.arc(x, y, lp.radius * pulseScale, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Sparkle
+                    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+                    ctx.beginPath();
+                    ctx.arc(x, y, lp.radius * 0.3, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Shadow entities
+                for (let se of shadowEntities) {
+                    const pulseScale = 1 + Math.sin(se.pulse) * 0.2;
+                    const r = se.radius * pulseScale;
+
+                    // Dark aura
+                    drawGlow(se.x, se.y, r * 2.5, `hsla(${se.hue},70%,15%,0.5)`, `hsla(${se.hue},80%,5%,0.2)`, 0.8);
+                    // Body
+                    const bodyGrad = ctx.createRadialGradient(se.x, se.y, r * 0.2, se.x, se.y, r);
+                    bodyGrad.addColorStop(0, `hsla(${se.hue},60%,25%,0.9)`);
+                    bodyGrad.addColorStop(0.7, `hsla(${se.hue},70%,10%,0.7)`);
+                    bodyGrad.addColorStop(1, `hsla(${se.hue},80%,3%,0)`);
+                    ctx.fillStyle = bodyGrad;
+                    ctx.beginPath();
+                    ctx.arc(se.x, se.y, r, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Tentacle-like wisps
+                    for (let t = 0; t < 5; t++) {
+                        const angle = se.tentacleOffset + (t / 5) * Math.PI * 2 + Math.sin(se.pulse * 1.5 + t) * 0.4;
+                        const dist = r * (1.3 + Math.sin(se.pulse * 2 + t) * 0.5);
+                        const tx = se.x + Math.cos(angle) * dist;
+                        const ty = se.y + Math.sin(angle) * dist;
+                        drawGlow(tx, ty, r * 0.5, `hsla(${se.hue},60%,15%,0.4)`, `hsla(${se.hue},70%,5%,0.1)`, 0.6);
+                    }
+
+                    // Red eye-like glint
+                    ctx.fillStyle = 'rgba(255,60,40,0.7)';
+                    ctx.beginPath();
+                    ctx.arc(se.x, se.y, r * 0.25, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = 'rgba(255,200,180,0.9)';
+                    ctx.beginPath();
+                    ctx.arc(se.x, se.y, r * 0.1, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Player Aura (outer glow)
+                const currentAuraR = auraRadius + Math.sin(auraPulse) * 8;
+                const auraAlpha = gameRunning ? 0.7 : 0.4;
+                drawGlow(playerX, playerY, currentAuraR * 1.8,
+                    `hsla(${playerHue},90%,70%,${auraAlpha * 0.3})`,
+                    `hsla(${playerHue},100%,40%,${auraAlpha * 0.1})`, auraAlpha);
+                drawGlow(playerX, playerY, currentAuraR,
+                    `hsla(${playerHue},100%,80%,${auraAlpha * 0.5})`,
+                    `hsla(${playerHue},100%,55%,${auraAlpha * 0.25})`, auraAlpha);
+                drawGlow(playerX, playerY, currentAuraR * 0.55,
+                    `hsla(${playerHue},100%,90%,0.8)`,
+                    `hsla(${playerHue},100%,65%,0.4)`, 0.9);
+
+                // Player core
+                const coreGrad = ctx.createRadialGradient(playerX, playerY, playerRadius * 0.15, playerX, playerY,
+                    playerRadius);
+                coreGrad.addColorStop(0, `hsla(${playerHue},100%,97%,1)`);
+                coreGrad.addColorStop(0.3, `hsla(${playerHue},100%,80%,0.9)`);
+                coreGrad.addColorStop(0.7, `hsla(${playerHue},100%,50%,0.5)`);
+                coreGrad.addColorStop(1, `hsla(${playerHue},100%,30%,0)`);
+                ctx.fillStyle = coreGrad;
+                ctx.beginPath();
+                ctx.arc(playerX, playerY, playerRadius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Bright center spark
+                ctx.fillStyle = 'rgba(255,255,255,0.95)';
+                ctx.beginPath();
+                ctx.arc(playerX, playerY, playerRadius * 0.35, 0, Math.PI * 2);
+                ctx.fill();
+                const innerGlow = ctx.createRadialGradient(playerX, playerY, 0, playerX, playerY, playerRadius * 0.7);
+                innerGlow.addColorStop(0, 'rgba(255,255,255,0.8)');
+                innerGlow.addColorStop(1, 'rgba(255,255,200,0)');
+                ctx.fillStyle = innerGlow;
+                ctx.beginPath();
+                ctx.arc(playerX, playerY, playerRadius * 0.7, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Spark bursts
+                for (let s of sparkBursts) {
+                    const alpha = s.life / s.maxLife;
+                    drawGlow(s.x, s.y, s.radius * 2, `hsla(${s.hue},100%,80%,${alpha})`,
+                        `hsla(${s.hue},100%,50%,${alpha * 0.5})`, alpha);
+                    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(s.x, s.y, s.radius * 0.6, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                ctx.restore();
+
+                // Vignette overlay
+                const vignette = ctx.createRadialGradient(W / 2, H / 2, W * 0.35, W / 2, H / 2, W * 0.75);
+                vignette.addColorStop(0, 'transparent');
+                vignette.addColorStop(1, 'rgba(0,0,0,0.55)');
+                ctx.fillStyle = vignette;
+                ctx.fillRect(0, 0, W, H);
+            }
+
+            function gameLoop(timestamp) {
+                const dt = Math.min((timestamp - lastTimestamp) / 1000, 0.1);
+                lastTimestamp = timestamp;
+                update(dt);
+                draw();
+                requestAnimationFrame(gameLoop);
+            }
+
+            let lastTimestamp = performance.now();
+
+            // Event listeners
+            function handleMove(clientX, clientY) {
+                initAudio();
+                mouseX = clientX;
+                mouseY = clientY;
+                if (!gameRunning && !gameOverTriggered) {
+                    // If somehow not running but not game over, restart
+                }
+            }
+
+            canvas.addEventListener('mousemove', (e) => {
+                e.preventDefault();
+                handleMove(e.clientX, e.clientY);
+            });
+
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                const touch = e.touches[0];
+                if (touch) handleMove(touch.clientX, touch.clientY);
+            }, { passive: false });
+
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                initAudio();
+                const touch = e.touches[0];
+                if (touch) {
+                    mouseX = touch.clientX;
+                    mouseY = touch.clientY;
+                    targetX = mouseX;
+                    targetY = mouseY;
+                    playerX = targetX;
+                    playerY = targetY;
+                }
+                if (!gameRunning && gameOverTriggered) {
+                    resetGame();
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('click', (e) => {
+                initAudio();
+                if (!gameRunning && gameOverTriggered) {
+                    resetGame();
+                }
+            });
+
+            restartBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                initAudio();
+                resetGame();
+            });
+
+            window.addEventListener('resize', resize);
+
+            // Prevent scrolling on mobile
+            document.addEventListener('touchmove', function(e) {
+                if (e.target.tagName !== 'BUTTON') {
+                    e.preventDefault();
+                }
+            }, { passive: false });
+
+            // Initialize
+            resize();
+            resetGame();
+            mouseX = playerX;
+            mouseY = playerY;
+            targetX = playerX;
+            targetY = playerY;
+            lastTimestamp = performance.now();
+            requestAnimationFrame(gameLoop);
+
+            console.log('✨ AURA - Energy Collector ✨');
+            console.log('Guide the glowing Aura with your cursor or touch.');
+            console.log('Collect golden Light particles. Avoid purple Shadow entities.');
+            console.log('Your aura grows with each collection!');
+        })();
+    </script>
+</body>
+</html>
