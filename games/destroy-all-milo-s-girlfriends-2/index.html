@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>💔 Destroy All Milo's Girlfriends!</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: linear-gradient(135deg, #1a0a2e, #3d1045, #1a0a2e);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        #game-container {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            height: 100%;
+            max-width: 500px;
+            max-height: 750px;
+        }
+        canvas {
+            display: block;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 80px rgba(255, 80, 130, 0.3);
+            max-width: 100%;
+            max-height: 100%;
+            cursor: pointer;
+            image-rendering: auto;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+    </div>
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            // Internal resolution
+            const W = 480;
+            const H = 700;
+            canvas.width = W;
+            canvas.height = H;
+
+            // Responsive scaling
+            function resizeCanvas() {
+                const container = document.getElementById('game-container');
+                const maxW = Math.min(container.clientWidth, 500);
+                const maxH = Math.min(container.clientHeight, 750);
+                const scale = Math.min(maxW / W, maxH / H);
+                canvas.style.width = (W * scale) + 'px';
+                canvas.style.height = (H * scale) + 'px';
+            }
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+
+            // Audio system
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            }
+
+            function playSound(freq, type, duration, vol = 0.15, glideTo = null) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (glideTo) osc.frequency.linearRampToValueAtTime(glideTo, t + duration);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) { /* ignore */ }
+            }
+
+            function sfxPop() {
+                playSound(600, 'sine', 0.1, 0.2, 1200);
+                playSound(800, 'sine', 0.08, 0.12, 200);
+            }
+
+            function sfxBoing() {
+                playSound(200, 'triangle', 0.15, 0.25, 500);
+            }
+
+            function sfxNegative() {
+                playSound(120, 'sawtooth', 0.1, 0.35, 60);
+            }
+
+            function sfxCombo(level) {
+                const base = 400 + level * 150;
+                playSound(base, 'sine', 0.12, 0.15, base * 1.5);
+                setTimeout(() => playSound(base * 1.3, 'sine', 0.1, 0.12, base * 1.8), 80);
+            }
+
+            function sfxGameOver() {
+                playSound(300, 'triangle', 0.18, 0.3, 100);
+                setTimeout(() => playSound(200, 'triangle', 0.15, 0.4, 60), 200);
+            }
+
+            // Vibration for mobile
+            function vibrate(ms) {
+                if (navigator.vibrate) {
+                    try { navigator.vibrate(ms); } catch (e) { /* ignore */ }
+                }
+            }
+
+            // Game state
+            const STATE = { WAITING: 'waiting', PLAYING: 'playing', GAMEOVER: 'gameover' };
+            let gameState = STATE.WAITING;
+            let score = 0;
+            let combo = 0;
+            let maxCombo = 0;
+            let timeLeft = 60;
+            let gameTimer = null;
+            let lastHitTime = 0;
+            const COMBO_WINDOW = 1200; // ms
+
+            // Holes
+            const holes = [];
+            const HOLE_ROWS = 3;
+            const HOLE_COLS = 3;
+            const GRID_TOP = 150;
+            const GRID_LEFT = 55;
+            const CELL_W = 130;
+            const CELL_H = 155;
+            const HOLE_RADIUS_X = 38;
+            const HOLE_RADIUS_Y = 14;
+            const GROUND_Y_OFFSET = 8;
+
+            for (let row = 0; row < HOLE_ROWS; row++) {
+                for (let col = 0; col < HOLE_COLS; col++) {
+                    holes.push({
+                        x: GRID_LEFT + col * CELL_W + CELL_W / 2,
+                        y: GRID_TOP + row * CELL_H + CELL_H / 2 - 10,
+                        state: 'empty',
+                        gfType: 0,
+                        emergePercent: 0,
+                        stateTimer: Math.random() * 1.5 + 0.3,
+                        hitAnimTimer: 0,
+                        row: row,
+                        col: col,
+                    });
+                }
+            }
+
+            // Particles
+            let particles = [];
+            let floatingTexts = [];
+
+            function spawnParticles(x, y, color, count = 18, type = 'circle') {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * 5 + 2;
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - Math.random() * 4 - 1,
+                        life: 0.5 + Math.random() * 0.7,
+                        maxLife: 0.5 + Math.random() * 0.7,
+                        color: color,
+                        size: Math.random() * 5 + 2,
+                        type: type,
+                        rotation: Math.random() * Math.PI * 2,
+                        rotSpeed: (Math.random() - 0.5) * 10,
+                    });
+                }
+            }
+
+            function spawnHeartParticles(x, y) {
+                const colors = ['#ff4477', '#ff6699', '#ff88aa', '#ff3366', '#ffccdd', '#ffffff'];
+                for (let i = 0; i < 22; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * 6 + 2;
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - Math.random() * 5 - 2,
+                        life: 0.6 + Math.random() * 0.8,
+                        maxLife: 0.6 + Math.random() * 0.8,
+                        color: colors[Math.floor(Math.random() * colors.length)],
+                        size: Math.random() * 7 + 3,
+                        type: 'heart',
+                        rotation: Math.random() * Math.PI * 2,
+                        rotSpeed: (Math.random() - 0.5) * 8,
+                    });
+                }
+                // Broken heart halves
+                for (let side = 0; side < 2; side++) {
+                    const sx = side === 0 ? -3 : 3;
+                    particles.push({
+                        x: x + sx,
+                        y: y,
+                        vx: (side === 0 ? -3 : 3) + (Math.random() - 0.5) * 2,
+                        vy: -4 - Math.random() * 3,
+                        life: 0.8,
+                        maxLife: 0.8,
+                        color: '#ff2255',
+                        size: 10 + Math.random() * 6,
+                        type: 'brokenHeart',
+                        rotation: side === 0 ? -0.3 : 0.3,
+                        rotSpeed: (side === 0 ? -2 : 2),
+                    });
+                }
+            }
+
+            function spawnNegativeParticles(x, y) {
+                for (let i = 0; i < 15; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * 4 + 1;
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - 2,
+                        life: 0.4 + Math.random() * 0.5,
+                        maxLife: 0.4 + Math.random() * 0.5,
+                        color: '#444444',
+                        size: Math.random() * 4 + 1,
+                        type: 'cross',
+                        rotation: Math.random() * Math.PI * 2,
+                        rotSpeed: (Math.random() - 0.5) * 6,
+                    });
+                }
+            }
+
+            function addFloatingText(x, y, text, color = '#ffffff') {
+                floatingTexts.push({
+                    x: x,
+                    y: y,
+                    text: text,
+                    life: 0.9,
+                    maxLife: 0.9,
+                    vy: -2.5,
+                    color: color,
+                });
+            }
+
+            // Drawing functions
+            function drawSky(ctx) {
+                const skyGrad = ctx.createLinearGradient(0, 0, 0, H);
+                skyGrad.addColorStop(0, '#87CEEB');
+                skyGrad.addColorStop(0.35, '#f0c6d8');
+                skyGrad.addColorStop(0.7, '#e8a0bf');
+                skyGrad.addColorStop(1, '#d4789f');
+                ctx.fillStyle = skyGrad;
+                ctx.fillRect(0, 0, W, H);
+
+                // Clouds
+                ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                drawCloud(ctx, 50, 40, 1);
+                drawCloud(ctx, 350, 70, 0.7);
+                drawCloud(ctx, 180, 25, 0.9);
+                drawCloud(ctx, 420, 100, 0.55);
+            }
+
+            function drawCloud(ctx, x, y, scale) {
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.scale(scale, scale);
+                ctx.beginPath();
+                ctx.arc(0, 0, 28, 0, Math.PI * 2);
+                ctx.arc(30, -10, 22, 0, Math.PI * 2);
+                ctx.arc(55, 2, 25, 0, Math.PI * 2);
+                ctx.arc(25, 10, 20, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            function drawPlatform(ctx) {
+                // Main platform
+                const platTop = GRID_TOP - 15;
+                const platBottom = GRID_TOP + HOLE_ROWS * CELL_H + 5;
+                const platLeft = GRID_LEFT - 20;
+                const platRight = GRID_LEFT + HOLE_COLS * CELL_W + 20;
+
+                // Platform shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.beginPath();
+                ctx.roundRect(platLeft + 5, platTop + 5, platRight - platLeft, platBottom - platTop, 25);
+                ctx.fill();
+
+                // Platform body
+                const platGrad = ctx.createLinearGradient(0, platTop, 0, platBottom);
+                platGrad.addColorStop(0, '#8B5E3C');
+                platGrad.addColorStop(0.15, '#A0724A');
+                platGrad.addColorStop(0.5, '#7D5030');
+                platGrad.addColorStop(1, '#5C3A1E');
+                ctx.fillStyle = platGrad;
+                ctx.beginPath();
+                ctx.roundRect(platLeft, platTop, platRight - platLeft, platBottom - platTop, 25);
+                ctx.fill();
+
+                // Platform top surface highlight
+                const surfGrad = ctx.createLinearGradient(0, platTop, 0, platTop + 25);
+                surfGrad.addColorStop(0, 'rgba(180,220,140,0.5)');
+                surfGrad.addColorStop(0.5, 'rgba(140,180,100,0.3)');
+                surfGrad.addColorStop(1, 'rgba(100,140,70,0)');
+                ctx.fillStyle = surfGrad;
+                ctx.beginPath();
+                ctx.roundRect(platLeft + 3, platTop + 2, platRight - platLeft - 6, 28, 20);
+                ctx.fill();
+
+                // Draw holes
+                holes.forEach(hole => {
+                    // Hole shadow/depth
+                    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                    ctx.beginPath();
+                    ctx.ellipse(hole.x, hole.y + GROUND_Y_OFFSET + 3, HOLE_RADIUS_X + 2, HOLE_RADIUS_Y + 2, 0, 0, Math
+                        .PI * 2);
+                    ctx.fill();
+
+                    // Hole interior
+                    const holeGrad = ctx.createRadialGradient(hole.x, hole.y + GROUND_Y_OFFSET - 2, HOLE_RADIUS_X * 0.2,
+                        hole.x, hole.y + GROUND_Y_OFFSET, HOLE_RADIUS_X);
+                    holeGrad.addColorStop(0, '#1a0a00');
+                    holeGrad.addColorStop(0.7, '#2a1505');
+                    holeGrad.addColorStop(1, '#3d2010');
+                    ctx.fillStyle = holeGrad;
+                    ctx.beginPath();
+                    ctx.ellipse(hole.x, hole.y + GROUND_Y_OFFSET, HOLE_RADIUS_X, HOLE_RADIUS_Y, 0, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Hole rim highlight
+                    ctx.strokeStyle = 'rgba(180,140,100,0.4)';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.ellipse(hole.x, hole.y + GROUND_Y_OFFSET, HOLE_RADIUS_X - 1, HOLE_RADIUS_Y - 1, 0, 0, Math.PI *
+                        2);
+                    ctx.stroke();
+                });
+            }
+
+            function drawGirlfriend(ctx, x, y, type, alpha = 1) {
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.translate(x, y);
+
+                const faceRadius = 24;
+
+                // Body/neck
+                ctx.fillStyle = '#f5d5c8';
+                ctx.beginPath();
+                ctx.roundRect(-8, faceRadius - 5, 16, 22, 8);
+                ctx.fill();
+
+                // Dress/top
+                const dressColors = ['#ff6b8a', '#ff8faa', '#ff5078', '#ff4060'];
+                ctx.fillStyle = dressColors[type % dressColors.length];
+                ctx.beginPath();
+                ctx.roundRect(-10, faceRadius + 10, 20, 18, 8);
+                ctx.fill();
+                // Dress flare
+                ctx.beginPath();
+                ctx.moveTo(-10, faceRadius + 18);
+                ctx.lineTo(-16, faceRadius + 30);
+                ctx.lineTo(16, faceRadius + 30);
+                ctx.lineTo(10, faceRadius + 18);
+                ctx.closePath();
+                ctx.fill();
+
+                // Face
+                const faceGrad = ctx.createRadialGradient(-3, -5, faceRadius * 0.1, 0, 0, faceRadius);
+                faceGrad.addColorStop(0, '#ffe8dc');
+                faceGrad.addColorStop(0.7, '#f5c5b8');
+                faceGrad.addColorStop(1, '#e8b0a0');
+                ctx.fillStyle = faceGrad;
+                ctx.beginPath();
+                ctx.arc(0, 0, faceRadius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Hair
+                ctx.fillStyle = ['#ffcc33', '#6b4226', '#e85d30', '#3a3a3a'][type];
+                if (type === 0) {
+                    // Blonde pigtails
+                    ctx.beginPath();
+                    ctx.arc(0, -5, faceRadius + 4, Math.PI, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(-faceRadius - 6, -2, 12, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(faceRadius + 6, -2, 12, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Bangs
+                    ctx.fillStyle = '#ffdd55';
+                    ctx.beginPath();
+                    ctx.ellipse(0, -faceRadius + 3, faceRadius + 2, 10, 0, Math.PI, Math.PI * 2);
+                    ctx.fill();
+                } else if (type === 1) {
+                    // Brunette bob
+                    ctx.beginPath();
+                    ctx.arc(0, -3, faceRadius + 3, Math.PI, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillRect(-faceRadius - 3, -8, faceRadius * 2 + 6, faceRadius + 12);
+                    ctx.fillStyle = '#7d5030';
+                    ctx.beginPath();
+                    ctx.ellipse(0, -faceRadius + 2, faceRadius + 1, 9, 0, Math.PI, Math.PI * 2);
+                    ctx.fill();
+                } else if (type === 2) {
+                    // Redhead long wavy
+                    ctx.beginPath();
+                    ctx.arc(0, -5, faceRadius + 4, Math.PI, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillRect(-faceRadius - 3, -10, faceRadius * 2 + 6, faceRadius + 8);
+                    ctx.fillRect(-faceRadius - 5, faceRadius - 5, 8, 25);
+                    ctx.fillRect(faceRadius - 3, faceRadius - 5, 8, 25);
+                    ctx.fillStyle = '#f07040';
+                    ctx.beginPath();
+                    ctx.ellipse(0, -faceRadius + 2, faceRadius + 1, 9, 0, Math.PI, Math.PI * 2);
+                    ctx.fill();
+                } else if (type === 3) {
+                    // Milo - blue cap
+                    ctx.fillStyle = '#3366cc';
+                    ctx.beginPath();
+                    ctx.arc(0, -faceRadius + 4, faceRadius + 3, Math.PI, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillRect(-faceRadius - 3, -faceRadius - 2, faceRadius * 2 + 6, 14);
+                    // Cap brim
+                    ctx.fillStyle = '#2255aa';
+                    ctx.fillRect(-faceRadius - 6, -faceRadius + 8, faceRadius * 2 + 12, 5);
+                }
+
+                // Eyes
+                const eyeY = -6;
+                const eyeSpacing = 9;
+                // Eye whites
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(-eyeSpacing, eyeY, 7, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(eyeSpacing, eyeY, 7, 0, Math.PI * 2);
+                ctx.fill();
+                // Pupils
+                const pupilColor = type === 3 ? '#222222' : ['#4488cc', '#33aa55', '#8855cc', '#111111'][type];
+                ctx.fillStyle = pupilColor;
+                ctx.beginPath();
+                ctx.arc(-eyeSpacing + 1, eyeY, 3.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(eyeSpacing + 1, eyeY, 3.5, 0, Math.PI * 2);
+                ctx.fill();
+                // Pupil highlights
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(-eyeSpacing - 1, eyeY - 2, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(eyeSpacing - 1, eyeY - 2, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Eyelashes
+                if (type !== 3) {
+                    ctx.strokeStyle = '#333333';
+                    ctx.lineWidth = 1;
+                    for (let e = 0; e < 2; e++) {
+                        const ex = e === 0 ? -eyeSpacing : eyeSpacing;
+                        ctx.beginPath();
+                        ctx.moveTo(ex - 4, eyeY - 6);
+                        ctx.lineTo(ex - 6, eyeY - 10);
+                        ctx.moveTo(ex, eyeY - 7);
+                        ctx.lineTo(ex, eyeY - 11);
+                        ctx.moveTo(ex + 4, eyeY - 6);
+                        ctx.lineTo(ex + 6, eyeY - 10);
+                        ctx.stroke();
+                    }
+                }
+
+                // Milo's sunglasses
+                if (type === 3) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                    ctx.fillRect(-eyeSpacing - 6, eyeY - 5, 12, 10);
+                    ctx.fillRect(eyeSpacing - 6, eyeY - 5, 12, 10);
+                    ctx.fillRect(-eyeSpacing + 4, eyeY - 3, eyeSpacing * 2 - 8, 5);
+                    // Mustache
+                    ctx.fillStyle = '#5a3a2a';
+                    ctx.beginPath();
+                    ctx.ellipse(-3, eyeY + 14, 7, 3, -0.2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.ellipse(3, eyeY + 14, 7, 3, 0.2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Eyebrows
+                ctx.strokeStyle = type === 3 ? '#333333' : ['#bb9933', '#5a3a2a', '#c04020', '#222222'][type];
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(-eyeSpacing, eyeY - 9, 6, 0.2, Math.PI - 0.2);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.arc(eyeSpacing, eyeY - 9, 6, 0.2, Math.PI - 0.2);
+                ctx.stroke();
+
+                // Cheeks
+                ctx.fillStyle = 'rgba(255,150,150,0.4)';
+                ctx.beginPath();
+                ctx.arc(-eyeSpacing - 2, eyeY + 7, 5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(eyeSpacing + 2, eyeY + 7, 5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Mouth
+                if (type === 3) {
+                    ctx.strokeStyle = '#443322';
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.arc(1, eyeY + 10, 5, 0.1, Math.PI - 0.1);
+                    ctx.stroke();
+                } else {
+                    ctx.fillStyle = '#e86070';
+                    ctx.beginPath();
+                    ctx.arc(0, eyeY + 8, 3.5, 0, Math.PI);
+                    ctx.fill();
+                    ctx.fillStyle = '#ff8899';
+                    ctx.beginPath();
+                    ctx.arc(0, eyeY + 7.5, 2.5, 0, Math.PI);
+                    ctx.fill();
+                }
+
+                // Accessory for type 0 - bow
+                if (type === 0) {
+                    ctx.fillStyle = '#ff6699';
+                    ctx.beginPath();
+                    ctx.moveTo(0, -faceRadius - 8);
+                    ctx.lineTo(-8, -faceRadius - 16);
+                    ctx.lineTo(-4, -faceRadius - 10);
+                    ctx.lineTo(0, -faceRadius - 13);
+                    ctx.lineTo(4, -faceRadius - 10);
+                    ctx.lineTo(8, -faceRadius - 16);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.fillStyle = '#ff4477';
+                    ctx.beginPath();
+                    ctx.arc(0, -faceRadius - 10, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Accessory for type 2 - flower
+                if (type === 2) {
+                    ctx.fillStyle = '#ffdd44';
+                    for (let p = 0; p < 5; p++) {
+                        const pa = (p / 5) * Math.PI * 2 - Math.PI / 2;
+                        ctx.beginPath();
+                        ctx.arc(Math.cos(pa) * 5, -faceRadius - 8 + Math.sin(pa) * 5, 4, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.fillStyle = '#ff8800';
+                    ctx.beginPath();
+                    ctx.arc(0, -faceRadius - 8, 2.5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                ctx.restore();
+            }
+
+            function drawHeart(ctx, x, y, size) {
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.scale(size / 20, size / 20);
+                ctx.beginPath();
+                ctx.moveTo(0, -8);
+                ctx.bezierCurveTo(-10, -16, -20, -4, 0, 10);
+                ctx.bezierCurveTo(20, -4, 10, -16, 0, -8);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+            }
+
+            function drawBrokenHeart(ctx, x, y, size, side) {
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.scale(size / 20, size / 20);
+                ctx.beginPath();
+                if (side === 0) {
+                    // Left half
+                    ctx.moveTo(0, -8);
+                    ctx.bezierCurveTo(-10, -16, -20, -4, 0, 10);
+                    ctx.lineTo(0, -4);
+                    ctx.bezierCurveTo(-8, -4, -12, -10, 0, -8);
+                } else {
+                    // Right half
+                    ctx.moveTo(0, -8);
+                    ctx.bezierCurveTo(10, -16, 20, -4, 0, 10);
+                    ctx.lineTo(0, -4);
+                    ctx.bezierCurveTo(8, -4, 12, -10, 0, -8);
+                }
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+            }
+
+            function drawCross(ctx, x, y, size) {
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.strokeStyle = ctx.fillStyle;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(-size / 2, -size / 2);
+                ctx.lineTo(size / 2, size / 2);
+                ctx.moveTo(size / 2, -size / 2);
+                ctx.lineTo(-size / 2, size / 2);
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            // Game logic
+            function getClickPos(e) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = W / rect.width;
+                const scaleY = H / rect.height;
+                let clientX, clientY;
+                if (e.touches && e.touches.length > 0) {
+                    clientX = e.touches[0].clientX;
+                    clientY = e.touches[0].clientY;
+                } else if (e.changedTouches && e.changedTouches.length > 0) {
+                    clientX = e.changedTouches[0].clientX;
+                    clientY = e.changedTouches[0].clientY;
+                } else {
+                    clientX = e.clientX;
+                    clientY = e.clientY;
+                }
+                return {
+                    x: (clientX - rect.left) * scaleX,
+                    y: (clientY - rect.top) * scaleY,
+                };
+            }
+
+            function findHitHole(clickX, clickY) {
+                let bestHole = null;
+                let bestDist = Infinity;
+                const HIT_RADIUS = 44;
+
+                for (const hole of holes) {
+                    if (hole.state !== 'full' && hole.state !== 'rising' && hole.state !== 'descending') continue;
+                    if (hole.emergPercent < 0.35) continue;
+                    const gfY = hole.y - hole.emergPercent * 75;
+                    const dx = clickX - hole.x;
+                    const dy = clickY - gfY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < HIT_RADIUS && dist < bestDist) {
+                        bestDist = dist;
+                        bestHole = hole;
+                    }
+                }
+                return bestHole;
+            }
+
+            function hitHole(hole) {
+                const now = performance.now();
+                const gfY = hole.y - hole.emergPercent * 75;
+
+                if (hole.gfType === 3) {
+                    // Hit Milo - penalty!
+                    const penalty = 30;
+                    score = Math.max(0, score - penalty);
+                    combo = 0;
+                    sfxNegative();
+                    vibrate(100);
+                    spawnNegativeParticles(hole.x, gfY);
+                    addFloatingText(hole.x, gfY - 20, '-' + penalty, '#ff3333');
+                    hole.state = 'hit';
+                    hole.hitAnimTimer = 0.45;
+                    hole.emergPercent = Math.max(0, hole.emergPercent - 0.3);
+                } else {
+                    // Hit girlfriend - score!
+                    const basePoints = [10, 15, 25][hole.gfType];
+                    const comboMultiplier = Math.min(3, 1 + combo * 0.25);
+                    const points = Math.floor(basePoints * comboMultiplier);
+
+                    if (now - lastHitTime < COMBO_WINDOW) {
+                        combo++;
+                        if (combo > maxCombo) maxCombo = combo;
+                        if (combo >= 3) {
+                            sfxCombo(Math.min(combo, 7));
+                            addFloatingText(hole.x, gfY - 30, 'COMBO x' + combo + '!', '#ffdd00');
+                        }
+                    } else {
+                        combo = 1;
+                    }
+                    lastHitTime = now;
+
+                    score += points;
+                    sfxPop();
+                    vibrate(20);
+                    spawnHeartParticles(hole.x, gfY);
+                    const color = ['#ffcc33', '#6b4226', '#e85d30'][hole.gfType];
+                    spawnParticles(hole.x, gfY, color, 10, 'circle');
+                    addFloatingText(hole.x, gfY - 20, '+' + points, '#ffffff');
+                    hole.state = 'hit';
+                    hole.hitAnimTimer = 0.4;
+                    hole.emergPercent = 0;
+                }
+            }
+
+            function updateHoles(dt) {
+                for (const hole of holes) {
+                    hole.stateTimer -= dt;
+                    hole.hitAnimTimer -= dt;
+
+                    if (hole.state === 'hit') {
+                        if (hole.hitAnimTimer <= 0) {
+                            hole.state = 'empty';
+                            hole.emergPercent = 0;
+                            hole.stateTimer = Math.random() * 1.2 + 0.4;
+                            hole.gfType = Math.random() < 0.12 ? 3 : (Math.random() < 0.2 ? 2 : (Math.random() < 0.4 ? 1 :
+                                0));
+                        }
+                        continue;
+                    }
+
+                    switch (hole.state) {
+                        case 'empty':
+                            if (hole.stateTimer <= 0) {
+                                hole.state = 'rising';
+                                hole.stateTimer = 0.28;
+                                hole.emergPercent = 0;
+                                // Assign type
+                                const r = Math.random();
+                                if (r < 0.08) hole.gfType = 3; // Milo - rare
+                                else if (r < 0.22) hole.gfType = 2; // Redhead
+                                else if (r < 0.48) hole.gfType = 1; // Brunette
+                                else hole.gfType = 0; // Blonde
+                                sfxBoing();
+                            }
+                            break;
+                        case 'rising':
+                            hole.emergPercent = Math.min(1, 1 - (hole.stateTimer / 0.28));
+                            if (hole.stateTimer <= 0) {
+                                hole.state = 'full';
+                                hole.emergPercent = 1;
+                                const baseTime = timeLeft < 15 ? 0.5 : 0.9;
+                                hole.stateTimer = baseTime + Math.random() * 0.7;
+                            }
+                            break;
+                        case 'full':
+                            if (hole.stateTimer <= 0) {
+                                hole.state = 'descending';
+                                hole.stateTimer = 0.2;
+                            }
+                            break;
+                        case 'descending':
+                            hole.emergPercent = Math.max(0, hole.stateTimer / 0.2);
+                            if (hole.stateTimer <= 0) {
+                                hole.state = 'empty';
+                                hole.emergPercent = 0;
+                                hole.stateTimer = Math.random() * 1.5 + 0.3;
+                            }
+                            break;
+                    }
+                }
+            }
+
+            function updateParticles(dt) {
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.vy += 1.5 * dt; // gravity
+                    p.life -= dt;
+                    p.rotation += p.rotSpeed * dt;
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+                for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                    const ft = floatingTexts[i];
+                    ft.y += ft.vy * dt;
+                    ft.life -= dt;
+                    if (ft.life <= 0) floatingTexts.splice(i, 1);
+                }
+            }
+
+            function drawParticles(ctx) {
+                for (const p of particles) {
+                    const alpha = Math.max(0, p.life / p.maxLife);
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = p.color;
+                    ctx.strokeStyle = p.color;
+                    ctx.translate(p.x, p.y);
+                    ctx.rotate(p.rotation);
+                    if (p.type === 'heart') {
+                        drawHeart(ctx, 0, 0, p.size);
+                    } else if (p.type === 'brokenHeart') {
+                        drawBrokenHeart(ctx, 0, 0, p.size, p.rotSpeed > 0 ? 1 : 0);
+                    } else if (p.type === 'cross') {
+                        drawCross(ctx, 0, 0, p.size);
+                    } else {
+                        ctx.beginPath();
+                        ctx.arc(0, 0, p.size, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.restore();
+                }
+                for (const ft of floatingTexts) {
+                    const alpha = Math.max(0, ft.life / ft.maxLife);
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = ft.color;
+                    ctx.font = 'bold 18px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                    ctx.shadowBlur = 4;
+                    ctx.fillText(ft.text, ft.x, ft.y);
+                    ctx.shadowBlur = 0;
+                    ctx.restore();
+                }
+            }
+
+            function drawUI(ctx) {
+                // Top bar background
+                const barGrad = ctx.createLinearGradient(0, 0, 0, 70);
+                barGrad.addColorStop(0, 'rgba(0,0,0,0.5)');
+                barGrad.addColorStop(1, 'rgba(0,0,0,0.2)');
+                ctx.fillStyle = barGrad;
+                ctx.fillRect(0, 0, W, 70);
+
+                // Title
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 17px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = 'rgba(255,50,100,0.7)';
+                ctx.shadowBlur = 8;
+                ctx.fillText('💔 Destroy All Milo\'s Girlfriends!', W / 2, 24);
+                ctx.shadowBlur = 0;
+
+                // Score
+                ctx.fillStyle = '#ffdd44';
+                ctx.font = 'bold 20px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText('⭐ Score: ' + score, 15, 56);
+
+                // Timer
+                const timerColor = timeLeft < 10 ? '#ff4444' : '#ffffff';
+                ctx.fillStyle = timerColor;
+                ctx.textAlign = 'right';
+                ctx.fillText('⏱ ' + Math.ceil(timeLeft) + 's', W - 15, 56);
+
+                // Combo indicator
+                if (combo >= 3) {
+                    const comboAlpha = 0.7 + Math.sin(performance.now() / 200) * 0.3;
+                    ctx.fillStyle = `rgba(255,200,30,${comboAlpha})`;
+                    ctx.font = 'bold 15px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🔥 COMBO x' + combo + '!', W / 2, 56);
+                }
+            }
+
+            function drawGameOverOverlay(ctx) {
+                // Dim background
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, W, H);
+
+                // Game over panel
+                const px = 40;
+                const py = 160;
+                const pw = W - 80;
+                const ph = 340;
+
+                const panelGrad = ctx.createLinearGradient(0, py, 0, py + ph);
+                panelGrad.addColorStop(0, '#3d1045');
+                panelGrad.addColorStop(1, '#1a0a2e');
+                ctx.fillStyle = panelGrad;
+                ctx.beginPath();
+                ctx.roundRect(px, py, pw, ph, 25);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255,100,150,0.7)';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.roundRect(px, py, pw, ph, 25);
+                ctx.stroke();
+
+                // Title
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 28px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('💔 Time\'s Up!', W / 2, py + 55);
+
+                // Score
+                ctx.fillStyle = '#ffdd44';
+                ctx.font = 'bold 40px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText(score + ' pts', W / 2, py + 115);
+
+                // Max combo
+                ctx.fillStyle = '#ffaa55';
+                ctx.font = 'bold 20px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('Max Combo: ' + maxCombo + 'x 🔥', W / 2, py + 155);
+
+                // Rating
+                let rating = 'Keep Trying! 😊';
+                if (score >= 500) rating = 'Girlfriend Destroyer! 💪';
+                if (score >= 1000) rating = 'Heartbreaker Supreme! 💔👑';
+                if (score >= 1800) rating = 'LEGENDARY MILO HUNTER! 🏆';
+                ctx.fillStyle = '#ffccdd';
+                ctx.font = 'bold 22px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText(rating, W / 2, py + 200);
+
+                // Restart button
+                const bx = W / 2 - 80;
+                const by = py + 230;
+                const bw = 160;
+                const bh = 55;
+                const btnGrad = ctx.createLinearGradient(0, by, 0, by + bh);
+                btnGrad.addColorStop(0, '#ff5588');
+                btnGrad.addColorStop(1, '#cc2255');
+                ctx.fillStyle = btnGrad;
+                ctx.beginPath();
+                ctx.roundRect(bx, by, bw, bh, 30);
+                ctx.fill();
+                ctx.strokeStyle = '#ffaacc';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.roundRect(bx, by, bw, bh, 30);
+                ctx.stroke();
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 22px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('🔄 Play Again', W / 2, by + 37);
+
+                // Store button bounds for click detection
+                return { bx, by, bw, bh };
+            }
+
+            function drawWaitingOverlay(ctx) {
+                // Dim background
+                ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                ctx.fillRect(0, 0, W, H);
+
+                const px = 30;
+                const py = 200;
+                const pw = W - 60;
+                const ph = 280;
+
+                const panelGrad = ctx.createLinearGradient(0, py, 0, py + ph);
+                panelGrad.addColorStop(0, '#3d1045');
+                panelGrad.addColorStop(1, '#1a0a2e');
+                ctx.fillStyle = panelGrad;
+                ctx.beginPath();
+                ctx.roundRect(px, py, pw, ph, 25);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255,100,150,0.7)';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.roundRect(px, py, pw, ph, 25);
+                ctx.stroke();
+
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 24px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('💔 Destroy All', W / 2, py + 45);
+                ctx.fillText('Milo\'s Girlfriends!', W / 2, py + 75);
+
+                ctx.fillStyle = '#ffccdd';
+                ctx.font = '16px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('Whack the girlfriends for points!', W / 2, py + 120);
+                ctx.fillText('🚫 Avoid Milo (blue cap) - he costs 30pts!', W / 2, py + 148);
+                ctx.fillText('⚡ Fast hits build combos!', W / 2, py + 174);
+
+                // Start button
+                const bx = W / 2 - 75;
+                const by = py + 200;
+                const bw = 150;
+                const bh = 55;
+                const btnGrad = ctx.createLinearGradient(0, by, 0, by + bh);
+                btnGrad.addColorStop(0, '#ff5588');
+                btnGrad.addColorStop(1, '#cc2255');
+                ctx.fillStyle = btnGrad;
+                ctx.beginPath();
+                ctx.roundRect(bx, by, bw, bh, 30);
+                ctx.fill();
+                ctx.strokeStyle = '#ffaacc';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.roundRect(bx, by, bw, bh, 30);
+                ctx.stroke();
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 24px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('▶ START', W / 2, by + 38);
+
+                return { bx, by, bw, bh };
+            }
+
+            let gameOverBtnBounds = null;
+            let waitingBtnBounds = null;
+
+            function startGame() {
+                initAudio();
+                score = 0;
+                combo = 0;
+                maxCombo = 0;
+                timeLeft = 60;
+                lastHitTime = 0;
+                particles = [];
+                floatingTexts = [];
+                gameState = STATE.PLAYING;
+                gameOverBtnBounds = null;
+                waitingBtnBounds = null;
+
+                // Reset all holes
+                for (const hole of holes) {
+                    hole.state = 'empty';
+                    hole.emergPercent = 0;
+                    hole.stateTimer = Math.random() * 1.8 + 0.3;
+                    hole.hitAnimTimer = 0;
+                    hole.gfType = 0;
+                }
+
+                // Start game timer
+                if (gameTimer) clearInterval(gameTimer);
+                gameTimer = setInterval(() => {
+                    if (gameState === STATE.PLAYING) {
+                        timeLeft -= 0.1;
+                        if (timeLeft <= 0) {
+                            timeLeft = 0;
+                            endGame();
+                        }
+                    }
+                }, 100);
+            }
+
+            function endGame() {
+                gameState = STATE.GAMEOVER;
+                if (gameTimer) clearInterval(gameTimer);
+                gameTimer = null;
+                sfxGameOver();
+                // Clear all holes
+                for (const hole of holes) {
+                    hole.state = 'empty';
+                    hole.emergPercent = 0;
+                    hole.hitAnimTimer = 0;
+                }
+            }
+
+            function handleClick(e) {
+                e.preventDefault();
+                initAudio();
+
+                const pos = getClickPos(e);
+
+                if (gameState === STATE.WAITING) {
+                    if (waitingBtnBounds) {
+                        const { bx, by, bw, bh } = waitingBtnBounds;
+                        if (pos.x >= bx && pos.x <= bx + bw && pos.y >= by && pos.y <= by + bh) {
+                            startGame();
+                        }
+                    }
+                    return;
+                }
+
+                if (gameState === STATE.GAMEOVER) {
+                    if (gameOverBtnBounds) {
+                        const { bx, by, bw, bh } = gameOverBtnBounds;
+                        if (pos.x >= bx && pos.x <= bx + bw && pos.y >= by && pos.y <= by + bh) {
+                            startGame();
+                        }
+                    }
+                    return;
+                }
+
+                if (gameState === STATE.PLAYING) {
+                    const hitHole = findHitHole(pos.x, pos.y);
+                    if (hitHole) {
+                        hitHole(hitHole);
+                    }
+                }
+            }
+
+            // Event listeners
+            canvas.addEventListener('click', handleClick);
+            canvas.addEventListener('touchstart', handleClick, { passive: false });
+            canvas.addEventListener('touchend', (e) => e.preventDefault(), { passive: false });
+
+            // Game loop
+            let lastTime = performance.now();
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.1) dt = 0.1; // Cap to prevent large jumps
+                lastTime = timestamp;
+
+                // Update
+                if (gameState === STATE.PLAYING) {
+                    updateHoles(dt);
+                }
+                updateParticles(dt);
+
+                // Render
+                ctx.clearRect(0, 0, W, H);
+                drawSky(ctx);
+
+                // Draw girlfriends (behind platform, but above sky)
+                for (const hole of holes) {
+                    if (hole.emergPercent > 0.01 && hole.state !== 'hit') {
+                        const gfY = hole.y - hole.emergPercent * 75;
+                        const alpha = Math.min(1, hole.emergPercent * 2);
+                        drawGirlfriend(ctx, hole.x, gfY, hole.gfType, alpha);
+                    }
+                    // Hit animation - brief flash/dissolve
+                    if (hole.state === 'hit' && hole.hitAnimTimer > 0.15) {
+                        const gfY = hole.y - hole.emergPercent * 75;
+                        const flashAlpha = hole.hitAnimTimer / 0.4;
+                        ctx.save();
+                        ctx.globalAlpha = flashAlpha * 0.6;
+                        ctx.fillStyle = '#ffffff';
+                        ctx.beginPath();
+                        ctx.arc(hole.x, gfY, 30, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.restore();
+                    }
+                }
+
+                // Draw platform (covers lower parts of girlfriends)
+                drawPlatform(ctx);
+
+                // Draw particles on top
+                drawParticles(ctx);
+
+                // Draw UI
+                drawUI(ctx);
+
+                // Draw overlays
+                if (gameState === STATE.GAMEOVER) {
+                    gameOverBtnBounds = drawGameOverOverlay(ctx);
+                } else if (gameState === STATE.WAITING) {
+                    waitingBtnBounds = drawWaitingOverlay(ctx);
+                }
+
+                requestAnimationFrame(gameLoop);
+            }
+
+            // Initial render
+            ctx.clearRect(0, 0, W, H);
+            drawSky(ctx);
+            drawPlatform(ctx);
+            drawUI(ctx);
+            waitingBtnBounds = drawWaitingOverlay(ctx);
+
+            // Start game loop
+            requestAnimationFrame(gameLoop);
+
+            console.log('💔 Destroy All Milo\'s Girlfriends! - Ready to play!');
+            console.log('👆 Click/Tap the girlfriends to destroy them!');
+            console.log('🚫 Avoid Milo (blue cap + sunglasses) - he costs 30 points!');
+            console.log('⚡ Build combos by hitting quickly for bonus points!');
+        })();
+    </script>
+</body>
+</html>
