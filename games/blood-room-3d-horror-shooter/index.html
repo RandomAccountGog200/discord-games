@@ -1,0 +1,1666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>BLOOD ROOM - 3D Horror Shooter</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #000;
+            overflow: hidden;
+            touch-action: manipulation;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            cursor: none;
+            font-family: 'Courier New', monospace;
+        }
+        canvas {
+            display: block;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        #ui {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #ccc;
+            font-size: 16px;
+            pointer-events: none;
+            display: flex;
+            gap: 30px;
+            align-items: center;
+            z-index: 10;
+            text-shadow: 0 0 10px #000, 0 0 20px #000;
+        }
+        .ui-item {
+            background: rgba(0, 0, 0, 0.7);
+            padding: 8px 14px;
+            border-radius: 4px;
+            border: 1px solid #333;
+            letter-spacing: 2px;
+        }
+        #reload-bar {
+            position: fixed;
+            bottom: 70px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 120px;
+            height: 4px;
+            background: #222;
+            border-radius: 2px;
+            pointer-events: none;
+            z-index: 10;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        #reload-fill {
+            height: 100%;
+            background: #c44;
+            border-radius: 2px;
+            width: 0%;
+            transition: width 0.05s linear;
+        }
+        #message {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #fff;
+            font-size: 22px;
+            text-align: center;
+            pointer-events: none;
+            z-index: 20;
+            text-shadow: 0 0 20px #f00, 0 0 40px #800;
+            opacity: 0;
+            transition: opacity 0.3s;
+            letter-spacing: 3px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <div id="ui">
+        <span class="ui-item">💀 <span id="score">0</span></span>
+        <span class="ui-item">❤️ <span id="health">100</span></span>
+        <span class="ui-item">🔫 <span id="ammo">6</span>/6</span>
+    </div>
+    <div id="reload-bar"><div id="reload-fill"></div></div>
+    <div id="message"></div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+
+            // UI elements
+            const scoreEl = document.getElementById('score');
+            const healthEl = document.getElementById('health');
+            const ammoEl = document.getElementById('ammo');
+            const reloadBar = document.getElementById('reload-bar');
+            const reloadFill = document.getElementById('reload-fill');
+            const messageEl = document.getElementById('message');
+
+            // Audio context
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playSound(type, volume = 0.3) {
+                if (!audioCtx) return;
+                const t = audioCtx.currentTime;
+                const ctx = audioCtx;
+
+                if (type === 'gunshot') {
+                    const dur = 0.15;
+                    const bufferSize = Math.floor(ctx.sampleRate * dur);
+                    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+                    const data = buffer.getChannelData(0);
+                    for (let i = 0; i < bufferSize; i++) {
+                        const env = Math.exp(-i / (bufferSize * 0.08));
+                        const tone = Math.sin(i * 0.3) * 0.3;
+                        data[i] = (Math.random() * 2 - 1) * env * 0.8 + tone * env;
+                    }
+                    const src = ctx.createBufferSource();
+                    src.buffer = buffer;
+                    const filter = ctx.createBiquadFilter();
+                    filter.type = 'lowpass';
+                    filter.frequency.value = 800 + Math.random() * 400;
+                    const gain = ctx.createGain();
+                    gain.gain.setValueAtTime(volume * 1.2, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+                    src.connect(filter);
+                    filter.connect(gain);
+                    gain.connect(ctx.destination);
+                    src.start(t);
+                } else if (type === 'splatter') {
+                    const dur = 0.25;
+                    const bufferSize = Math.floor(ctx.sampleRate * dur);
+                    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+                    const data = buffer.getChannelData(0);
+                    for (let i = 0; i < bufferSize; i++) {
+                        const env = Math.exp(-i / (bufferSize * 0.15));
+                        data[i] = (Math.random() * 2 - 1) * env * 0.5;
+                    }
+                    const src = ctx.createBufferSource();
+                    src.buffer = buffer;
+                    const filter = ctx.createBiquadFilter();
+                    filter.type = 'bandpass';
+                    filter.frequency.value = 200 + Math.random() * 300;
+                    filter.Q.value = 0.7;
+                    const gain = ctx.createGain();
+                    gain.gain.setValueAtTime(volume * 0.9, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+                    src.connect(filter);
+                    filter.connect(gain);
+                    gain.connect(ctx.destination);
+                    src.start(t);
+                } else if (type === 'impact') {
+                    const dur = 0.08;
+                    const bufferSize = Math.floor(ctx.sampleRate * dur);
+                    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+                    const data = buffer.getChannelData(0);
+                    for (let i = 0; i < bufferSize; i++) {
+                        const env = Math.exp(-i / (bufferSize * 0.3));
+                        data[i] = (Math.random() * 2 - 1) * env * 0.6;
+                    }
+                    const src = ctx.createBufferSource();
+                    src.buffer = buffer;
+                    const filter = ctx.createBiquadFilter();
+                    filter.type = 'highpass';
+                    filter.frequency.value = 1500;
+                    const gain = ctx.createGain();
+                    gain.gain.setValueAtTime(volume * 0.5, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+                    src.connect(filter);
+                    filter.connect(gain);
+                    gain.connect(ctx.destination);
+                    src.start(t);
+                } else if (type === 'reload') {
+                    const dur = 0.4;
+                    const bufferSize = Math.floor(ctx.sampleRate * dur);
+                    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+                    const data = buffer.getChannelData(0);
+                    for (let i = 0; i < bufferSize; i++) {
+                        const env = Math.exp(-i / (bufferSize * 0.25));
+                        const click = (i > bufferSize * 0.1 && i < bufferSize * 0.15) ? 1 : (i > bufferSize *
+                            0.55 && i < bufferSize * 0.6) ? 0.8 : 0;
+                        data[i] = (Math.random() * 2 - 1) * env * 0.3 + click * env * 0.5;
+                    }
+                    const src = ctx.createBufferSource();
+                    src.buffer = buffer;
+                    const gain = ctx.createGain();
+                    gain.gain.setValueAtTime(volume * 0.6, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+                    src.connect(gain);
+                    gain.connect(ctx.destination);
+                    src.start(t);
+                } else if (type === 'growl') {
+                    const dur = 0.6;
+                    const osc = ctx.createOscillator();
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(60, t);
+                    osc.frequency.linearRampToValueAtTime(30, t + dur);
+                    const gain = ctx.createGain();
+                    gain.gain.setValueAtTime(volume * 0.25, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+                    const filter = ctx.createBiquadFilter();
+                    filter.type = 'lowpass';
+                    filter.frequency.value = 200;
+                    osc.connect(filter);
+                    filter.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.start(t);
+                    osc.stop(t + dur);
+                }
+            }
+
+            // Canvas setup
+            function resize() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            // Game state
+            const ROOM_W = 10; // x: -5 to 5
+            const ROOM_H = 6; // y: 0 to 6
+            const ROOM_D = 20; // back wall at z=20
+            const EYE_Y = 1.8;
+            const BACK_Z = 20;
+            const MIN_Z = 0.6;
+
+            let f, cx, cy;
+            let enemies = [];
+            let particles = [];
+            let stains = [];
+            let drips = [];
+            let screenBlood = [];
+            let dyingEnemies = [];
+            let score = 0;
+            let kills = 0;
+            let health = 100;
+            let maxHealth = 100;
+            let ammo = 6;
+            let maxAmmo = 6;
+            let reloading = false;
+            let reloadTimer = 0;
+            let reloadDuration = 1.4;
+            let gameOver = false;
+            let gameOverTimer = 0;
+            let shakeAmount = 0;
+            let flashAmount = 0;
+            let mouseX = 0,
+                mouseY = 0;
+            let crosshairX = 0,
+                crosshairY = 0;
+            let spawnTimer = 0;
+            let spawnInterval = 3.5;
+            let difficulty = 1;
+            let lastTime = performance.now();
+            let frameCount = 0;
+
+            function updateProjection() {
+                cx = canvas.width / 2;
+                cy = canvas.height / 2;
+                f = canvas.width * 0.9;
+            }
+            updateProjection();
+            window.addEventListener('resize', () => {
+                resize();
+                updateProjection();
+            });
+
+            function project(x, y, z) {
+                if (z < 0.05) z = 0.05;
+                const sx = cx + (x / z) * f;
+                const sy = cy - ((y - EYE_Y) / z) * f;
+                const scale = f / z;
+                return { sx, sy, scale, z };
+            }
+
+            function bloodColor(age = 0, alpha = 1) {
+                const r = 70 + Math.random() * 80;
+                const g = Math.floor(Math.random() * 25);
+                const b = Math.floor(Math.random() * 15);
+                const darken = Math.max(0.3, 1 - age * 0.35);
+                const a = Math.min(1, alpha * (0.65 + Math.random() * 0.35));
+                return {
+                    r: Math.floor(r * darken),
+                    g: Math.floor(g * darken),
+                    b: Math.floor(b * darken),
+                    a,
+                    str: `rgba(${Math.floor(r*darken)},${Math.floor(g*darken)},${Math.floor(b*darken)},${a})`
+                };
+            }
+
+            // Enemy class
+            class Enemy {
+                constructor(x, z, hp = 1, speed = 1) {
+                    this.x = x;
+                    this.z = z;
+                    this.y = 0;
+                    this.hp = hp;
+                    this.maxHp = hp;
+                    this.speed = speed;
+                    this.worldHeight = 1.7 + Math.random() * 0.5;
+                    this.radius = 0.35;
+                    this.hitFlash = 0;
+                    this.alive = true;
+                    this.dying = false;
+                    this.deathTimer = 0;
+                    this.wobble = Math.random() * Math.PI * 2;
+                    this.wobbleSpeed = 0.3 + Math.random() * 0.7;
+                    this.wobbleAmp = 0.15 + Math.random() * 0.3;
+                    this.eyeGlow = 0.6 + Math.random() * 0.4;
+                }
+
+                update(dt) {
+                    if (this.dying) {
+                        this.deathTimer += dt;
+                        if (this.deathTimer > 0.5) return false;
+                        return true;
+                    }
+                    this.z -= this.speed * dt;
+                    this.wobble += this.wobbleSpeed * dt;
+                    const lateralMove = Math.sin(this.wobble) * this.wobbleAmp * dt;
+                    this.x += lateralMove;
+                    this.x = Math.max(-4.5, Math.min(4.5, this.x));
+                    if (this.hitFlash > 0) this.hitFlash -= dt * 8;
+                    if (this.z < 1.8 && this.alive && !this.dying) {
+                        return 'attack';
+                    }
+                    return true;
+                }
+
+                getScreenPos() {
+                    const p = project(this.x, this.worldHeight * 0.55, this.z);
+                    const pFeet = project(this.x, 0, this.z);
+                    return {
+                        sx: p.sx,
+                        sy: p.sy,
+                        scale: p.scale,
+                        z: this.z,
+                        feetY: pFeet.sy,
+                        screenHeight: this.worldHeight * p.scale
+                    };
+                }
+
+                hit(dmg = 1) {
+                    this.hp -= dmg;
+                    this.hitFlash = 1;
+                    if (this.hp <= 0) {
+                        this.dying = true;
+                        this.alive = false;
+                        this.deathTimer = 0;
+                        return true;
+                    }
+                    return false;
+                }
+            }
+
+            // Blood particle
+            class BloodParticle {
+                constructor(x, y, z, vx, vy, vz, size, color) {
+                    this.x = x;
+                    this.y = y;
+                    this.z = z;
+                    this.vx = vx;
+                    this.vy = vy;
+                    this.vz = vz;
+                    this.size = size;
+                    this.color = color;
+                    this.age = 0;
+                    this.maxAge = 0.6 + Math.random() * 1.4;
+                    this.alive = true;
+                    this.trail = [];
+                    this.stuck = false;
+                    this.stickSurface = null;
+                    this.stickX = 0;
+                    this.stickY = 0;
+                    this.stickZ = 0;
+                }
+
+                update(dt) {
+                    if (this.stuck) {
+                        this.age += dt;
+                        if (this.age > 8) this.alive = false;
+                        return;
+                    }
+                    this.age += dt;
+                    if (this.age > this.maxAge) {
+                        this.alive = false;
+                        return;
+                    }
+                    this.vy -= 9.8 * dt;
+                    this.vx *= 0.995;
+                    this.vy *= 0.995;
+                    this.vz *= 0.995;
+                    this.x += this.vx * dt;
+                    this.y += this.vy * dt;
+                    this.z += this.vz * dt;
+
+                    if (this.trail.length === 0 || this.age - this.trail[this.trail.length - 1].t > 0.02) {
+                        this.trail.push({ x: this.x, y: this.y, z: this.z, t: this.age, size: this.size * 0.7 });
+                        if (this.trail.length > 12) this.trail.shift();
+                    }
+
+                    // Check surface collisions
+                    if (this.y <= 0 && this.vy < 0) {
+                        this.y = 0;
+                        this.stickSurface = 'floor';
+                        this.stickX = this.x;
+                        this.stickZ = this.z;
+                        this.stickY = 0;
+                        this.stuck = true;
+                        this.createStain('floor', this.x, this.z, this.size * 1.5);
+                    } else if (this.z >= BACK_Z && this.vz > 0) {
+                        this.z = BACK_Z;
+                        if (this.x >= -5 && this.x <= 5 && this.y >= 0 && this.y <= ROOM_H) {
+                            this.stickSurface = 'back-wall';
+                            this.stickX = this.x;
+                            this.stickY = this.y;
+                            this.stickZ = BACK_Z;
+                            this.stuck = true;
+                            this.createStain('back-wall', this.x, this.y, this.size * 1.3);
+                            this.createDrip('back-wall', this.x, this.y);
+                        }
+                    } else if (this.x <= -5 && this.vx < 0) {
+                        this.x = -5;
+                        if (this.y >= 0 && this.y <= ROOM_H && this.z > 0 && this.z < BACK_Z) {
+                            this.stickSurface = 'left-wall';
+                            this.stickX = -5;
+                            this.stickY = this.y;
+                            this.stickZ = this.z;
+                            this.stuck = true;
+                            this.createStain('left-wall', this.y, this.z, this.size * 1.3);
+                            this.createDrip('left-wall', this.y, this.z);
+                        }
+                    } else if (this.x >= 5 && this.vx > 0) {
+                        this.x = 5;
+                        if (this.y >= 0 && this.y <= ROOM_H && this.z > 0 && this.z < BACK_Z) {
+                            this.stickSurface = 'right-wall';
+                            this.stickX = 5;
+                            this.stickY = this.y;
+                            this.stickZ = this.z;
+                            this.stuck = true;
+                            this.createStain('right-wall', this.y, this.z, this.size * 1.3);
+                            this.createDrip('right-wall', this.y, this.z);
+                        }
+                    } else if (this.y >= ROOM_H && this.vy > 0) {
+                        this.y = ROOM_H;
+                        if (this.x >= -5 && this.x <= 5 && this.z > 0 && this.z < BACK_Z) {
+                            this.stickSurface = 'ceiling';
+                            this.stickX = this.x;
+                            this.stickZ = this.z;
+                            this.stuck = true;
+                            this.createStain('ceiling', this.x, this.z, this.size * 1.2);
+                        }
+                    }
+                    if (this.z < 0.1) this.alive = false;
+                }
+
+                createStain(surface, a, b, size) {
+                    const col = bloodColor(0, 0.75);
+                    stains.push({
+                        surface,
+                        a,
+                        b,
+                        size: Math.max(0.8, size * (0.6 + Math.random() * 0.8)),
+                        color: col,
+                        age: 0,
+                        satellites: []
+                    });
+                    for (let i = 0; i < Math.floor(size * 1.5); i++) {
+                        stains[stains.length - 1].satellites.push({
+                            da: (Math.random() - 0.5) * size * 3,
+                            db: (Math.random() - 0.5) * size * 3,
+                            sz: size * (0.2 + Math.random() * 0.5)
+                        });
+                    }
+                    if (stains.length > 250) stains.shift();
+                }
+
+                createDrip(surface, a, b) {
+                    if (Math.random() < 0.5) {
+                        drips.push({
+                            surface,
+                            a,
+                            b,
+                            speed: 0.3 + Math.random() * 1.5,
+                            trail: [],
+                            age: 0,
+                            alive: true
+                        });
+                        if (drips.length > 80) drips.shift();
+                    }
+                }
+
+                draw(ctx) {
+                    if (this.stuck) return;
+                    const p = project(this.x, this.y, this.z);
+                    if (!p || p.z < 0.1) return;
+                    const alpha = Math.max(0, 1 - this.age / this.maxAge);
+                    const sz = Math.max(0.5, this.size * p.scale * 0.02);
+
+                    // Draw trail
+                    if (this.trail.length > 1) {
+                        ctx.beginPath();
+                        for (let i = 0; i < this.trail.length; i++) {
+                            const tp = project(this.trail[i].x, this.trail[i].y, this.trail[i].z);
+                            if (tp && tp.z > 0.1) {
+                                const trailAlpha = alpha * (i / this.trail.length) * 0.5;
+                                if (i === 0) ctx.moveTo(tp.sx, tp.sy);
+                                else ctx.lineTo(tp.sx, tp.sy);
+                            }
+                        }
+                        ctx.strokeStyle = `rgba(80,0,0,${alpha*0.4})`;
+                        ctx.lineWidth = sz * 0.6;
+                        ctx.stroke();
+                    }
+
+                    // Draw particle
+                    const grad = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, sz);
+                    const col = this.color;
+                    grad.addColorStop(0, `rgba(${col.r+30},${col.g},${col.b},${alpha})`);
+                    grad.addColorStop(0.5, `rgba(${col.r},${col.g},${col.b},${alpha*0.8})`);
+                    grad.addColorStop(1, `rgba(${col.r-30},${col.g},${col.b},0)`);
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.arc(p.sx, p.sy, sz, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Glossy highlight
+                    if (sz > 2) {
+                        ctx.fillStyle = `rgba(255,200,180,${alpha*0.3})`;
+                        ctx.beginPath();
+                        ctx.arc(p.sx - sz * 0.25, p.sy - sz * 0.25, sz * 0.3, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            // Dust particle for wall impacts
+            class DustParticle {
+                constructor(x, y, z, vx, vy, vz, size) {
+                    this.x = x;
+                    this.y = y;
+                    this.z = z;
+                    this.vx = vx;
+                    this.vy = vy;
+                    this.vz = vz;
+                    this.size = size;
+                    this.age = 0;
+                    this.maxAge = 0.3 + Math.random() * 0.5;
+                    this.alive = true;
+                }
+                update(dt) {
+                    this.age += dt;
+                    if (this.age > this.maxAge) { this.alive = false; return; }
+                    this.vy -= 2 * dt;
+                    this.x += this.vx * dt;
+                    this.y += this.vy * dt;
+                    this.z += this.vz * dt;
+                }
+                draw(ctx) {
+                    const p = project(this.x, this.y, this.z);
+                    if (!p || p.z < 0.1) return;
+                    const alpha = 1 - this.age / this.maxAge;
+                    const sz = this.size * p.scale * 0.015;
+                    ctx.fillStyle = `rgba(180,170,150,${alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(p.sx, p.sy, Math.max(0.5, sz), 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            // Screen blood splatter
+            class ScreenBloodSpot {
+                constructor(sx, sy, size) {
+                    this.sx = sx;
+                    this.sy = sy;
+                    this.size = size;
+                    this.age = 0;
+                    this.maxAge = 2 + Math.random() * 3;
+                    this.alive = true;
+                    this.color = bloodColor(0, 0.8);
+                }
+                update(dt) {
+                    this.age += dt;
+                    if (this.age > this.maxAge) this.alive = false;
+                }
+                draw(ctx) {
+                    const alpha = Math.max(0, 1 - this.age / this.maxAge);
+                    const col = this.color;
+                    const sz = this.size;
+                    const grad = ctx.createRadialGradient(this.sx, this.sy, 0, this.sx, this.sy, sz);
+                    grad.addColorStop(0, `rgba(${col.r},${col.g},${col.b},${alpha*0.7})`);
+                    grad.addColorStop(0.6, `rgba(${col.r-20},${col.g},${col.b},${alpha*0.4})`);
+                    grad.addColorStop(1, `rgba(${col.r-40},${col.g},${col.b},0)`);
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.arc(this.sx, this.sy, sz, 0, Math.PI * 2);
+                    ctx.fill();
+                    for (let i = 0; i < 4; i++) {
+                        const dsx = this.sx + (Math.random() - 0.5) * sz * 1.5;
+                        const dsy = this.sy + (Math.random() - 0.5) * sz * 1.5;
+                        ctx.fillStyle = `rgba(${col.r},${col.g},${col.b},${alpha*0.35})`;
+                        ctx.beginPath();
+                        ctx.arc(dsx, dsy, sz * (0.2 + Math.random() * 0.4), 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            // Spawn blood splatter
+            function spawnBloodSplatter(wx, wy, wz, count = 35, power = 5) {
+                const col = bloodColor(0, 0.9);
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const elevation = (Math.random() - 0.3) * Math.PI * 0.7;
+                    const spd = power * (0.3 + Math.random() * 1.2);
+                    const vx = Math.cos(angle) * Math.cos(elevation) * spd;
+                    const vy = Math.sin(elevation) * spd + Math.random() * 3;
+                    const vz = Math.sin(angle) * Math.cos(elevation) * spd;
+                    const size = 0.8 + Math.random() * 5;
+                    particles.push(new BloodParticle(wx, wy, wz, vx, vy, vz, size, col));
+                }
+                if (particles.length > 300) particles.splice(0, particles.length - 300);
+                playSound('splatter', 0.4);
+            }
+
+            function spawnDustImpact(wx, wy, wz, count = 15) {
+                for (let i = 0; i < count; i++) {
+                    const vx = (Math.random() - 0.5) * 3;
+                    const vy = Math.random() * 2;
+                    const vz = (Math.random() - 0.5) * 3;
+                    const size = 1 + Math.random() * 3;
+                    particles.push(new DustParticle(wx, wy, wz, vx, vy, vz, size));
+                }
+                if (particles.length > 300) particles.splice(0, particles.length - 300);
+                playSound('impact', 0.25);
+            }
+
+            // Shoot
+            function shoot() {
+                if (gameOver) return;
+                if (reloading) return;
+                if (ammo <= 0) {
+                    startReload();
+                    return;
+                }
+                initAudio();
+                ammo--;
+                flashAmount = 1;
+                shakeAmount = 0.7;
+                playSound('gunshot', 0.5);
+
+                const mx = crosshairX;
+                const my = crosshairY;
+
+                // Check enemies - screen space hit detection
+                let hitEnemy = null;
+                let bestDist = Infinity;
+                const screenTargets = [];
+                for (const enemy of enemies) {
+                    if (!enemy.alive || enemy.dying) continue;
+                    const sp = enemy.getScreenPos();
+                    const hitRadius = Math.max(25, enemy.radius * sp.scale * 0.7);
+                    const dx = mx - sp.sx;
+                    const dy = my - sp.sy;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    screenTargets.push({ enemy, sp, hitRadius, dist, z: enemy.z });
+                    if (dist < hitRadius && enemy.z < bestDist) {
+                        bestDist = enemy.z;
+                        hitEnemy = enemy;
+                    }
+                }
+
+                // Also check closest enemy even if slightly outside radius (generous hitbox for close enemies)
+                if (!hitEnemy && screenTargets.length > 0) {
+                    screenTargets.sort((a, b) => a.z - b.z);
+                    const closest = screenTargets[0];
+                    if (closest.z < 5 && closest.dist < closest.hitRadius * 1.6) {
+                        hitEnemy = closest.enemy;
+                    }
+                }
+
+                if (hitEnemy) {
+                    const sp = hitEnemy.getScreenPos();
+                    const worldHitY = hitEnemy.worldHeight * (0.4 + Math.random() * 0.4);
+                    const killed = hitEnemy.hit(1);
+                    spawnBloodSplatter(hitEnemy.x, worldHitY, hitEnemy.z, killed ? 50 : 20, killed ? 7 : 4);
+                    if (killed) {
+                        kills++;
+                        score += hitEnemy.maxHp * 100;
+                        playSound('growl', 0.35);
+                        // Extra death burst after short delay
+                        setTimeout(() => {
+                            if (hitEnemy.dying) {
+                                spawnBloodSplatter(hitEnemy.x, 0.3, hitEnemy.z, 40, 5);
+                            }
+                        }, 150);
+                        // Larger floor pool
+                        const poolCol = bloodColor(0, 0.7);
+                        stains.push({
+                            surface: 'floor',
+                            a: hitEnemy.x,
+                            b: hitEnemy.z,
+                            size: 1.5 + Math.random() * 2,
+                            color: poolCol,
+                            age: 0,
+                            satellites: []
+                        });
+                        for (let i = 0; i < 8; i++) {
+                            stains[stains.length - 1].satellites.push({
+                                da: (Math.random() - 0.5) * 6,
+                                db: (Math.random() - 0.5) * 6,
+                                sz: 1 + Math.random() * 2
+                            });
+                        }
+                        if (stains.length > 250) stains.shift();
+                    }
+                    // Screen blood if close
+                    if (hitEnemy.z < 6) {
+                        for (let i = 0; i < 8; i++) {
+                            screenBlood.push(new ScreenBloodSpot(
+                                sp.sx + (Math.random() - 0.5) * 150,
+                                sp.sy + (Math.random() - 0.5) * 150,
+                                15 + Math.random() * 40
+                            ));
+                        }
+                        if (screenBlood.length > 30) screenBlood.splice(0, screenBlood.length - 30);
+                    }
+                } else {
+                    // Miss - trace ray to find impact surface
+                    const dx = (mx - cx) / f;
+                    const dy = -(my - cy) / f;
+                    const len = Math.sqrt(dx * dx + dy * dy + 1);
+                    const rdx = dx / len;
+                    const rdy = dy / len;
+                    const rdz = 1 / len;
+
+                    let bestT = Infinity;
+                    let impactPoint = null;
+                    let impactSurface = null;
+
+                    // Floor: y=0
+                    if (rdy < -0.001) {
+                        const t = -EYE_Y / rdy;
+                        if (t > 0.1 && t < bestT) {
+                            const ix = rdx * t;
+                            const iz = rdz * t;
+                            if (ix >= -5 && ix <= 5 && iz > 0.1 && iz < BACK_Z) {
+                                bestT = t;
+                                impactPoint = { x: ix, y: 0, z: iz };
+                                impactSurface = 'floor';
+                            }
+                        }
+                    }
+                    // Ceiling: y=ROOM_H
+                    if (rdy > 0.001) {
+                        const t = (ROOM_H - EYE_Y) / rdy;
+                        if (t > 0.1 && t < bestT) {
+                            const ix = rdx * t;
+                            const iz = rdz * t;
+                            if (ix >= -5 && ix <= 5 && iz > 0.1 && iz < BACK_Z) {
+                                bestT = t;
+                                impactPoint = { x: ix, y: ROOM_H, z: iz };
+                                impactSurface = 'ceiling';
+                            }
+                        }
+                    }
+                    // Back wall: z=BACK_Z
+                    {
+                        const t = BACK_Z / rdz;
+                        if (t > 0.1 && t < bestT) {
+                            const ix = rdx * t;
+                            const iy = EYE_Y + rdy * t;
+                            if (ix >= -5 && ix <= 5 && iy >= 0 && iy <= ROOM_H) {
+                                bestT = t;
+                                impactPoint = { x: ix, y: iy, z: BACK_Z };
+                                impactSurface = 'back-wall';
+                            }
+                        }
+                    }
+                    // Left wall: x=-5
+                    if (rdx < -0.001) {
+                        const t = -5 / rdx;
+                        if (t > 0.1 && t < bestT) {
+                            const iy = EYE_Y + rdy * t;
+                            const iz = rdz * t;
+                            if (iy >= 0 && iy <= ROOM_H && iz > 0.1 && iz < BACK_Z) {
+                                bestT = t;
+                                impactPoint = { x: -5, y: iy, z: iz };
+                                impactSurface = 'left-wall';
+                            }
+                        }
+                    }
+                    // Right wall: x=5
+                    if (rdx > 0.001) {
+                        const t = 5 / rdx;
+                        if (t > 0.1 && t < bestT) {
+                            const iy = EYE_Y + rdy * t;
+                            const iz = rdz * t;
+                            if (iy >= 0 && iy <= ROOM_H && iz > 0.1 && iz < BACK_Z) {
+                                bestT = t;
+                                impactPoint = { x: 5, y: iy, z: iz };
+                                impactSurface = 'right-wall';
+                            }
+                        }
+                    }
+
+                    if (impactPoint) {
+                        spawnDustImpact(impactPoint.x, impactPoint.y, impactPoint.z, 18);
+                        // Small bullet hole stain
+                        const holeCol = { r: 30, g: 25, b: 20, a: 0.8, str: 'rgba(30,25,20,0.8)' };
+                        if (impactSurface === 'floor') {
+                            stains.push({ surface: 'floor', a: impactPoint.x, b: impactPoint.z, size: 0.3,
+                                color: holeCol, age: 0, satellites: [] });
+                        } else if (impactSurface === 'back-wall') {
+                            stains.push({ surface: 'back-wall', a: impactPoint.x, b: impactPoint.y, size: 0.3,
+                                color: holeCol, age: 0, satellites: [] });
+                        } else if (impactSurface === 'left-wall') {
+                            stains.push({ surface: 'left-wall', a: impactPoint.y, b: impactPoint.z, size: 0.3,
+                                color: holeCol, age: 0, satellites: [] });
+                        } else if (impactSurface === 'right-wall') {
+                            stains.push({ surface: 'right-wall', a: impactPoint.y, b: impactPoint.z, size: 0.3,
+                                color: holeCol, age: 0, satellites: [] });
+                        } else if (impactSurface === 'ceiling') {
+                            stains.push({ surface: 'ceiling', a: impactPoint.x, b: impactPoint.z, size: 0.3,
+                                color: holeCol, age: 0, satellites: [] });
+                        }
+                        if (stains.length > 250) stains.shift();
+                    }
+                }
+
+                updateUI();
+                if (ammo <= 0 && !reloading) {
+                    setTimeout(() => startReload(), 350);
+                }
+            }
+
+            function startReload() {
+                if (reloading || ammo === maxAmmo) return;
+                reloading = true;
+                reloadTimer = 0;
+                reloadBar.style.opacity = '1';
+                reloadFill.style.width = '0%';
+                playSound('reload', 0.5);
+            }
+
+            function finishReload() {
+                reloading = false;
+                ammo = maxAmmo;
+                reloadBar.style.opacity = '0';
+                reloadFill.style.width = '100%';
+                updateUI();
+            }
+
+            function updateUI() {
+                scoreEl.textContent = score;
+                healthEl.textContent = Math.max(0, Math.floor(health));
+                ammoEl.textContent = ammo;
+                if (health <= 30) healthEl.style.color = '#f44';
+                else healthEl.style.color = '#ccc';
+            }
+
+            // Input
+            canvas.addEventListener('mousemove', (e) => {
+                mouseX = e.clientX;
+                mouseY = e.clientY;
+                crosshairX = mouseX;
+                crosshairY = mouseY;
+            });
+            canvas.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                initAudio();
+                mouseX = e.clientX;
+                mouseY = e.clientY;
+                crosshairX = mouseX;
+                crosshairY = mouseY;
+                shoot();
+            });
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                initAudio();
+                const touch = e.touches[0];
+                mouseX = touch.clientX;
+                mouseY = touch.clientY;
+                crosshairX = mouseX;
+                crosshairY = mouseY;
+                shoot();
+            }, { passive: false });
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                const touch = e.touches[0];
+                mouseX = touch.clientX;
+                mouseY = touch.clientY;
+                crosshairX = mouseX;
+                crosshairY = mouseY;
+            }, { passive: false });
+            canvas.addEventListener('touchend', (e) => {
+                e.preventDefault();
+            });
+            canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+            // Initial crosshair position
+            crosshairX = cx;
+            crosshairY = cy;
+
+            // Spawn enemy
+            function spawnEnemy() {
+                const x = (Math.random() - 0.5) * 8;
+                const z = BACK_Z - Math.random() * 3;
+                const toughChance = Math.min(0.5, difficulty * 0.08);
+                let hp = 1;
+                let speed = 1.2 + Math.random() * 1.5 + difficulty * 0.2;
+                if (Math.random() < toughChance) {
+                    hp = 2 + Math.floor(Math.random() * 2);
+                    speed *= 0.7;
+                }
+                enemies.push(new Enemy(x, z, hp, speed));
+                if (enemies.length > 10) {
+                    enemies.shift();
+                }
+            }
+
+            // Game over
+            function triggerGameOver() {
+                gameOver = true;
+                gameOverTimer = 0;
+                messageEl.textContent = 'YOU ARE DEAD';
+                messageEl.style.opacity = '1';
+                messageEl.style.color = '#c00';
+                messageEl.style.textShadow = '0 0 30px #f00, 0 0 60px #800';
+                playSound('growl', 0.6);
+            }
+
+            function restartGame() {
+                enemies = [];
+                particles = [];
+                stains = [];
+                drips = [];
+                screenBlood = [];
+                dyingEnemies = [];
+                score = 0;
+                kills = 0;
+                health = 100;
+                ammo = maxAmmo;
+                reloading = false;
+                reloadTimer = 0;
+                gameOver = false;
+                gameOverTimer = 0;
+                shakeAmount = 0;
+                flashAmount = 0;
+                spawnTimer = 0;
+                spawnInterval = 3.5;
+                difficulty = 1;
+                messageEl.style.opacity = '0';
+                reloadBar.style.opacity = '0';
+                updateUI();
+                healthEl.style.color = '#ccc';
+            }
+
+            // Draw functions
+            function drawRoom() {
+                const nearZ = 0.8;
+
+                // Compute room polygon corners
+                function cp(x, y, z) { return project(x, y, z); }
+
+                // Back wall corners
+                const bwTL = cp(-5, ROOM_H, BACK_Z);
+                const bwTR = cp(5, ROOM_H, BACK_Z);
+                const bwBL = cp(-5, 0, BACK_Z);
+                const bwBR = cp(5, 0, BACK_Z);
+
+                // Floor corners (near and far)
+                const flBL = cp(-5, 0, nearZ);
+                const flBR = cp(5, 0, nearZ);
+                const flTL = bwBL;
+                const flTR = bwBR;
+
+                // Left wall corners
+                const lwTN = cp(-5, ROOM_H, nearZ);
+                const lwBN = cp(-5, 0, nearZ);
+                const lwTF = bwTL;
+                const lwBF = bwBL;
+
+                // Right wall corners
+                const rwTN = cp(5, ROOM_H, nearZ);
+                const rwBN = cp(5, 0, nearZ);
+                const rwTF = bwTR;
+                const rwBF = bwBR;
+
+                // Ceiling corners
+                const clTN = cp(-5, ROOM_H, nearZ);
+                const clTR = cp(5, ROOM_H, nearZ);
+                const clTF = bwTL;
+                const clTFr = bwTR;
+
+                // Draw ceiling
+                ctx.fillStyle = '#111';
+                ctx.beginPath();
+                ctx.moveTo(clTF.sx, clTF.sy);
+                ctx.lineTo(clTFr.sx, clTFr.sy);
+                ctx.lineTo(clTR.sx, clTR.sy);
+                ctx.lineTo(clTN.sx, clTN.sy);
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = '#1a1a1a';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+
+                // Draw back wall
+                const bwGrad = ctx.createLinearGradient(bwTL.sx, bwTL.sy, bwBR.sx, bwBR.sy);
+                bwGrad.addColorStop(0, '#1c1c1c');
+                bwGrad.addColorStop(0.5, '#181818');
+                bwGrad.addColorStop(1, '#141414');
+                ctx.fillStyle = bwGrad;
+                ctx.beginPath();
+                ctx.moveTo(bwTL.sx, bwTL.sy);
+                ctx.lineTo(bwTR.sx, bwTR.sy);
+                ctx.lineTo(bwBR.sx, bwBR.sy);
+                ctx.lineTo(bwBL.sx, bwBL.sy);
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = '#222';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Back wall panel lines
+                ctx.strokeStyle = '#1a1a1a';
+                ctx.lineWidth = 0.5;
+                for (let i = 1; i < 4; i++) {
+                    const y = i * 1.5;
+                    const lp = cp(-5, y, BACK_Z);
+                    const rp = cp(5, y, BACK_Z);
+                    ctx.beginPath();
+                    ctx.moveTo(lp.sx, lp.sy);
+                    ctx.lineTo(rp.sx, rp.sy);
+                    ctx.stroke();
+                }
+                for (let i = -3; i <= 3; i += 2) {
+                    const tp = cp(i, ROOM_H, BACK_Z);
+                    const bp = cp(i, 0, BACK_Z);
+                    ctx.beginPath();
+                    ctx.moveTo(tp.sx, tp.sy);
+                    ctx.lineTo(bp.sx, bp.sy);
+                    ctx.stroke();
+                }
+
+                // Draw back wall stains
+                drawStainsOnSurface('back-wall');
+
+                // Draw left wall
+                const lwGrad = ctx.createLinearGradient(lwTF.sx, lwTF.sy, lwBN.sx, lwBN.sy);
+                lwGrad.addColorStop(0, '#1a1a1a');
+                lwGrad.addColorStop(1, '#111');
+                ctx.fillStyle = lwGrad;
+                ctx.beginPath();
+                ctx.moveTo(lwTF.sx, lwTF.sy);
+                ctx.lineTo(lwBF.sx, lwBF.sy);
+                ctx.lineTo(lwBN.sx, lwBN.sy);
+                ctx.lineTo(lwTN.sx, lwTN.sy);
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = '#1f1f1f';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+
+                // Draw left wall stains
+                drawStainsOnSurface('left-wall');
+                drawDripsOnSurface('left-wall');
+
+                // Draw right wall
+                const rwGrad = ctx.createLinearGradient(rwTF.sx, rwTF.sy, rwBN.sx, rwBN.sy);
+                rwGrad.addColorStop(0, '#1a1a1a');
+                rwGrad.addColorStop(1, '#111');
+                ctx.fillStyle = rwGrad;
+                ctx.beginPath();
+                ctx.moveTo(rwTF.sx, rwTF.sy);
+                ctx.lineTo(rwBF.sx, rwBF.sy);
+                ctx.lineTo(rwBN.sx, rwBN.sy);
+                ctx.lineTo(rwTN.sx, rwTN.sy);
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = '#1f1f1f';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+
+                // Draw right wall stains
+                drawStainsOnSurface('right-wall');
+                drawDripsOnSurface('right-wall');
+
+                // Draw floor
+                const flGrad = ctx.createLinearGradient(0, flTL.sy, 0, canvas.height);
+                flGrad.addColorStop(0, '#1a1a1a');
+                flGrad.addColorStop(0.3, '#222');
+                flGrad.addColorStop(1, '#2a2a2a');
+                ctx.fillStyle = flGrad;
+                ctx.beginPath();
+                ctx.moveTo(flTL.sx, flTL.sy);
+                ctx.lineTo(flTR.sx, flTR.sy);
+                ctx.lineTo(flBR.sx, flBR.sy);
+                ctx.lineTo(flBL.sx, flBL.sy);
+                ctx.closePath();
+                ctx.fill();
+
+                // Floor grid
+                ctx.strokeStyle = '#1f1f1f';
+                ctx.lineWidth = 0.8;
+                for (let z = 2; z < BACK_Z; z += 3) {
+                    const lp = cp(-5, 0, z);
+                    const rp = cp(5, 0, z);
+                    ctx.beginPath();
+                    ctx.moveTo(lp.sx, lp.sy);
+                    ctx.lineTo(rp.sx, rp.sy);
+                    ctx.stroke();
+                }
+                for (let x = -4; x <= 4; x += 2) {
+                    const fp = cp(x, 0, nearZ);
+                    const bp = cp(x, 0, BACK_Z);
+                    ctx.beginPath();
+                    ctx.moveTo(bp.sx, bp.sy);
+                    ctx.lineTo(fp.sx, fp.sy);
+                    ctx.stroke();
+                }
+
+                // Draw floor stains
+                drawStainsOnSurface('floor');
+
+                // Draw ceiling stains
+                drawStainsOnSurface('ceiling');
+            }
+
+            function getStainScreenPos(stain) {
+                switch (stain.surface) {
+                    case 'floor':
+                        return project(stain.a, 0, stain.b);
+                    case 'back-wall':
+                        return project(stain.a, stain.b, BACK_Z);
+                    case 'left-wall':
+                        return project(-5, stain.a, stain.b);
+                    case 'right-wall':
+                        return project(5, stain.a, stain.b);
+                    case 'ceiling':
+                        return project(stain.a, ROOM_H, stain.b);
+                    default:
+                        return null;
+                }
+            }
+
+            function drawStainsOnSurface(surface) {
+                for (const stain of stains) {
+                    if (stain.surface !== surface) continue;
+                    const p = getStainScreenPos(stain);
+                    if (!p || p.z < 0.1) continue;
+                    const sz = stain.size * p.scale * 0.06;
+                    if (sz < 0.3 || sz > 300) continue;
+                    const col = stain.color;
+                    const alpha = Math.max(0.2, col.a - stain.age * 0.03);
+
+                    // Main stain
+                    const grad = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, sz);
+                    grad.addColorStop(0, `rgba(${col.r},${col.g},${col.b},${alpha})`);
+                    grad.addColorStop(0.5, `rgba(${col.r-15},${col.g},${col.b},${alpha*0.7})`);
+                    grad.addColorStop(1, `rgba(${col.r-30},${col.g},${col.b},0)`);
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    // Irregular shape
+                    const points = 8;
+                    for (let i = 0; i < points; i++) {
+                        const angle = (i / points) * Math.PI * 2;
+                        const r = sz * (0.7 + Math.random() * 0.3);
+                        const sx = p.sx + Math.cos(angle) * r;
+                        const sy = p.sy + Math.sin(angle) * r;
+                        if (i === 0) ctx.moveTo(sx, sy);
+                        else ctx.lineTo(sx, sy);
+                    }
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // Satellite droplets
+                    for (const sat of stain.satellites) {
+                        const satP = { sx: p.sx + sat.da * p.scale * 0.06, sy: p.sy + sat.db * p.scale * 0.06 };
+                        const satSz = sat.sz * p.scale * 0.06;
+                        if (satSz < 0.2 || satSz > 80) continue;
+                        ctx.fillStyle = `rgba(${col.r},${col.g},${col.b},${alpha*0.6})`;
+                        ctx.beginPath();
+                        ctx.arc(satP.sx, satP.sy, satSz, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+
+                    // Glossy highlight on larger stains
+                    if (sz > 4) {
+                        ctx.fillStyle = `rgba(255,200,180,${alpha*0.15})`;
+                        ctx.beginPath();
+                        ctx.arc(p.sx - sz * 0.2, p.sy - sz * 0.2, sz * 0.25, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            function drawDripsOnSurface(surface) {
+                for (const drip of drips) {
+                    if (drip.surface !== surface || !drip.alive) continue;
+                    let p;
+                    switch (surface) {
+                        case 'back-wall':
+                            p = project(drip.a, drip.b, BACK_Z);
+                            break;
+                        case 'left-wall':
+                            p = project(-5, drip.a, drip.b);
+                            break;
+                        case 'right-wall':
+                            p = project(5, drip.a, drip.b);
+                            break;
+                        default:
+                            continue;
+                    }
+                    if (!p || p.z < 0.1) continue;
+                    const dripSz = 1.5 * p.scale * 0.03;
+                    if (dripSz < 0.5 || dripSz > 40) continue;
+                    const alpha = Math.max(0.2, 1 - drip.age * 0.1);
+
+                    // Drip trail
+                    if (drip.trail.length > 1) {
+                        ctx.beginPath();
+                        ctx.strokeStyle = `rgba(100,0,0,${alpha*0.5})`;
+                        ctx.lineWidth = dripSz * 0.6;
+                        for (let i = 0; i < drip.trail.length; i++) {
+                            const tp = getDripScreenPos(drip, drip.trail[i]);
+                            if (tp && tp.z > 0.1) {
+                                if (i === 0) ctx.moveTo(tp.sx, tp.sy);
+                                else ctx.lineTo(tp.sx, tp.sy);
+                            }
+                        }
+                        ctx.stroke();
+                    }
+
+                    // Main drip
+                    const grad = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, dripSz);
+                    grad.addColorStop(0, `rgba(160,10,5,${alpha})`);
+                    grad.addColorStop(0.7, `rgba(100,0,0,${alpha*0.7})`);
+                    grad.addColorStop(1, `rgba(60,0,0,0)`);
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.arc(p.sx, p.sy, dripSz, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Highlight
+                    ctx.fillStyle = `rgba(255,150,120,${alpha*0.3})`;
+                    ctx.beginPath();
+                    ctx.arc(p.sx - dripSz * 0.2, p.sy - dripSz * 0.3, dripSz * 0.2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function getDripScreenPos(drip, trailPoint) {
+                switch (drip.surface) {
+                    case 'back-wall':
+                        return project(trailPoint.a, trailPoint.b, BACK_Z);
+                    case 'left-wall':
+                        return project(-5, trailPoint.a, trailPoint.b);
+                    case 'right-wall':
+                        return project(5, trailPoint.a, trailPoint.b);
+                    default:
+                        return null;
+                }
+            }
+
+            function drawEnemy(enemy) {
+                const sp = enemy.getScreenPos();
+                if (sp.z < 0.3) return;
+                const sz = sp.scale;
+                const h = enemy.worldHeight * sz;
+                const w = h * 0.4;
+                const sx = sp.sx;
+                const sy = sp.sy;
+                const alpha = enemy.dying ? Math.max(0, 1 - enemy.deathTimer / 0.5) : 1;
+                const flash = enemy.hitFlash;
+
+                if (h < 4 || alpha < 0.05) return;
+
+                ctx.save();
+                ctx.globalAlpha = alpha;
+
+                // Body
+                const bodyGrad = ctx.createLinearGradient(sx - w, sy - h * 0.3, sx + w, sy + h * 0.3);
+                const darken = flash > 0 ? Math.floor(255 * flash) : 0;
+                bodyGrad.addColorStop(0, `rgb(${20+darken},${18+darken},${15+darken})`);
+                bodyGrad.addColorStop(0.5, `rgb(${35+darken},${30+darken},${25+darken})`);
+                bodyGrad.addColorStop(1, `rgb(${15+darken},${12+darken},${10+darken})`);
+
+                // Legs
+                ctx.fillStyle = bodyGrad;
+                const legW = w * 0.25;
+                const legH = h * 0.45;
+                const legY = sy + h * 0.15;
+                ctx.fillRect(sx - w * 0.35, legY, legW, legH);
+                ctx.fillRect(sx + w * 0.1, legY, legW, legH);
+
+                // Torso
+                const torsoW = w * 0.85;
+                const torsoH = h * 0.4;
+                const torsoY = sy - h * 0.1;
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.moveTo(sx - torsoW * 0.6, torsoY + torsoH);
+                ctx.lineTo(sx - torsoW * 0.5, torsoY);
+                ctx.lineTo(sx + torsoW * 0.5, torsoY);
+                ctx.lineTo(sx + torsoW * 0.6, torsoY + torsoH);
+                ctx.closePath();
+                ctx.fill();
+
+                // Head
+                const headR = w * 0.45;
+                const headY = sy - h * 0.28;
+                ctx.fillStyle = `rgb(${25+darken},${22+darken},${18+darken})`;
+                ctx.beginPath();
+                ctx.arc(sx, headY, headR, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Eyes
+                const eyeGlow = enemy.eyeGlow * (1 + flash);
+                const eyeR = headR * 0.22;
+                const eyeY = headY - headR * 0.1;
+                const eyeSpacing = headR * 0.55;
+                for (let side = -1; side <= 1; side += 2) {
+                    const ex = sx + side * eyeSpacing;
+                    const eyeGrad = ctx.createRadialGradient(ex, eyeY, 0, ex, eyeY, eyeR * 2);
+                    eyeGrad.addColorStop(0, `rgba(255,40,10,${eyeGlow})`);
+                    eyeGrad.addColorStop(0.4, `rgba(200,20,5,${eyeGlow*0.6})`);
+                    eyeGrad.addColorStop(1, 'rgba(100,0,0,0)');
+                    ctx.fillStyle = eyeGrad;
+                    ctx.beginPath();
+                    ctx.arc(ex, eyeY, eyeR * 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = `rgba(255,200,150,${eyeGlow*0.9})`;
+                    ctx.beginPath();
+                    ctx.arc(ex, eyeY, eyeR * 0.6, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Arms
+                ctx.fillStyle = bodyGrad;
+                const armW = w * 0.2;
+                const armH = h * 0.35;
+                ctx.fillRect(sx - torsoW * 0.6 - armW, torsoY + torsoH * 0.1, armW, armH);
+                ctx.fillRect(sx + torsoW * 0.6, torsoY + torsoH * 0.1, armW, armH);
+
+                ctx.restore();
+            }
+
+            function drawCrosshair() {
+                const x = crosshairX;
+                const y = crosshairY;
+                const size = 18;
+                ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+                ctx.lineWidth = 1.5;
+                ctx.shadowColor = 'rgba(255,0,0,0.6)';
+                ctx.shadowBlur = 8;
+                ctx.beginPath();
+                ctx.moveTo(x - size, y);
+                ctx.lineTo(x - size * 0.3, y);
+                ctx.moveTo(x + size * 0.3, y);
+                ctx.lineTo(x + size, y);
+                ctx.moveTo(x, y - size);
+                ctx.lineTo(x, y - size * 0.3);
+                ctx.moveTo(x, y + size * 0.3);
+                ctx.lineTo(x, y + size);
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+                ctx.beginPath();
+                ctx.arc(x, y, size * 0.15, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255,60,30,0.9)';
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                ctx.lineWidth = 0.5;
+                ctx.stroke();
+            }
+
+            function drawMuzzleFlash() {
+                if (flashAmount <= 0) return;
+                const x = cx;
+                const y = canvas.height - 60;
+                const sz = 40 + flashAmount * 80;
+                const grad = ctx.createRadialGradient(x, y, 0, x, y, sz);
+                grad.addColorStop(0, `rgba(255,255,200,${flashAmount*0.9})`);
+                grad.addColorStop(0.3, `rgba(255,200,50,${flashAmount*0.6})`);
+                grad.addColorStop(0.7, `rgba(255,100,20,${flashAmount*0.2})`);
+                grad.addColorStop(1, 'rgba(255,50,10,0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(x, y, sz, 0, Math.PI * 2);
+                ctx.fill();
+                // Extra bright center
+                const grad2 = ctx.createRadialGradient(x, y, 0, x, y, sz * 0.2);
+                grad2.addColorStop(0, `rgba(255,255,255,${flashAmount})`);
+                grad2.addColorStop(1, 'rgba(255,255,200,0)');
+                ctx.fillStyle = grad2;
+                ctx.beginPath();
+                ctx.arc(x, y, sz * 0.2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            function drawScreenBlood() {
+                for (const sb of screenBlood) {
+                    sb.draw(ctx);
+                }
+            }
+
+            function drawVignette() {
+                const grad = ctx.createRadialGradient(cx, cy, canvas.width * 0.35, cx, cy, canvas.width * 0.75);
+                grad.addColorStop(0, 'rgba(0,0,0,0)');
+                grad.addColorStop(1, 'rgba(0,0,0,0.7)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+
+            function drawGameOverScreen() {
+                ctx.fillStyle = 'rgba(0,0,0,0.8)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#c00';
+                ctx.font = 'bold 48px "Courier New", monospace';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = '#f00';
+                ctx.shadowBlur = 30;
+                ctx.fillText('YOU ARE DEAD', cx, cy - 40);
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#fff';
+                ctx.font = '20px "Courier New", monospace';
+                ctx.fillText(`Score: ${score}  |  Kills: ${kills}`, cx, cy + 20);
+                ctx.fillStyle = '#aaa';
+                ctx.font = '16px "Courier New", monospace';
+                ctx.fillText('Click or tap to restart', cx, cy + 55);
+                ctx.textAlign = 'start';
+            }
+
+            // Main update
+            function update(dt) {
+                if (gameOver) {
+                    gameOverTimer += dt;
+                    flashAmount = Math.max(0, flashAmount - dt * 3);
+                    shakeAmount = Math.max(0, shakeAmount - dt * 2);
+                    for (const p of particles) p.update(dt);
+                    particles = particles.filter(p => p.alive);
+                    for (const sb of screenBlood) sb.update(dt);
+                    screenBlood = screenBlood.filter(sb => sb.alive);
+                    for (const drip of drips) {
+                        if (!drip.alive) continue;
+                        drip.age += dt;
+                        if (drip.age > 6) drip.alive = false;
+                    }
+                    drips = drips.filter(d => d.alive);
+                    for (const stain of stains) stain.age += dt * 0.3;
+                    return;
+                }
+
+                // Spawn enemies
+                spawnTimer += dt;
+                if (spawnTimer >= spawnInterval) {
+                    spawnTimer = 0;
+                    spawnEnemy();
+                    spawnInterval = Math.max(1.2, 3.5 - difficulty * 0.25);
+                    difficulty = 1 + Math.floor(kills / 5);
+                }
+
+                // Update enemies
+                for (const enemy of enemies) {
+                    const result = enemy.update(dt);
+                    if (result === 'attack') {
+                        health -= 28 + Math.random() * 15;
+                        shakeAmount = Math.max(shakeAmount, 0.5);
+                        playSound('growl', 0.4);
+                        if (screenBlood.length < 20) {
+                            screenBlood.push(new ScreenBloodSpot(
+                                cx + (Math.random() - 0.5) * 300,
+                                cy + (Math.random() - 0.5) * 300,
+                                30 + Math.random() * 60
+                            ));
+                        }
+                        updateUI();
+                        if (health <= 0) {
+                            health = 0;
+                            triggerGameOver();
+                            updateUI();
+                            return;
+                        }
+                    }
+                }
+
+                // Remove dead enemies
+                enemies = enemies.filter(e => {
+                    if (e.dying && e.deathTimer > 0.5) return false;
+                    return true;
+                });
+
+                // Update particles
+                for (const p of particles) p.update(dt);
+                particles = particles.filter(p => p.alive);
+
+                // Update screen blood
+                for (const sb of screenBlood) sb.update(dt);
+                screenBlood = screenBlood.filter(sb => sb.alive);
+
+                // Update drips
+                for (const drip of drips) {
+                    if (!drip.alive) continue;
+                    drip.age += dt;
+                    const moveAmount = drip.speed * dt;
+                    // Store trail
+                    drip.trail.push({ a: drip.a, b: drip.b });
+                    if (drip.trail.length > 20) drip.trail.shift();
+                    // Move down the wall
+                    if (drip.surface === 'back-wall' || drip.surface === 'left-wall' || drip.surface === 'right-wall') {
+                        drip.b -= moveAmount; // b is y for these surfaces
+                        if (drip.b <= 0) {
+                            // Reached floor
+                            drip.b = 0;
+                            drip.alive = false;
+                            // Create tiny floor stain
+                            let fx, fz;
+                            if (drip.surface === 'back-wall') { fx = drip.a;
+                                fz = BACK_Z; } else if (drip.surface === 'left-wall') { fx = -5;
+                                fz = drip.b + 0.1; } else { fx = 5;
+                                fz = drip.b + 0.1; }
+                            const col = bloodColor(0.5, 0.6);
+                            stains.push({ surface: 'floor', a: fx, b: Math.min(BACK_Z, Math.max(0.3, fz)), size: 0.5,
+                                color: col, age: 0, satellites: [] });
+                            if (stains.length > 250) stains.shift();
+                        }
+                    }
+                }
+                drips = drips.filter(d => d.alive);
+
+                // Update stains aging
+                for (const stain of stains) stain.age += dt * 0.15;
+
+                // Update timers
+                flashAmount = Math.max(0, flashAmount - dt * 4);
+                shakeAmount = Math.max(0, shakeAmount - dt * 3);
+
+                // Reload
+                if (reloading) {
+                    reloadTimer += dt;
+                    const progress = Math.min(1, reloadTimer / reloadDuration);
+                    reloadFill.style.width = (progress * 100) + '%';
+                    if (progress >= 1) {
+                        finishReload();
+                    }
+                }
+
+                updateUI();
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                // Screen shake
+                let shakeX = 0,
+                    shakeY = 0;
+                if (shakeAmount > 0.01) {
+                    shakeX = (Math.random() - 0.5) * shakeAmount * 18;
+                    shakeY = (Math.random() - 0.5) * shakeAmount * 18;
+                }
+
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                // Draw room
+                drawRoom();
+
+                // Sort enemies by z (far first)
+                const sortedEnemies = [...enemies].filter(e => e.alive || e.dying).sort((a, b) => b.z - a.z);
+                for (const enemy of sortedEnemies) {
+                    drawEnemy(enemy);
+                }
+
+                // Draw particles (in-flight)
+                for (const p of particles) {
+                    if (!p.stuck && !(p instanceof DustParticle && p.age > p.maxAge * 0.7)) {
+                        p.draw(ctx);
+                    }
+                }
+
+                ctx.restore();
+
+                // Screen-space effects (no shake)
+                drawMuzzleFlash();
+                drawScreenBlood();
+                drawVignette();
+                if (!gameOver) drawCrosshair();
+
+                if (gameOver) drawGameOverScreen();
+
+                // Flash overlay
+                if (flashAmount > 0.01 && !gameOver) {
+                    ctx.fillStyle = `rgba(255,200,100,${flashAmount*0.15})`;
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                }
+            }
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.1) dt = 0.1;
+                lastTime = timestamp;
+                frameCount++;
+
+                update(dt);
+                render();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // Restart on click when game over
+            canvas.addEventListener('click', (e) => {
+                if (gameOver && gameOverTimer > 0.8) {
+                    restartGame();
+                }
+            });
+            canvas.addEventListener('touchstart', (e) => {
+                if (gameOver && gameOverTimer > 0.8) {
+                    restartGame();
+                }
+            });
+
+            // Initialize
+            updateUI();
+            crosshairX = cx;
+            crosshairY = cy;
+            spawnEnemy();
+            spawnEnemy();
+            lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+
+            // Show initial message
+            messageEl.textContent = 'SHOOT THEM';
+            messageEl.style.opacity = '1';
+            messageEl.style.color = '#fff';
+            messageEl.style.textShadow = '0 0 20px #f00, 0 0 40px #800';
+            messageEl.style.fontSize = '28px';
+            setTimeout(() => {
+                if (!gameOver) messageEl.style.opacity = '0';
+            }, 2500);
+
+            console.log('🩸 BLOOD ROOM ready. Click to shoot. Survive the darkness.');
+        })();
+    </script>
+</body>
+</html>
