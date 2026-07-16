@@ -322,5 +322,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T05:04:22.557Z",
     "updatedAt": "2026-07-16T05:04:22.557Z"
+  },
+  {
+    "slug": "yo-chat-is-milo-bomnoclat",
+    "title": "yo chat is milo bomnoclat",
+    "description": "yo chat is milo bomnoclat",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T05:04:25.478Z",
+    "updatedAt": "2026-07-16T05:04:25.478Z"
   }
 ]
