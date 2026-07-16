@@ -457,5 +457,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T05:33:46.338Z",
     "updatedAt": "2026-07-16T05:33:46.338Z"
+  },
+  {
+    "slug": "kai-loves-his-dogs",
+    "title": "Kai Loves His Dogs",
+    "description": "kai loves his dogs",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T05:34:49.229Z",
+    "updatedAt": "2026-07-16T05:34:49.229Z"
   }
 ]
