@@ -1,0 +1,1360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>💍 Milo Marriage - Wedding Dash</title>
+    <style>
+        :root {
+            --bg: #fdf2f8;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(135deg, #fce4ec, #f8e8f0, #fdf2f8, #fff0f5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Georgia', 'Times New Roman', serif;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+        }
+
+        #game-container {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            height: 100%;
+            max-width: 500px;
+            max-height: 100vh;
+        }
+
+        canvas {
+            display: block;
+            border-radius: 20px;
+            box-shadow:
+                0 0 0 6px #d4a574,
+                0 0 0 12px #f0d4b8,
+                0 0 0 18px #d4a574,
+                0 8px 40px rgba(0, 0, 0, 0.3);
+            max-width: 95vw;
+            max-height: 95vh;
+            image-rendering: auto;
+            background: #fff;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            // Game dimensions (internal resolution)
+            const GAME_WIDTH = 420;
+            const GAME_HEIGHT = 700;
+
+            // Set canvas internal size
+            canvas.width = GAME_WIDTH;
+            canvas.height = GAME_HEIGHT;
+
+            // Responsive scaling
+            function resizeCanvas() {
+                const container = document.getElementById('game-container');
+                const maxW = Math.min(container.clientWidth * 0.95, 500);
+                const maxH = Math.min(window.innerHeight * 0.95, GAME_HEIGHT);
+                const scale = Math.min(maxW / GAME_WIDTH, maxH / GAME_HEIGHT);
+                canvas.style.width = (GAME_WIDTH * scale) + 'px';
+                canvas.style.height = (GAME_HEIGHT * scale) + 'px';
+            }
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+            window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 100));
+
+            // Get scaled coordinates from event
+            function getGameCoords(e) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = GAME_WIDTH / rect.width;
+                const scaleY = GAME_HEIGHT / rect.height;
+                let clientX, clientY;
+                if (e.touches && e.touches.length > 0) {
+                    clientX = e.touches[0].clientX;
+                    clientY = e.touches[0].clientY;
+                } else if (e.changedTouches && e.changedTouches.length > 0) {
+                    clientX = e.changedTouches[0].clientX;
+                    clientY = e.changedTouches[0].clientY;
+                } else {
+                    clientX = e.clientX;
+                    clientY = e.clientY;
+                }
+                return {
+                    x: (clientX - rect.left) * scaleX,
+                    y: (clientY - rect.top) * scaleY
+                };
+            }
+
+            // ==================== AUDIO ENGINE ====================
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    try {
+                        audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                    } catch (e) {
+                        audioCtx = null;
+                    }
+                }
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            }
+
+            function playTone(freq, duration, type = 'sine', vol = 0.15, freq2 = null, glideTime = 0) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (freq2 && glideTime > 0) {
+                        osc.frequency.linearRampToValueAtTime(freq2, t + glideTime);
+                    }
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) {
+                    // Silently fail
+                }
+            }
+
+            function playCollectSound() {
+                playTone(880, 0.12, 'sine', 0.18);
+                setTimeout(() => playTone(1100, 0.1, 'sine', 0.14), 60);
+                setTimeout(() => playTone(1320, 0.08, 'sine', 0.1), 120);
+            }
+
+            function playBonusSound() {
+                playTone(660, 0.08, 'sine', 0.16);
+                setTimeout(() => playTone(880, 0.08, 'sine', 0.16), 70);
+                setTimeout(() => playTone(1100, 0.08, 'sine', 0.16), 140);
+                setTimeout(() => playTone(1320, 0.12, 'sine', 0.18), 200);
+            }
+
+            function playDamageSound() {
+                playTone(120, 0.25, 'sawtooth', 0.2, 50, 0.2);
+                playTone(80, 0.3, 'triangle', 0.15, 30, 0.25);
+            }
+
+            function playGameOverSound() {
+                playTone(440, 0.2, 'sine', 0.18, 330, 0.18);
+                setTimeout(() => playTone(330, 0.25, 'sine', 0.16, 220, 0.22), 200);
+                setTimeout(() => playTone(220, 0.35, 'sine', 0.14, 110, 0.3), 420);
+            }
+
+            function playStartSound() {
+                playTone(523, 0.1, 'sine', 0.15);
+                setTimeout(() => playTone(659, 0.1, 'sine', 0.15), 100);
+                setTimeout(() => playTone(784, 0.1, 'sine', 0.15), 200);
+                setTimeout(() => playTone(1047, 0.15, 'sine', 0.18), 300);
+            }
+
+            // ==================== GAME STATE ====================
+            const STATE = {
+                START: 'start',
+                PLAYING: 'playing',
+                GAMEOVER: 'gameover'
+            };
+
+            let gameState = STATE.START;
+            let score = 0;
+            let lives = 5;
+            let comboCount = 0;
+            let comboTimer = 0;
+            let difficulty = 1;
+            let difficultyTimer = 0;
+            let spawnTimer = 0;
+            let shakeAmount = 0;
+            let shakeDecay = 0.85;
+            let highScore = 0;
+            let messageText = '';
+            let messageTimer = 0;
+
+            // Player
+            const player = {
+                x: GAME_WIDTH / 2,
+                y: GAME_HEIGHT - 130,
+                width: 50,
+                height: 70,
+                speed: 5.5,
+                targetX: GAME_WIDTH / 2,
+                bobOffset: 0,
+                bobSpeed: 0.06,
+                invincible: 0,
+                eyeBlink: 0,
+                eyeBlinkTimer: 0,
+            };
+
+            // Falling objects
+            let fallingObjects = [];
+            // Particles
+            let particles = [];
+            // Background confetti
+            let bgConfetti = [];
+
+            // Input tracking
+            let keys = {};
+            let mouseDown = false;
+            let touchActive = false;
+            let touchTargetX = null;
+
+            // ==================== INITIALIZATION ====================
+            function initBgConfetti() {
+                bgConfetti = [];
+                for (let i = 0; i < 35; i++) {
+                    bgConfetti.push({
+                        x: Math.random() * GAME_WIDTH,
+                        y: Math.random() * GAME_HEIGHT,
+                        size: 2 + Math.random() * 5,
+                        speed: 0.3 + Math.random() * 1.2,
+                        sway: Math.random() * 2 - 1,
+                        swaySpeed: 0.01 + Math.random() * 0.03,
+                        color: ['#f9a8d4', '#fbbf24', '#f472b6', '#e879f9', '#fda4af', '#fde68a',
+                            '#ffffff'
+                        ][Math.floor(Math.random() * 7)],
+                        opacity: 0.3 + Math.random() * 0.6,
+                        rotation: Math.random() * Math.PI * 2,
+                        rotSpeed: (Math.random() - 0.5) * 0.04,
+                    });
+                }
+            }
+
+            function resetGame() {
+                score = 0;
+                lives = 5;
+                comboCount = 0;
+                comboTimer = 0;
+                difficulty = 1;
+                difficultyTimer = 0;
+                spawnTimer = 0;
+                shakeAmount = 0;
+                messageText = '';
+                messageTimer = 0;
+                player.x = GAME_WIDTH / 2;
+                player.y = GAME_HEIGHT - 130;
+                player.targetX = GAME_WIDTH / 2;
+                player.invincible = 0;
+                player.bobOffset = 0;
+                player.eyeBlink = 0;
+                player.eyeBlinkTimer = 0;
+                fallingObjects = [];
+                particles = [];
+                initBgConfetti();
+            }
+
+            function startGame() {
+                initAudio();
+                resetGame();
+                gameState = STATE.PLAYING;
+                playStartSound();
+            }
+
+            function endGame() {
+                gameState = STATE.GAMEOVER;
+                playGameOverSound();
+                if (score > highScore) {
+                    highScore = score;
+                }
+                // Spawn burst particles
+                for (let i = 0; i < 40; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 2 + Math.random() * 6;
+                    particles.push({
+                        x: player.x,
+                        y: player.y - 20,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - 2,
+                        life: 1,
+                        decay: 0.008 + Math.random() * 0.025,
+                        size: 3 + Math.random() * 7,
+                        color: ['#fbbf24', '#f472b6', '#fda4af', '#ffffff', '#e879f9'][Math.floor(Math
+                            .random() * 5)],
+                        gravity: 0.08,
+                    });
+                }
+                shakeAmount = 15;
+            }
+
+            // ==================== DRAWING FUNCTIONS ====================
+            function drawHeart(ctx, x, y, size, color) {
+                ctx.save();
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                const s = size;
+                const cx = x;
+                const cy = y;
+                ctx.moveTo(cx, cy + s * 0.3);
+                ctx.bezierCurveTo(cx - s * 0.55, cy - s * 0.15, cx - s * 0.5, cy - s * 0.55, cx, cy - s * 0.25);
+                ctx.bezierCurveTo(cx + s * 0.5, cy - s * 0.55, cx + s * 0.55, cy - s * 0.15, cx, cy + s * 0.3);
+                ctx.closePath();
+                ctx.fill();
+                // Shine
+                ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                ctx.beginPath();
+                ctx.arc(cx - s * 0.2, cy - s * 0.3, s * 0.18, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            function drawRing(ctx, x, y, size) {
+                ctx.save();
+                // Band
+                ctx.strokeStyle = '#fbbf24';
+                ctx.lineWidth = size * 0.3;
+                ctx.beginPath();
+                ctx.arc(x, y, size * 0.5, 0, Math.PI * 2);
+                ctx.stroke();
+                // Gold gradient effect
+                ctx.strokeStyle = '#fef3c7';
+                ctx.lineWidth = size * 0.15;
+                ctx.beginPath();
+                ctx.arc(x, y, size * 0.5, -0.8, 0.5);
+                ctx.stroke();
+                // Diamond
+                const dx = x;
+                const dy = y - size * 0.55;
+                ctx.fillStyle = '#e0f2fe';
+                ctx.beginPath();
+                ctx.moveTo(dx, dy - size * 0.35);
+                ctx.lineTo(dx + size * 0.22, dy);
+                ctx.lineTo(dx, dy + size * 0.2);
+                ctx.lineTo(dx - size * 0.22, dy);
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = '#bae6fd';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                // Sparkle on diamond
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(dx - size * 0.05, dy - size * 0.08, size * 0.08, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            function drawBouquet(ctx, x, y, size) {
+                ctx.save();
+                // Stems
+                ctx.strokeStyle = '#4ade80';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(x, y + size * 0.4);
+                ctx.lineTo(x - size * 0.2, y + size * 0.2);
+                ctx.moveTo(x, y + size * 0.4);
+                ctx.lineTo(x + size * 0.15, y + size * 0.2);
+                ctx.moveTo(x, y + size * 0.4);
+                ctx.lineTo(x, y + size * 0.0);
+                ctx.stroke();
+                // Flowers
+                const flowers = [
+                    { dx: -size * 0.25, dy: -size * 0.15, r: size * 0.22, c: '#f472b6' },
+                    { dx: size * 0.2, dy: -size * 0.1, r: size * 0.2, c: '#fbbf24' },
+                    { dx: 0, dy: -size * 0.35, r: size * 0.25, c: '#e879f9' },
+                    { dx: -size * 0.1, dy: -size * 0.05, r: size * 0.18, c: '#fda4af' },
+                    { dx: size * 0.05, dy: -size * 0.2, r: size * 0.19, c: '#fb7185' },
+                ];
+                flowers.forEach(f => {
+                    ctx.fillStyle = f.c;
+                    ctx.beginPath();
+                    ctx.arc(x + f.dx, y + f.dy, f.r, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+                    ctx.beginPath();
+                    ctx.arc(x + f.dx - f.r * 0.2, y + f.dy - f.r * 0.2, f.r * 0.4, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+                // Ribbon
+                ctx.fillStyle = '#fde68a';
+                ctx.beginPath();
+                ctx.moveTo(x, y + size * 0.35);
+                ctx.lineTo(x - size * 0.35, y + size * 0.5);
+                ctx.lineTo(x - size * 0.2, y + size * 0.55);
+                ctx.lineTo(x, y + size * 0.4);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.moveTo(x, y + size * 0.35);
+                ctx.lineTo(x + size * 0.35, y + size * 0.5);
+                ctx.lineTo(x + size * 0.2, y + size * 0.55);
+                ctx.lineTo(x, y + size * 0.4);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            function drawColdFeet(ctx, x, y, size) {
+                ctx.save();
+                // Ice cube
+                const grad = ctx.createLinearGradient(x - size * 0.4, y - size * 0.4, x + size * 0.4, y + size *
+                    0.4);
+                grad.addColorStop(0, '#e0f2fe');
+                grad.addColorStop(0.5, '#bae6fd');
+                grad.addColorStop(1, '#7dd3fc');
+                ctx.fillStyle = grad;
+                ctx.strokeStyle = '#38bdf8';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                const s = size * 0.45;
+                ctx.roundRect(x - s, y - s, s * 2, s * 2, s * 0.3);
+                ctx.fill();
+                ctx.stroke();
+                // Frost
+                ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                ctx.beginPath();
+                ctx.arc(x - s * 0.3, y - s * 0.3, s * 0.35, 0, Math.PI * 2);
+                ctx.fill();
+                // Snowflake icon
+                ctx.fillStyle = '#ffffff';
+                ctx.font = `${size*0.7}px serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('❄️', x, y);
+                ctx.restore();
+            }
+
+            function drawCakeSplat(ctx, x, y, size) {
+                ctx.save();
+                // Messy blob
+                ctx.fillStyle = '#d4a574';
+                ctx.beginPath();
+                const s = size * 0.5;
+                ctx.ellipse(x - s * 0.3, y - s * 0.1, s * 0.7, s * 0.5, -0.3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#c4956a';
+                ctx.beginPath();
+                ctx.ellipse(x + s * 0.2, y + s * 0.1, s * 0.6, s * 0.45, 0.2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#e8c9a0';
+                ctx.beginPath();
+                ctx.ellipse(x - s * 0.1, y - s * 0.25, s * 0.5, s * 0.35, -0.1, 0, Math.PI * 2);
+                ctx.fill();
+                // Frosting drips
+                ctx.fillStyle = '#fef3c7';
+                ctx.beginPath();
+                ctx.arc(x - s * 0.3, y - s * 0.3, s * 0.25, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#fde68a';
+                ctx.beginPath();
+                ctx.arc(x + s * 0.25, y - s * 0.2, s * 0.2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            function drawMilo(ctx, x, y, scale = 1) {
+                ctx.save();
+                ctx.translate(x, y);
+                const s = scale;
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                ctx.beginPath();
+                ctx.ellipse(0, 28 * s, 16 * s, 5 * s, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Legs
+                ctx.fillStyle = '#1a1a1a';
+                ctx.fillRect(-7 * s, 14 * s, 6 * s, 14 * s);
+                ctx.fillRect(1 * s, 14 * s, 6 * s, 14 * s);
+                // Shoes
+                ctx.fillStyle = '#2d2d2d';
+                ctx.fillRect(-8 * s, 26 * s, 8 * s, 4 * s);
+                ctx.fillRect(0 * s, 26 * s, 8 * s, 4 * s);
+
+                // Body (tuxedo)
+                const bodyGrad = ctx.createLinearGradient(0, -8 * s, 0, 16 * s);
+                bodyGrad.addColorStop(0, '#1a1a1a');
+                bodyGrad.addColorStop(0.6, '#2d2d2d');
+                bodyGrad.addColorStop(1, '#1a1a1a');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.roundRect(-10 * s, -6 * s, 20 * s, 22 * s, 4 * s);
+                ctx.fill();
+
+                // White shirt front
+                ctx.fillStyle = '#f5f5f5';
+                ctx.beginPath();
+                ctx.moveTo(-3 * s, -6 * s);
+                ctx.lineTo(3 * s, -6 * s);
+                ctx.lineTo(5 * s, 8 * s);
+                ctx.lineTo(-5 * s, 8 * s);
+                ctx.closePath();
+                ctx.fill();
+
+                // Bow tie
+                ctx.fillStyle = '#e11d48';
+                ctx.beginPath();
+                ctx.moveTo(0, -3 * s);
+                ctx.lineTo(-6 * s, -7 * s);
+                ctx.lineTo(-6 * s, -1 * s);
+                ctx.closePath();
+                ctx.fill();
+                ctx.beginPath();
+                ctx.moveTo(0, -3 * s);
+                ctx.lineTo(6 * s, -7 * s);
+                ctx.lineTo(6 * s, -1 * s);
+                ctx.closePath();
+                ctx.fill();
+                ctx.fillStyle = '#be123c';
+                ctx.beginPath();
+                ctx.arc(0, -3.5 * s, 2.5 * s, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Arms
+                ctx.fillStyle = '#1a1a1a';
+                ctx.fillRect(-14 * s, -4 * s, 5 * s, 12 * s);
+                ctx.fillRect(9 * s, -4 * s, 5 * s, 12 * s);
+                // Hands
+                ctx.fillStyle = '#fddcb5';
+                ctx.beginPath();
+                ctx.arc(-11.5 * s, 9 * s, 3.5 * s, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(11.5 * s, 9 * s, 3.5 * s, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Head
+                ctx.fillStyle = '#fddcb5';
+                ctx.beginPath();
+                ctx.arc(0, -14 * s, 10 * s, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Hair
+                ctx.fillStyle = '#3d1c02';
+                ctx.beginPath();
+                ctx.arc(0, -18 * s, 10.5 * s, Math.PI, Math.PI * 2);
+                ctx.fill();
+                ctx.fillRect(-10.5 * s, -18 * s, 21 * s, 5 * s);
+
+                // Eyes
+                const blink = player.eyeBlink > 0.5 ? 0.15 : 1;
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.ellipse(-4 * s, -16 * s, 3 * s, 3.5 * s * blink, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(4 * s, -16 * s, 3 * s, 3.5 * s * blink, 0, 0, Math.PI * 2);
+                ctx.fill();
+                if (blink > 0.3) {
+                    ctx.fillStyle = '#1a1a1a';
+                    ctx.beginPath();
+                    ctx.arc(-4 * s, -16 * s, 1.8 * s, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(4 * s, -16 * s, 1.8 * s, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Eye shine
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.arc(-3.2 * s, -17 * s, 0.7 * s, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(4.8 * s, -17 * s, 0.7 * s, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Smile
+                ctx.strokeStyle = '#c47a5a';
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                ctx.arc(0, -12 * s, 3.5 * s, 0.2, Math.PI - 0.2);
+                ctx.stroke();
+
+                // Top hat
+                ctx.fillStyle = '#1a1a1a';
+                ctx.fillRect(-7 * s, -26 * s, 14 * s, 10 * s);
+                ctx.fillRect(-10 * s, -17 * s, 20 * s, 3 * s);
+                // Hat band
+                ctx.fillStyle = '#e11d48';
+                ctx.fillRect(-7 * s, -18 * s, 14 * s, 2 * s);
+                // Hat shine
+                ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                ctx.fillRect(-5 * s, -25 * s, 4 * s, 8 * s);
+
+                // Rosy cheeks
+                ctx.fillStyle = 'rgba(255,150,150,0.35)';
+                ctx.beginPath();
+                ctx.arc(-6 * s, -12 * s, 2.5 * s, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(6 * s, -12 * s, 2.5 * s, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.restore();
+            }
+
+            function drawWeddingArch(ctx) {
+                ctx.save();
+                const archY = 70;
+                const archX = GAME_WIDTH / 2;
+                const archW = 180;
+                const archH = 100;
+
+                // Columns
+                const colGrad = ctx.createLinearGradient(0, 0, 0, archY + archH);
+                colGrad.addColorStop(0, '#f5e6d3');
+                colGrad.addColorStop(0.5, '#e8d5c0');
+                colGrad.addColorStop(1, '#d4c4b0');
+                ctx.fillStyle = colGrad;
+                ctx.fillRect(archX - archW / 2 - 12, archY, 24, archH);
+                ctx.fillRect(archX + archW / 2 - 12, archY, 24, archH);
+
+                // Arch curve
+                ctx.strokeStyle = '#e8d5c0';
+                ctx.lineWidth = 14;
+                ctx.beginPath();
+                ctx.arc(archX, archY + 10, archW / 2, Math.PI, 0);
+                ctx.stroke();
+                ctx.strokeStyle = '#f5e6d3';
+                ctx.lineWidth = 8;
+                ctx.beginPath();
+                ctx.arc(archX, archY + 10, archW / 2, Math.PI, 0);
+                ctx.stroke();
+
+                // Flowers on arch
+                const flowerPositions = [];
+                for (let i = 0; i < 18; i++) {
+                    const angle = Math.PI + (i / 17) * Math.PI;
+                    const fx = archX + Math.cos(angle) * (archW / 2);
+                    const fy = (archY + 10) + Math.sin(angle) * (archW / 2);
+                    flowerPositions.push({ x: fx, y: fy });
+                }
+                flowerPositions.forEach(fp => {
+                    ctx.fillStyle = ['#f472b6', '#fbbf24', '#e879f9', '#fda4af', '#fb7185'][Math.floor(Math
+                        .random() * 5)];
+                    ctx.beginPath();
+                    ctx.arc(fp.x, fp.y, 5 + Math.random() * 4, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.arc(fp.x - 1, fp.y - 1, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+
+                // Top center flower cluster
+                ctx.fillStyle = '#f472b6';
+                ctx.beginPath();
+                ctx.arc(archX, archY - archW / 2 + 8, 10, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#fbbf24';
+                ctx.beginPath();
+                ctx.arc(archX - 6, archY - archW / 2 + 4, 7, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#e879f9';
+                ctx.beginPath();
+                ctx.arc(archX + 6, archY - archW / 2 + 4, 7, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(archX, archY - archW / 2 + 6, 4, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.restore();
+            }
+
+            function drawBackground(ctx) {
+                // Sky gradient
+                const skyGrad = ctx.createLinearGradient(0, 0, 0, GAME_HEIGHT);
+                skyGrad.addColorStop(0, '#fef3c7');
+                skyGrad.addColorStop(0.3, '#fce4ec');
+                skyGrad.addColorStop(0.7, '#fdf2f8');
+                skyGrad.addColorStop(1, '#f8e8f0');
+                ctx.fillStyle = skyGrad;
+                ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+                // Subtle bokeh circles
+                ctx.fillStyle = 'rgba(255,255,255,0.25)';
+                for (let i = 0; i < 12; i++) {
+                    const bx = (i * 137 + 50) % GAME_WIDTH;
+                    const by = (i * 89 + 30) % (GAME_HEIGHT - 200);
+                    const br = 15 + (i * 31) % 40;
+                    ctx.beginPath();
+                    ctx.arc(bx, by, br, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Wedding arch
+                drawWeddingArch(ctx);
+
+                // Ground / aisle
+                const groundY = GAME_HEIGHT - 100;
+                const aisleGrad = ctx.createLinearGradient(0, groundY, 0, GAME_HEIGHT);
+                aisleGrad.addColorStop(0, '#f5e6d3');
+                aisleGrad.addColorStop(0.3, '#e8d5c0');
+                aisleGrad.addColorStop(1, '#d4c4b0');
+                ctx.fillStyle = aisleGrad;
+                ctx.fillRect(0, groundY, GAME_WIDTH, GAME_HEIGHT - groundY);
+
+                // Red carpet
+                const carpetGrad = ctx.createLinearGradient(0, groundY, 0, GAME_HEIGHT);
+                carpetGrad.addColorStop(0, '#dc2626');
+                carpetGrad.addColorStop(0.5, '#b91c1c');
+                carpetGrad.addColorStop(1, '#991b1b');
+                ctx.fillStyle = carpetGrad;
+                ctx.beginPath();
+                ctx.moveTo(GAME_WIDTH / 2 - 60, groundY);
+                ctx.lineTo(GAME_WIDTH / 2 + 60, groundY);
+                ctx.lineTo(GAME_WIDTH / 2 + 80, GAME_HEIGHT);
+                ctx.lineTo(GAME_WIDTH / 2 - 80, GAME_HEIGHT);
+                ctx.closePath();
+                ctx.fill();
+
+                // Carpet edge
+                ctx.strokeStyle = '#fbbf24';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([8, 12]);
+                ctx.beginPath();
+                ctx.moveTo(GAME_WIDTH / 2 - 60, groundY);
+                ctx.lineTo(GAME_WIDTH / 2 - 80, GAME_HEIGHT);
+                ctx.moveTo(GAME_WIDTH / 2 + 60, groundY);
+                ctx.lineTo(GAME_WIDTH / 2 + 80, GAME_HEIGHT);
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // Ground line
+                ctx.strokeStyle = '#c4b5a0';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, groundY);
+                ctx.lineTo(GAME_WIDTH, groundY);
+                ctx.stroke();
+            }
+
+            // ==================== SPAWNING ====================
+            function spawnObject() {
+                const types = ['ring', 'ring', 'heart', 'heart', 'heart', 'bouquet', 'coldfeet', 'cakesplat'];
+                // Adjust weights based on difficulty
+                const adjustedTypes = [...types];
+                if (difficulty >= 3) {
+                    adjustedTypes.push('coldfeet', 'cakesplat');
+                }
+                if (difficulty >= 5) {
+                    adjustedTypes.push('coldfeet', 'coldfeet', 'cakesplat');
+                }
+                const type = adjustedTypes[Math.floor(Math.random() * adjustedTypes.length)];
+
+                const obj = {
+                    x: 30 + Math.random() * (GAME_WIDTH - 60),
+                    y: -30,
+                    type: type,
+                    size: type === 'bouquet' ? 28 : type === 'coldfeet' ? 26 : type === 'cakesplat' ? 28 : 22,
+                    speed: 1.5 + Math.random() * 1.5 + difficulty * 0.35,
+                    sway: (Math.random() - 0.5) * 2.5,
+                    swaySpeed: 0.02 + Math.random() * 0.04,
+                    rotation: Math.random() * Math.PI * 2,
+                    rotSpeed: (Math.random() - 0.5) * 0.06,
+                    glow: 0,
+                    glowDir: 1,
+                };
+                fallingObjects.push(obj);
+            }
+
+            // ==================== PARTICLES ====================
+            function spawnParticles(x, y, count, colors) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 2 + Math.random() * 5;
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - 3,
+                        life: 1,
+                        decay: 0.015 + Math.random() * 0.04,
+                        size: 2 + Math.random() * 5,
+                        color: colors[Math.floor(Math.random() * colors.length)],
+                        gravity: 0.06,
+                    });
+                }
+            }
+
+            function showMessage(text) {
+                messageText = text;
+                messageTimer = 1.5;
+            }
+
+            // ==================== COLLISION DETECTION ====================
+            function checkCollision(obj) {
+                const px = player.x;
+                const py = player.y - 25;
+                const pw = player.width * 0.7;
+                const ph = player.height * 0.7;
+
+                const ox = obj.x;
+                const oy = obj.y;
+                const os = obj.size;
+
+                const dx = Math.abs(px - ox);
+                const dy = Math.abs(py - oy);
+                const collisionDist = (pw + os) * 0.55;
+
+                return dx < collisionDist && dy < collisionDist;
+            }
+
+            // ==================== UPDATE ====================
+            function update(dt) {
+                if (gameState !== STATE.PLAYING) return;
+
+                // Cap dt to prevent jumps
+                const cappedDt = Math.min(dt, 0.1);
+
+                // Update difficulty
+                difficultyTimer += cappedDt;
+                if (difficultyTimer > 25) {
+                    difficultyTimer = 0;
+                    difficulty = Math.min(difficulty + 1, 10);
+                }
+
+                // Update combo timer
+                if (comboTimer > 0) {
+                    comboTimer -= cappedDt;
+                    if (comboTimer <= 0) {
+                        comboCount = 0;
+                        comboTimer = 0;
+                    }
+                }
+
+                // Update message timer
+                if (messageTimer > 0) {
+                    messageTimer -= cappedDt;
+                    if (messageTimer <= 0) {
+                        messageText = '';
+                        messageTimer = 0;
+                    }
+                }
+
+                // Update player
+                if (touchActive && touchTargetX !== null) {
+                    player.targetX = touchTargetX;
+                } else if (keys['ArrowLeft'] || keys['KeyA'] || keys['a'] || keys['left']) {
+                    player.targetX = player.x - player.speed * 60 * cappedDt;
+                } else if (keys['ArrowRight'] || keys['KeyD'] || keys['d'] || keys['right']) {
+                    player.targetX = player.x + player.speed * 60 * cappedDt;
+                }
+
+                // Smooth movement toward target
+                const dx = player.targetX - player.x;
+                player.x += dx * Math.min(12 * cappedDt, 1);
+                player.x = Math.max(20, Math.min(GAME_WIDTH - 20, player.x));
+
+                // Bob animation
+                player.bobOffset = Math.sin(Date.now() * player.bobSpeed) * 3;
+
+                // Eye blink
+                player.eyeBlinkTimer += cappedDt;
+                if (player.eyeBlinkTimer > 2.5 + Math.random() * 3) {
+                    player.eyeBlink = 1;
+                    player.eyeBlinkTimer = 0;
+                }
+                if (player.eyeBlink > 0) {
+                    player.eyeBlink -= cappedDt * 8;
+                    if (player.eyeBlink < 0) player.eyeBlink = 0;
+                }
+
+                // Invincibility
+                if (player.invincible > 0) {
+                    player.invincible -= cappedDt;
+                }
+
+                // Spawn timer
+                spawnTimer += cappedDt;
+                const spawnInterval = Math.max(0.35, 1.1 - difficulty * 0.08);
+                if (spawnTimer >= spawnInterval) {
+                    spawnTimer = 0;
+                    spawnObject();
+                    // Sometimes spawn extra at higher difficulties
+                    if (difficulty >= 4 && Math.random() < 0.3) {
+                        setTimeout(() => {
+                            if (gameState === STATE.PLAYING) spawnObject();
+                        }, 150 + Math.random() * 200);
+                    }
+                }
+
+                // Update falling objects
+                for (let i = fallingObjects.length - 1; i >= 0; i--) {
+                    const obj = fallingObjects[i];
+                    obj.y += obj.speed * 60 * cappedDt;
+                    obj.x += obj.sway * Math.sin(Date.now() * obj.swaySpeed) * cappedDt;
+                    obj.rotation += obj.rotSpeed * 60 * cappedDt;
+                    obj.glow += 0.05 * obj.glowDir;
+                    if (obj.glow > 1) obj.glowDir = -1;
+                    if (obj.glow < 0) obj.glowDir = 1;
+
+                    // Check collision with player
+                    if (checkCollision(obj) && player.invincible <= 0) {
+                        const isGood = ['ring', 'heart', 'bouquet'].includes(obj.type);
+                        const isBad = ['coldfeet', 'cakesplat'].includes(obj.type);
+
+                        if (isGood) {
+                            // Collect
+                            let points = 0;
+                            let bonusLife = false;
+                            const colors = [];
+                            if (obj.type === 'ring') {
+                                points = 10;
+                                colors.push('#fbbf24', '#fef3c7', '#ffffff', '#f59e0b');
+                            } else if (obj.type === 'heart') {
+                                points = 5;
+                                colors.push('#f472b6', '#fda4af', '#ffffff', '#fb7185');
+                            } else if (obj.type === 'bouquet') {
+                                points = 25;
+                                bonusLife = true;
+                                colors.push('#f472b6', '#fbbf24', '#e879f9', '#fda4af', '#ffffff');
+                            }
+
+                            // Combo
+                            comboCount++;
+                            comboTimer = 2;
+                            const comboBonus = Math.min(comboCount - 1, 8) * 2;
+                            points += comboBonus;
+
+                            score += points;
+                            if (bonusLife && lives < 8) {
+                                lives++;
+                                showMessage('💐 +1 Life!');
+                            }
+                            if (comboCount >= 3) {
+                                showMessage(`🔥 ${comboCount}x Combo! +${comboBonus}`);
+                            }
+                            spawnParticles(obj.x, obj.y, 12 + comboCount * 2, colors);
+                            playCollectSound();
+                            if (bonusLife) playBonusSound();
+                            fallingObjects.splice(i, 1);
+                        } else if (isBad) {
+                            // Damage
+                            lives--;
+                            player.invincible = 1.2;
+                            shakeAmount = 10;
+                            comboCount = 0;
+                            comboTimer = 0;
+                            spawnParticles(obj.x, obj.y, 15, ['#94a3b8', '#cbd5e1', '#64748b', '#ffffff']);
+                            playDamageSound();
+                            showMessage(obj.type === 'coldfeet' ? '❄️ Cold Feet!' : '💥 Cake Splat!');
+                            fallingObjects.splice(i, 1);
+                            if (lives <= 0) {
+                                endGame();
+                                return;
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Remove if off screen
+                    if (obj.y > GAME_HEIGHT + 40) {
+                        // Penalize missing good items slightly
+                        if (['ring', 'bouquet'].includes(obj.type)) {
+                            comboCount = Math.max(0, comboCount - 1);
+                            comboTimer = Math.max(0, comboTimer - 0.3);
+                        }
+                        fallingObjects.splice(i, 1);
+                    }
+                }
+
+                // Update particles
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx * 60 * cappedDt;
+                    p.y += p.vy * 60 * cappedDt;
+                    p.vy += p.gravity * 60 * cappedDt;
+                    p.life -= p.decay * 60 * cappedDt;
+                    if (p.life <= 0) {
+                        particles.splice(i, 1);
+                    }
+                }
+
+                // Update shake
+                if (shakeAmount > 0.1) {
+                    shakeAmount *= shakeDecay;
+                } else {
+                    shakeAmount = 0;
+                }
+
+                // Update bg confetti
+                bgConfetti.forEach(c => {
+                    c.y += c.speed * 60 * cappedDt;
+                    c.x += c.sway * Math.sin(Date.now() * c.swaySpeed) * cappedDt;
+                    c.rotation += c.rotSpeed * 60 * cappedDt;
+                    if (c.y > GAME_HEIGHT + 30) {
+                        c.y = -30;
+                        c.x = Math.random() * GAME_WIDTH;
+                    }
+                    if (c.x < -20) c.x = GAME_WIDTH + 20;
+                    if (c.x > GAME_WIDTH + 20) c.x = -20;
+                });
+            }
+
+            // ==================== RENDER ====================
+            function render(ctx) {
+                ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+                // Apply screen shake
+                let shakeX = 0;
+                let shakeY = 0;
+                if (shakeAmount > 0.1) {
+                    shakeX = (Math.random() - 0.5) * shakeAmount * 2;
+                    shakeY = (Math.random() - 0.5) * shakeAmount * 2;
+                }
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                // Background
+                drawBackground(ctx);
+
+                // BG Confetti
+                bgConfetti.forEach(c => {
+                    ctx.save();
+                    ctx.globalAlpha = c.opacity;
+                    ctx.translate(c.x, c.y);
+                    ctx.rotate(c.rotation);
+                    ctx.fillStyle = c.color;
+                    ctx.beginPath();
+                    if (Math.random() < 0.5) {
+                        ctx.fillRect(-c.size / 2, -c.size / 4, c.size, c.size / 2);
+                    } else {
+                        ctx.arc(0, 0, c.size / 2, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.fill();
+                    ctx.restore();
+                });
+
+                // Falling objects
+                fallingObjects.forEach(obj => {
+                    ctx.save();
+                    ctx.translate(obj.x, obj.y);
+                    ctx.rotate(obj.rotation);
+
+                    // Glow effect
+                    const glowAlpha = 0.25 + obj.glow * 0.35;
+                    ctx.shadowColor = 'rgba(255,255,255,' + glowAlpha + ')';
+                    ctx.shadowBlur = 8 + obj.glow * 10;
+
+                    switch (obj.type) {
+                        case 'ring':
+                            drawRing(ctx, 0, 0, obj.size);
+                            break;
+                        case 'heart':
+                            drawHeart(ctx, 0, 0, obj.size, '#f472b6');
+                            break;
+                        case 'bouquet':
+                            drawBouquet(ctx, 0, 0, obj.size);
+                            break;
+                        case 'coldfeet':
+                            drawColdFeet(ctx, 0, 0, obj.size);
+                            break;
+                        case 'cakesplat':
+                            drawCakeSplat(ctx, 0, 0, obj.size);
+                            break;
+                    }
+                    ctx.shadowBlur = 0;
+                    ctx.restore();
+                });
+
+                // Player (Milo)
+                if (gameState === STATE.PLAYING || gameState === STATE.GAMEOVER) {
+                    const invincibleFlash = player.invincible > 0 && Math.floor(player.invincible * 20) % 2 === 0;
+                    if (!invincibleFlash || gameState === STATE.GAMEOVER) {
+                        ctx.save();
+                        ctx.globalAlpha = gameState === STATE.GAMEOVER ? 0.5 : 1;
+                        drawMilo(ctx, player.x, player.y + player.bobOffset, 1);
+                        ctx.restore();
+                    } else if (invincibleFlash && gameState === STATE.PLAYING) {
+                        ctx.save();
+                        ctx.globalAlpha = 0.4;
+                        drawMilo(ctx, player.x, player.y + player.bobOffset, 1);
+                        ctx.restore();
+                    }
+                }
+
+                // Particles
+                particles.forEach(p => {
+                    ctx.save();
+                    ctx.globalAlpha = p.life;
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Inner glow
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size * p.life * 0.4, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                });
+
+                ctx.restore(); // End shake
+
+                // --- UI (no shake) ---
+                // Score panel
+                const panelGrad = ctx.createLinearGradient(0, 0, 0, 55);
+                panelGrad.addColorStop(0, 'rgba(0,0,0,0.5)');
+                panelGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = panelGrad;
+                ctx.fillRect(0, 0, GAME_WIDTH, 55);
+
+                // Score
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 22px Georgia, serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('💍 ' + score, GAME_WIDTH / 2, 30);
+
+                // Lives
+                ctx.textAlign = 'right';
+                ctx.font = '18px Georgia, serif';
+                let heartsStr = '';
+                for (let i = 0; i < lives; i++) heartsStr += '❤️';
+                ctx.fillText(heartsStr, GAME_WIDTH - 15, 30);
+
+                // Difficulty indicator
+                if (difficulty > 1) {
+                    ctx.textAlign = 'left';
+                    ctx.font = '12px Georgia, serif';
+                    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                    ctx.fillText('Lv.' + difficulty, 15, 30);
+                }
+
+                // Combo display
+                if (comboCount >= 3 && comboTimer > 0) {
+                    ctx.fillStyle = '#fbbf24';
+                    ctx.font = 'bold 16px Georgia, serif';
+                    ctx.textAlign = 'center';
+                    const comboAlpha = Math.min(1, comboTimer / 0.5);
+                    ctx.globalAlpha = comboAlpha;
+                    ctx.fillText('🔥 ' + comboCount + 'x COMBO!', GAME_WIDTH / 2, 52);
+                    ctx.globalAlpha = 1;
+                }
+
+                // Message popup
+                if (messageTimer > 0 && messageText) {
+                    const msgAlpha = Math.min(1, messageTimer / 0.4);
+                    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                    ctx.font = 'bold 20px Georgia, serif';
+                    ctx.textAlign = 'center';
+                    const msgWidth = ctx.measureText(messageText).width + 30;
+                    const msgX = GAME_WIDTH / 2;
+                    const msgY = GAME_HEIGHT / 2 - 40;
+                    ctx.fillStyle = `rgba(0,0,0,${0.6*msgAlpha})`;
+                    ctx.beginPath();
+                    ctx.roundRect(msgX - msgWidth / 2, msgY - 18, msgWidth, 36, 20);
+                    ctx.fill();
+                    ctx.fillStyle = `rgba(255,255,255,${msgAlpha})`;
+                    ctx.fillText(messageText, msgX, msgY + 7);
+                }
+
+                // Start screen
+                if (gameState === STATE.START) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                    ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 36px Georgia, serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('💍 Milo Marriage', GAME_WIDTH / 2, GAME_HEIGHT / 2 - 70);
+
+                    ctx.fillStyle = '#fde68a';
+                    ctx.font = 'bold 18px Georgia, serif';
+                    ctx.fillText('Wedding Dash!', GAME_WIDTH / 2, GAME_HEIGHT / 2 - 30);
+
+                    // Draw Milo larger
+                    drawMilo(ctx, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 30, 1.5);
+
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = '16px Georgia, serif';
+                    ctx.fillText('Catch rings, hearts & bouquets', GAME_WIDTH / 2, GAME_HEIGHT / 2 + 100);
+                    ctx.fillText('Avoid cold feet & cake splats!', GAME_WIDTH / 2, GAME_HEIGHT / 2 + 125);
+
+                    // Pulsing start button
+                    const pulse = 1 + Math.sin(Date.now() * 0.005) * 0.15;
+                    ctx.fillStyle = '#f472b6';
+                    ctx.font = `bold ${22*pulse}px Georgia, serif`;
+                    ctx.fillText('💒 Tap or Press SPACE to Start', GAME_WIDTH / 2, GAME_HEIGHT / 2 + 175);
+
+                    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                    ctx.font = '13px Georgia, serif';
+                    ctx.fillText('🕹️ Arrow Keys / A,D to move', GAME_WIDTH / 2, GAME_HEIGHT / 2 + 205);
+                    ctx.fillText('📱 Touch & drag to move Milo', GAME_WIDTH / 2, GAME_HEIGHT / 2 + 225);
+                }
+
+                // Game over screen
+                if (gameState === STATE.GAMEOVER) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                    ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 34px Georgia, serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('💔 Wedding Crashed!', GAME_WIDTH / 2, GAME_HEIGHT / 2 - 50);
+
+                    ctx.fillStyle = '#fde68a';
+                    ctx.font = 'bold 22px Georgia, serif';
+                    ctx.fillText('Score: ' + score, GAME_WIDTH / 2, GAME_HEIGHT / 2);
+
+                    ctx.fillStyle = '#fbbf24';
+                    ctx.font = '16px Georgia, serif';
+                    ctx.fillText('Best: ' + highScore, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 30);
+
+                    let message = '💍 Keep trying, love prevails!';
+                    if (score >= 200) message = '🎉 Almost a perfect wedding!';
+                    if (score >= 400) message = '👑 Royal wedding success!';
+                    if (score >= 600) message = '✨ Legendary wedding of the century!';
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = '15px Georgia, serif';
+                    ctx.fillText(message, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 60);
+
+                    const pulse2 = 1 + Math.sin(Date.now() * 0.005) * 0.12;
+                    ctx.fillStyle = '#f472b6';
+                    ctx.font = `bold ${20*pulse2}px Georgia, serif`;
+                    ctx.fillText('💒 Tap or SPACE to Retry', GAME_WIDTH / 2, GAME_HEIGHT / 2 + 105);
+                }
+            }
+
+            // ==================== GAME LOOP ====================
+            let lastTime = performance.now();
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.2) dt = 0.2; // Clamp large dt
+                lastTime = timestamp;
+
+                update(dt);
+                render(ctx);
+
+                requestAnimationFrame(gameLoop);
+            }
+
+            // ==================== INPUT ====================
+            window.addEventListener('keydown', (e) => {
+                keys[e.code] = true;
+                keys[e.key] = true;
+                if (e.code === 'Space' || e.key === ' ' || e.code === 'Enter') {
+                    e.preventDefault();
+                    if (gameState === STATE.START) {
+                        startGame();
+                    } else if (gameState === STATE.GAMEOVER) {
+                        startGame();
+                    }
+                }
+                if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+                    e.preventDefault();
+                }
+            });
+
+            window.addEventListener('keyup', (e) => {
+                keys[e.code] = false;
+                keys[e.key] = false;
+            });
+
+            canvas.addEventListener('mousedown', (e) => {
+                initAudio();
+                mouseDown = true;
+                if (gameState === STATE.START) {
+                    startGame();
+                    return;
+                }
+                if (gameState === STATE.GAMEOVER) {
+                    startGame();
+                    return;
+                }
+                const coords = getGameCoords(e);
+                player.targetX = coords.x;
+            });
+
+            canvas.addEventListener('mousemove', (e) => {
+                if (mouseDown && gameState === STATE.PLAYING) {
+                    const coords = getGameCoords(e);
+                    player.targetX = coords.x;
+                }
+            });
+
+            canvas.addEventListener('mouseup', () => {
+                mouseDown = false;
+            });
+
+            canvas.addEventListener('mouseleave', () => {
+                mouseDown = false;
+            });
+
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                initAudio();
+                touchActive = true;
+                if (gameState === STATE.START) {
+                    startGame();
+                    return;
+                }
+                if (gameState === STATE.GAMEOVER) {
+                    startGame();
+                    return;
+                }
+                const coords = getGameCoords(e);
+                touchTargetX = coords.x;
+                player.targetX = coords.x;
+            }, { passive: false });
+
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                if (touchActive && gameState === STATE.PLAYING) {
+                    const coords = getGameCoords(e);
+                    touchTargetX = coords.x;
+                    player.targetX = coords.x;
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                touchActive = false;
+                touchTargetX = null;
+            }, { passive: false });
+
+            canvas.addEventListener('touchcancel', () => {
+                touchActive = false;
+                touchTargetX = null;
+            });
+
+            // Prevent scrolling on canvas
+            canvas.addEventListener('wheel', (e) => e.preventDefault(), { passive: false });
+
+            // ==================== START ====================
+            initBgConfetti();
+            resetGame();
+            gameState = STATE.START;
+            lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+
+            console.log('💍 Milo Marriage - Wedding Dash ready!');
+            console.log('🕹️  Use Arrow Keys or A/D to move');
+            console.log('📱  Touch and drag to move Milo');
+            console.log('💒  Catch rings, hearts & bouquets!');
+            console.log('❄️  Avoid cold feet & cake splats!');
+        })();
+    </script>
+</body>
+</html>
