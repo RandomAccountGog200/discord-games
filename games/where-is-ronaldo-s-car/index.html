@@ -1,0 +1,1136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Where is Ronaldo's Car?</title>
+    <style>
+        :root {
+            --bg: #1a1a2e;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Segoe UI', 'Arial', sans-serif;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-user-select: none;
+            user-select: none;
+            cursor: default;
+        }
+
+        canvas {
+            display: block;
+            border-radius: 8px;
+            box-shadow: 0 0 40px rgba(0, 0, 0, 0.5), 0 0 80px rgba(212, 168, 67, 0.15);
+            max-width: 100vw;
+            max-height: 100vh;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+
+            // --- Audio System ---
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playSound(freq, type, duration, vol = 0.15, glideTo = null) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (glideTo) osc.frequency.linearRampToValueAtTime(glideTo, t + duration);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) { /* silent */ }
+            }
+
+            function sfxClick() { playSound(800, 'sine', 0.08, 0.08);
+                playSound(400, 'triangle', 0.06, 0.05); }
+
+            function sfxWrong() { playSound(120, 'sawtooth', 0.25, 0.12);
+                playSound(80, 'square', 0.2, 0.1); }
+
+            function sfxFound() {
+                playSound(523, 'sine', 0.15, 0.2, 784);
+                setTimeout(() => playSound(659, 'sine', 0.15, 0.2, 988), 120);
+                setTimeout(() => playSound(784, 'sine', 0.2, 0.35, 1047), 240);
+                playSound(200, 'triangle', 0.3, 0.4, 400);
+            }
+
+            function sfxLevelUp() {
+                playSound(440, 'sine', 0.1, 0.15, 660);
+                setTimeout(() => playSound(550, 'sine', 0.1, 0.15, 880), 100);
+                setTimeout(() => playSound(660, 'sine', 0.1, 0.15, 1100), 200);
+                setTimeout(() => playSound(880, 'sine', 0.2, 0.4, 1320), 300);
+                playSound(300, 'triangle', 0.25, 0.5, 600);
+            }
+
+            function sfxGameOver() {
+                playSound(330, 'sine', 0.2, 0.3, 220);
+                setTimeout(() => playSound(262, 'sine', 0.2, 0.3, 165), 200);
+                setTimeout(() => playSound(196, 'sine', 0.3, 0.5, 130), 400);
+                playSound(100, 'triangle', 0.3, 0.6, 60);
+            }
+
+            // --- Particle System ---
+            class Particle {
+                constructor(x, y, color, size, vx, vy, life) {
+                    this.x = x;
+                    this.y = y;
+                    this.color = color;
+                    this.size = size;
+                    this.vx = vx;
+                    this.vy = vy;
+                    this.life = life;
+                    this.maxLife = life;
+                    this.gravity = 0.0003;
+                }
+                update(dt) {
+                    this.x += this.vx * dt;
+                    this.y += this.vy * dt;
+                    this.vy += this.gravity * dt;
+                    this.life -= dt;
+                    this.size *= 0.998;
+                }
+                get alpha() { return Math.max(0, this.life / this.maxLife); }
+                get alive() { return this.life > 0; }
+                draw(ctx) {
+                    const a = this.alpha;
+                    ctx.save();
+                    ctx.globalAlpha = a;
+                    ctx.fillStyle = this.color;
+                    ctx.shadowColor = this.color;
+                    ctx.shadowBlur = this.size * 2;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+            }
+
+            let particles = [];
+
+            function spawnParticles(x, y, count, colors, sizeRange, spread, lifeRange) {
+                for (let i = 0; i < count; i++) {
+                    const color = colors[Math.floor(Math.random() * colors.length)];
+                    const size = sizeRange[0] + Math.random() * (sizeRange[1] - sizeRange[0]);
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = spread * (0.4 + Math.random() * 0.6);
+                    const vx = Math.cos(angle) * speed;
+                    const vy = Math.sin(angle) * speed - Math.random() * spread * 0.8;
+                    const life = lifeRange[0] + Math.random() * (lifeRange[1] - lifeRange[0]);
+                    particles.push(new Particle(x, y, color, size, vx, vy, life));
+                }
+            }
+
+            function updateParticles(dt) {
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    particles[i].update(dt);
+                    if (!particles[i].alive) particles.splice(i, 1);
+                }
+            }
+
+            function drawParticles(ctx) {
+                for (const p of particles) p.draw(ctx);
+            }
+
+            // --- Game State ---
+            const TOTAL_LEVELS = 5;
+            let gameState = 'intro'; // 'intro' | 'playing' | 'levelClear' | 'gameOver'
+            let currentLevel = 1;
+            let score = 0;
+            let totalTime = 0;
+            let levelTimer = 0;
+            let wrongClicks = 0;
+            let levelWrongClicks = 0;
+            let ronaldoCarIndex = -1;
+            let cars = [];
+            let foundFlash = 0;
+            let shakeAmount = 0;
+            let shakeX = 0;
+            let shakeY = 0;
+            let transitionTimer = 0;
+            let introAlpha = 1;
+            let gameOverAlpha = 0;
+            let levelClearAlpha = 0;
+            let levelClearTimer = 0;
+            const LEVEL_CLEAR_DELAY = 1.5; // seconds before next level
+
+            // --- Car Class ---
+            class Car {
+                constructor(x, y, w, h, color, type, isRonaldo = false, angle = 0) {
+                    this.x = x;
+                    this.y = y;
+                    this.w = w;
+                    this.h = h;
+                    this.color = color;
+                    this.type = type; // 'sedan' | 'hatchback' | 'suv' | 'sports'
+                    this.isRonaldo = isRonaldo;
+                    this.angle = angle;
+                    this.clicked = false;
+                    this.hovered = false;
+                    this.bounds = this.computeBounds();
+                }
+                computeBounds() {
+                    const cx = this.x;
+                    const cy = this.y;
+                    const hw = this.w / 2;
+                    const hh = this.h / 2;
+                    if (this.angle === 0) {
+                        return {
+                            left: cx - hw,
+                            top: cy - hh,
+                            right: cx + hw,
+                            bottom: cy + hh,
+                            contains(px, py) {
+                                return px >= this.left && px <= this.right && py >= this.top && py <= this.bottom;
+                            }
+                        };
+                    }
+                    const cos = Math.cos(this.angle);
+                    const sin = Math.sin(this.angle);
+                    const corners = [
+                        { x: -hw, y: -hh }, { x: hw, y: -hh }, { x: hw, y: hh }, { x: -hw, y: hh }
+                    ];
+                    const rotated = corners.map(c => ({
+                        x: cx + c.x * cos - c.y * sin,
+                        y: cy + c.x * sin + c.y * cos
+                    }));
+                    const xs = rotated.map(p => p.x);
+                    const ys = rotated.map(p => p.y);
+                    return {
+                        left: Math.min(...xs),
+                        top: Math.min(...ys),
+                        right: Math.max(...xs),
+                        bottom: Math.max(...ys),
+                        rotated,
+                        contains(px, py) {
+                            let inside = false;
+                            const r = this.rotated;
+                            for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+                                const xi = r[i].x,
+                                    yi = r[i].y;
+                                const xj = r[j].x,
+                                    yj = r[j].y;
+                                if ((yi > py) !== (yj > py) && px < (xj - xi) * (py - yi) / (yj - yi) + xi) {
+                                    inside = !inside;
+                                }
+                            }
+                            return inside;
+                        }
+                    };
+                }
+                draw(ctx, isReference = false) {
+                    ctx.save();
+                    ctx.translate(this.x, this.y);
+                    if (this.angle !== 0) ctx.rotate(this.angle);
+
+                    const hw = this.w / 2;
+                    const hh = this.h / 2;
+                    const r = Math.min(hw, hh) * 0.28;
+
+                    // Shadow
+                    if (!isReference) {
+                        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+                        ctx.beginPath();
+                        this.roundRect(ctx, -hw + 2, -hh + 3, this.w, this.h, r);
+                        ctx.fill();
+                    }
+
+                    // Body
+                    const bodyGrad = ctx.createLinearGradient(0, -hh, 0, hh);
+                    const baseColor = this.color;
+                    bodyGrad.addColorStop(0, this.lightenColor(baseColor, 30));
+                    bodyGrad.addColorStop(0.5, baseColor);
+                    bodyGrad.addColorStop(1, this.darkenColor(baseColor, 25));
+                    ctx.fillStyle = bodyGrad;
+                    ctx.beginPath();
+                    this.roundRect(ctx, -hw, -hh, this.w, this.h, r);
+                    ctx.fill();
+                    ctx.strokeStyle = this.darkenColor(baseColor, 40);
+                    ctx.lineWidth = Math.max(0.5, this.w * 0.02);
+                    ctx.stroke();
+
+                    // Cabin/roof area
+                    const cabinW = this.w * 0.6;
+                    const cabinH = this.h * 0.45;
+                    const cabinR = r * 0.7;
+                    const cabinY = -cabinH * 0.15;
+                    ctx.fillStyle = this.darkenColor(baseColor, 12);
+                    ctx.beginPath();
+                    this.roundRect(ctx, -cabinW / 2, cabinY - cabinH / 2, cabinW, cabinH, cabinR);
+                    ctx.fill();
+                    ctx.strokeStyle = this.darkenColor(baseColor, 30);
+                    ctx.lineWidth = Math.max(0.3, this.w * 0.012);
+                    ctx.stroke();
+
+                    // Windshield (front)
+                    const wsW = cabinW * 0.82;
+                    const wsH = cabinH * 0.35;
+                    const wsY = cabinY - cabinH / 2 + wsH * 0.5;
+                    const wsGrad = ctx.createLinearGradient(0, wsY - wsH / 2, 0, wsY + wsH / 2);
+                    wsGrad.addColorStop(0, '#a8d8ea');
+                    wsGrad.addColorStop(0.5, '#6bb5d0');
+                    wsGrad.addColorStop(1, '#3d8eb5');
+                    ctx.fillStyle = wsGrad;
+                    ctx.beginPath();
+                    this.roundRect(ctx, -wsW / 2, wsY - wsH / 2, wsW, wsH, wsH * 0.4);
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+                    ctx.lineWidth = Math.max(0.3, this.w * 0.01);
+                    ctx.stroke();
+
+                    // Rear window
+                    const rwW = cabinW * 0.78;
+                    const rwH = cabinH * 0.3;
+                    const rwY = cabinY + cabinH / 2 - rwH * 0.6;
+                    const rwGrad = ctx.createLinearGradient(0, rwY - rwH / 2, 0, rwY + rwH / 2);
+                    rwGrad.addColorStop(0, '#7ab8d4');
+                    rwGrad.addColorStop(1, '#5090b0');
+                    ctx.fillStyle = rwGrad;
+                    ctx.beginPath();
+                    this.roundRect(ctx, -rwW / 2, rwY - rwH / 2, rwW, rwH, rwH * 0.35);
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+                    ctx.lineWidth = Math.max(0.3, this.w * 0.01);
+                    ctx.stroke();
+
+                    // Side mirrors
+                    const mirrorW = this.w * 0.08;
+                    const mirrorH = this.h * 0.12;
+                    const mirrorY = cabinY;
+                    ctx.fillStyle = this.darkenColor(baseColor, 15);
+                    [-1, 1].forEach(side => {
+                        const mx = side * (cabinW / 2 + mirrorW * 0.6);
+                        ctx.fillRect(mx - mirrorW / 2, mirrorY - mirrorH / 2, mirrorW, mirrorH);
+                        ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+                        ctx.lineWidth = 0.5;
+                        ctx.strokeRect(mx - mirrorW / 2, mirrorY - mirrorH / 2, mirrorW, mirrorH);
+                    });
+
+                    // Ronaldo special markings
+                    if (this.isRonaldo) {
+                        // CR7 on roof
+                        ctx.fillStyle = '#1a1a1a';
+                        ctx.font = `bold ${Math.max(5, this.w * 0.16)}px 'Segoe UI', Arial, sans-serif`;
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText('CR7', 0, cabinY + cabinH * 0.05);
+
+                        // Subtle gold stripe
+                        ctx.strokeStyle = '#ffd700';
+                        ctx.lineWidth = Math.max(1, this.w * 0.03);
+                        ctx.globalAlpha = 0.7;
+                        ctx.beginPath();
+                        ctx.moveTo(-hw * 0.75, 0);
+                        ctx.lineTo(hw * 0.75, 0);
+                        ctx.stroke();
+                        ctx.globalAlpha = 1;
+
+                        // Small diamond icon on rear
+                        const diamondX = 0;
+                        const diamondY = cabinY + cabinH / 2 + rwH * 0.5;
+                        const diamondSize = this.w * 0.06;
+                        ctx.fillStyle = '#ffd700';
+                        ctx.beginPath();
+                        ctx.moveTo(diamondX, diamondY - diamondSize);
+                        ctx.lineTo(diamondX + diamondSize, diamondY);
+                        ctx.lineTo(diamondX, diamondY + diamondSize);
+                        ctx.lineTo(diamondX - diamondSize, diamondY);
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 0.5;
+                        ctx.stroke();
+                    }
+
+                    // Wheels (small dark circles at corners)
+                    const wheelR = this.w * 0.07;
+                    const wheelOffX = hw * 0.78;
+                    const wheelOffY = hh * 0.75;
+                    const wheelPositions = [
+                        { x: -wheelOffX, y: -wheelOffY },
+                        { x: wheelOffX, y: -wheelOffY },
+                        { x: -wheelOffX, y: wheelOffY },
+                        { x: wheelOffX, y: wheelOffY },
+                    ];
+                    wheelPositions.forEach(wp => {
+                        ctx.fillStyle = '#1a1a1a';
+                        ctx.beginPath();
+                        ctx.arc(wp.x, wp.y, wheelR, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = '#333';
+                        ctx.beginPath();
+                        ctx.arc(wp.x, wp.y, wheelR * 0.55, 0, Math.PI * 2);
+                        ctx.fill();
+                    });
+
+                    ctx.restore();
+                }
+                roundRect(ctx, x, y, w, h, r) {
+                    ctx.moveTo(x + r, y);
+                    ctx.lineTo(x + w - r, y);
+                    ctx.arcTo(x + w, y, x + w, y + r, r);
+                    ctx.lineTo(x + w, y + h - r);
+                    ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+                    ctx.lineTo(x + r, y + h);
+                    ctx.arcTo(x, y + h, x, y + h - r, r);
+                    ctx.lineTo(x, y + r);
+                    ctx.arcTo(x, y, x + r, y, r);
+                    ctx.closePath();
+                }
+                lightenColor(hex, percent) {
+                    const num = parseInt(hex.replace('#', ''), 16);
+                    const amt = Math.round(2.55 * percent);
+                    const R = Math.min(255, (num >> 16) + amt);
+                    const G = Math.min(255, ((num >> 8) & 0x00FF00) + amt);
+                    const B = Math.min(255, (num & 0x0000FF) + amt);
+                    return `rgb(${R},${G},${B})`;
+                }
+                darkenColor(hex, percent) {
+                    const num = parseInt(hex.replace('#', ''), 16);
+                    const amt = Math.round(2.55 * percent);
+                    const R = Math.max(0, (num >> 16) - amt);
+                    const G = Math.max(0, ((num >> 8) & 0x00FF00) - amt);
+                    const B = Math.max(0, (num & 0x0000FF) - amt);
+                    return `rgb(${R},${G},${B})`;
+                }
+            }
+
+            // --- Parking Lot Generation ---
+            const REGULAR_COLORS = [
+                '#e8e8e8', '#f0f0f0', '#d5d5d5', '#c8c8c8', '#ffffff',
+                '#2a2a2a', '#1a1a1a', '#333333', '#3d3d3d',
+                '#c0c0c0', '#b0b0b0', '#a0a0a0',
+                '#3344aa', '#2244cc', '#3a5ad8', '#4a6ae0',
+                '#cc3333', '#bb2222', '#d44444', '#a82020',
+                '#338833', '#226622', '#3a9940', '#2d7d30',
+                '#888888', '#777777', '#999999',
+                '#d4c5a9', '#c8b898', '#bdb090',
+                '#5555aa', '#6644aa', '#7755bb',
+                '#dd8833', '#cc7722', '#e69540',
+            ];
+
+            const DECOY_GOLD_COLORS = [
+                '#d4b860', '#c9a840', '#dbb850', '#c8a435', '#d9c070',
+                '#e0c050', '#c5a030', '#dac560', '#bf9a35', '#d2b555',
+            ];
+
+            const RONALDO_CAR_COLOR = '#e8c547';
+            const RONALDO_CAR_HIGHLIGHT = '#f5d870';
+
+            function generateParkingLot(level) {
+                cars = [];
+                const totalCars = 12 + (level - 1) * 12; // 12, 24, 36, 48, 60
+                const rows = 3 + (level - 1);
+                const carsPerRow = Math.ceil(totalCars / rows);
+                const actualRows = Math.ceil(totalCars / carsPerRow);
+
+                // Calculate available parking area
+                const topBarH = 65;
+                const bottomRefH = 90;
+                const paddingX = 30;
+                const paddingY = 20;
+                const parkX = paddingX;
+                const parkY = topBarH + paddingY;
+                const parkW = canvas.width - paddingX * 2;
+                const parkH = canvas.height - topBarH - bottomRefH - paddingY * 2;
+
+                const rowHeight = parkH / actualRows;
+                const carSpacing = parkW / carsPerRow;
+                const carW = carSpacing * 0.72;
+                const carH = rowHeight * 0.68;
+
+                // Place Ronaldo's car
+                ronaldoCarIndex = Math.floor(Math.random() * totalCars);
+
+                let carCount = 0;
+                for (let row = 0; row < actualRows; row++) {
+                    const rowY = parkY + row * rowHeight + rowHeight / 2;
+                    const carsInThisRow = Math.min(carsPerRow, totalCars - carCount);
+                    const rowStartX = parkX + (parkW - carsInThisRow * carSpacing) / 2 + carSpacing / 2;
+
+                    for (let col = 0; col < carsInThisRow; col++) {
+                        const cx = rowStartX + col * carSpacing;
+                        const cy = rowY + (Math.random() - 0.5) * rowHeight * 0.2;
+                        const isRonaldo = carCount === ronaldoCarIndex;
+                        let color, type;
+                        const angle = (Math.random() - 0.5) * 0.06;
+
+                        if (isRonaldo) {
+                            color = RONALDO_CAR_COLOR;
+                            type = 'sports';
+                        } else {
+                            // In higher levels, add decoy gold cars
+                            if (level >= 3 && Math.random() < 0.15) {
+                                color = DECOY_GOLD_COLORS[Math.floor(Math.random() * DECOY_GOLD_COLORS.length)];
+                                type = Math.random() < 0.5 ? 'sports' : 'sedan';
+                            } else {
+                                color = REGULAR_COLORS[Math.floor(Math.random() * REGULAR_COLORS.length)];
+                                const typeRand = Math.random();
+                                if (typeRand < 0.5) type = 'sedan';
+                                else if (typeRand < 0.75) type = 'hatchback';
+                                else if (typeRand < 0.92) type = 'suv';
+                                else type = 'sports';
+                            }
+                        }
+
+                        const car = new Car(cx, cy, carW, carH, color, type, isRonaldo, angle);
+                        cars.push(car);
+                        carCount++;
+                    }
+                }
+                ronaldoCarIndex = cars.findIndex(c => c.isRonaldo);
+                if (ronaldoCarIndex === -1 && cars.length > 0) {
+                    ronaldoCarIndex = Math.floor(Math.random() * cars.length);
+                    cars[ronaldoCarIndex].isRonaldo = true;
+                    cars[ronaldoCarIndex].color = RONALDO_CAR_COLOR;
+                    cars[ronaldoCarIndex].type = 'sports';
+                }
+            }
+
+            // --- Drawing Functions ---
+            function drawParkingLot(ctx) {
+                const topBarH = 65;
+                const bottomRefH = 90;
+                const paddingX = 30;
+                const paddingY = 20;
+                const parkX = paddingX;
+                const parkY = topBarH + paddingY;
+                const parkW = canvas.width - paddingX * 2;
+                const parkH = canvas.height - topBarH - bottomRefH - paddingY * 2;
+
+                // Asphalt
+                const asphaltGrad = ctx.createLinearGradient(parkX, parkY, parkX, parkY + parkH);
+                asphaltGrad.addColorStop(0, '#4a4a50');
+                asphaltGrad.addColorStop(0.5, '#3d3d44');
+                asphaltGrad.addColorStop(1, '#353538');
+                ctx.fillStyle = asphaltGrad;
+                ctx.fillRect(parkX, parkY, parkW, parkH);
+
+                // Asphalt texture
+                ctx.fillStyle = 'rgba(0,0,0,0.06)';
+                const dotCount = Math.floor(parkW * parkH / 300);
+                for (let i = 0; i < dotCount; i++) {
+                    const dx = parkX + Math.random() * parkW;
+                    const dy = parkY + Math.random() * parkH;
+                    const ds = 0.5 + Math.random() * 2;
+                    ctx.beginPath();
+                    ctx.arc(dx, dy, ds, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Parking space lines
+                if (cars.length > 0) {
+                    const rows = new Set(cars.map(c => Math.round(c.y / 10) * 10));
+                    const uniqueRows = [...new Set(cars.map(c => {
+                        const rowKey = Math.round(c.y / 25) * 25;
+                        return rowKey;
+                    }))].sort((a, b) => a - b);
+
+                    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                    ctx.lineWidth = 1.5;
+                    ctx.setLineDash([8, 15]);
+                    uniqueRows.forEach(rowY => {
+                        const rowCars = cars.filter(c => Math.abs(Math.round(c.y / 25) * 25 - rowY) < 20);
+                        if (rowCars.length > 0) {
+                            const minX = Math.min(...rowCars.map(c => c.x - c.w / 2));
+                            const maxX = Math.max(...rowCars.map(c => c.x + c.w / 2));
+                            ctx.beginPath();
+                            ctx.moveTo(minX - 15, rowY);
+                            ctx.lineTo(maxX + 15, rowY);
+                            ctx.stroke();
+                        }
+                    });
+                    ctx.setLineDash([]);
+                }
+
+                // Border
+                ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(parkX, parkY, parkW, parkH);
+
+                // Corner bollards
+                const bollardR = 4;
+                const bollardOff = 8;
+                const corners = [
+                    { x: parkX - bollardOff, y: parkY - bollardOff },
+                    { x: parkX + parkW + bollardOff, y: parkY - bollardOff },
+                    { x: parkX - bollardOff, y: parkY + parkH + bollardOff },
+                    { x: parkX + parkW + bollardOff, y: parkY + parkH + bollardOff },
+                ];
+                corners.forEach(c => {
+                    ctx.fillStyle = '#ffcc00';
+                    ctx.beginPath();
+                    ctx.arc(c.x, c.y, bollardR, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#333';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                });
+            }
+
+            function drawTopBar(ctx) {
+                const barH = 60;
+                const barY = 0;
+                const barW = canvas.width;
+
+                // Background
+                const barGrad = ctx.createLinearGradient(0, barY, 0, barY + barH);
+                barGrad.addColorStop(0, 'rgba(20,20,30,0.95)');
+                barGrad.addColorStop(1, 'rgba(15,15,25,0.95)');
+                ctx.fillStyle = barGrad;
+                ctx.fillRect(0, barY, barW, barH);
+                ctx.strokeStyle = 'rgba(255,215,0,0.5)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, barY + barH);
+                ctx.lineTo(barW, barY + barH);
+                ctx.stroke();
+
+                // Level
+                ctx.fillStyle = '#ffd700';
+                ctx.font = 'bold 16px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText(`Level ${currentLevel}/${TOTAL_LEVELS}`, 20, barY + 22);
+
+                // Timer
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 20px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'center';
+                const mins = Math.floor(levelTimer / 60);
+                const secs = Math.floor(levelTimer % 60);
+                const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
+                ctx.fillText(`⏱ ${timeStr}`, barW / 2, barY + 24);
+
+                // Score
+                ctx.fillStyle = '#ffd700';
+                ctx.font = 'bold 16px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'right';
+                ctx.fillText(`Score: ${score}`, barW - 20, barY + 22);
+
+                // Wrong clicks
+                ctx.fillStyle = levelWrongClicks > 0 ? '#ff6666' : '#888888';
+                ctx.font = '12px "Segoe UI", Arial, sans-serif';
+                ctx.fillText(`Wrong: ${levelWrongClicks}`, barW - 20, barY + 44);
+            }
+
+            function drawReferencePanel(ctx) {
+                const panelH = 80;
+                const panelY = canvas.height - panelH - 5;
+                const panelW = 200;
+                const panelX = canvas.width - panelW - 15;
+
+                // Background
+                ctx.fillStyle = 'rgba(20,20,30,0.9)';
+                ctx.beginPath();
+                ctx.roundRect(panelX, panelY, panelW, panelH, 12);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255,215,0,0.6)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.roundRect(panelX, panelY, panelW, panelH, 12);
+                ctx.stroke();
+
+                // Label
+                ctx.fillStyle = '#ffd700';
+                ctx.font = 'bold 11px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('🔍 FIND THIS CAR', panelX + panelW / 2, panelY + 16);
+
+                // Mini reference car
+                const refCar = new Car(panelX + panelW / 2, panelY + 50, 55, 28, RONALDO_CAR_COLOR, 'sports', true, 0);
+                refCar.draw(ctx, true);
+
+                // Small sparkle
+                const sparkleX = panelX + panelW / 2 + 20;
+                const sparkleY = panelY + 38;
+                const t = Date.now() / 1000;
+                ctx.fillStyle = '#ffd700';
+                ctx.globalAlpha = 0.5 + Math.sin(t * 3) * 0.5;
+                ctx.beginPath();
+                const starSize = 5;
+                for (let i = 0; i < 5; i++) {
+                    const angle = (i * Math.PI * 2) / 5 - Math.PI / 2;
+                    const sx = sparkleX + Math.cos(angle) * starSize;
+                    const sy = sparkleY + Math.sin(angle) * starSize;
+                    if (i === 0) ctx.moveTo(sx, sy);
+                    else ctx.lineTo(sx, sy);
+                    const innerAngle = angle + Math.PI / 5;
+                    const ix = sparkleX + Math.cos(innerAngle) * starSize * 0.4;
+                    const iy = sparkleY + Math.sin(innerAngle) * starSize * 0.4;
+                    ctx.lineTo(ix, iy);
+                }
+                ctx.closePath();
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+
+            function drawInstructions(ctx) {
+                if (gameState === 'intro' && introAlpha > 0.01) {
+                    ctx.fillStyle = `rgba(0,0,0,${introAlpha * 0.7})`;
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    ctx.fillStyle = `rgba(255,255,255,${introAlpha})`;
+                    ctx.font = 'bold 28px "Segoe UI", Arial, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🏎️ Where is Ronaldo\'s Car?', canvas.width / 2, canvas.height / 2 - 50);
+
+                    ctx.fillStyle = `rgba(255,215,0,${introAlpha})`;
+                    ctx.font = 'bold 16px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText('Find the golden CR7 sports car in the parking lot!', canvas.width / 2, canvas.height / 2 - 5);
+
+                    ctx.fillStyle = `rgba(255,255,255,${introAlpha * 0.8})`;
+                    ctx.font = '14px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText('Click on the right car to score points. Be quick & accurate!', canvas.width / 2, canvas.height / 2 + 25);
+
+                    const btnW = 160;
+                    const btnH = 50;
+                    const btnX = canvas.width / 2 - btnW / 2;
+                    const btnY = canvas.height / 2 + 55;
+                    ctx.fillStyle = `rgba(255,215,0,${introAlpha})`;
+                    ctx.beginPath();
+                    ctx.roundRect(btnX, btnY, btnW, btnH, 25);
+                    ctx.fill();
+                    ctx.strokeStyle = `rgba(255,255,255,${introAlpha})`;
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    ctx.fillStyle = `rgba(0,0,0,${introAlpha})`;
+                    ctx.font = 'bold 18px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText('START GAME', canvas.width / 2, btnY + 32);
+                }
+            }
+
+            function drawGameOver(ctx) {
+                if (gameState === 'gameOver' && gameOverAlpha > 0.01) {
+                    ctx.fillStyle = `rgba(0,0,0,${gameOverAlpha * 0.75})`;
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    ctx.fillStyle = `rgba(255,215,0,${gameOverAlpha})`;
+                    ctx.font = 'bold 30px "Segoe UI", Arial, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🏆 Game Complete!', canvas.width / 2, canvas.height / 2 - 60);
+
+                    ctx.fillStyle = `rgba(255,255,255,${gameOverAlpha})`;
+                    ctx.font = '18px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText(`Final Score: ${score}`, canvas.width / 2, canvas.height / 2 - 15);
+                    ctx.fillText(`Total Time: ${Math.floor(totalTime)}s | Wrong Clicks: ${wrongClicks}`, canvas.width / 2, canvas
+                        .height / 2 + 18);
+
+                    const rating = wrongClicks === 0 ? '⭐⭐⭐ PERFECT!' :
+                        wrongClicks <= 3 ? '⭐⭐ Great!' :
+                        wrongClicks <= 8 ? '⭐ Good' : 'Keep practicing!';
+                    ctx.fillStyle = `rgba(255,215,0,${gameOverAlpha})`;
+                    ctx.font = 'bold 20px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText(rating, canvas.width / 2, canvas.height / 2 + 50);
+
+                    const btnW = 160;
+                    const btnH = 50;
+                    const btnX = canvas.width / 2 - btnW / 2;
+                    const btnY = canvas.height / 2 + 70;
+                    ctx.fillStyle = `rgba(255,215,0,${gameOverAlpha})`;
+                    ctx.beginPath();
+                    ctx.roundRect(btnX, btnY, btnW, btnH, 25);
+                    ctx.fill();
+                    ctx.strokeStyle = `rgba(255,255,255,${gameOverAlpha})`;
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    ctx.fillStyle = `rgba(0,0,0,${gameOverAlpha})`;
+                    ctx.font = 'bold 18px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText('PLAY AGAIN', canvas.width / 2, btnY + 32);
+                }
+            }
+
+            function drawLevelClear(ctx) {
+                if (gameState === 'levelClear' && levelClearAlpha > 0.01) {
+                    ctx.fillStyle = `rgba(0,0,0,${levelClearAlpha * 0.5})`;
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    ctx.fillStyle = `rgba(255,215,0,${levelClearAlpha})`;
+                    ctx.font = 'bold 32px "Segoe UI", Arial, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🎉 SIUUU! Found It!', canvas.width / 2, canvas.height / 2 - 10);
+
+                    const bonus = Math.max(0, Math.floor(500 - levelTimer * 15));
+                    ctx.fillStyle = `rgba(255,255,255,${levelClearAlpha})`;
+                    ctx.font = '16px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText(`Time Bonus: +${bonus} | Level ${currentLevel} Complete!`, canvas.width / 2, canvas.height / 2 +
+                        30);
+                }
+            }
+
+            // --- Input Handling ---
+            function getClickPos(e) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                let clientX, clientY;
+                if (e.touches && e.touches.length > 0) {
+                    clientX = e.touches[0].clientX;
+                    clientY = e.touches[0].clientY;
+                } else if (e.changedTouches && e.changedTouches.length > 0) {
+                    clientX = e.changedTouches[0].clientX;
+                    clientY = e.changedTouches[0].clientY;
+                } else {
+                    clientX = e.clientX;
+                    clientY = e.clientY;
+                }
+                return {
+                    x: (clientX - rect.left) * scaleX,
+                    y: (clientY - rect.top) * scaleY,
+                };
+            }
+
+            function handleClick(pos) {
+                initAudio();
+                if (gameState === 'intro') {
+                    // Check start button
+                    const btnW = 160;
+                    const btnH = 50;
+                    const btnX = canvas.width / 2 - btnW / 2;
+                    const btnY = canvas.height / 2 + 55;
+                    if (pos.x >= btnX && pos.x <= btnX + btnW && pos.y >= btnY && pos.y <= btnY + btnH) {
+                        startGame();
+                    }
+                    return;
+                }
+                if (gameState === 'gameOver') {
+                    const btnW = 160;
+                    const btnH = 50;
+                    const btnX = canvas.width / 2 - btnW / 2;
+                    const btnY = canvas.height / 2 + 70;
+                    if (pos.x >= btnX && pos.x <= btnX + btnW && pos.y >= btnY && pos.y <= btnY + btnH) {
+                        restartGame();
+                    }
+                    return;
+                }
+                if (gameState === 'levelClear') return;
+                if (gameState !== 'playing') return;
+
+                // Check car clicks
+                for (let i = 0; i < cars.length; i++) {
+                    const car = cars[i];
+                    if (car.bounds.contains(pos.x, pos.y)) {
+                        if (car.isRonaldo) {
+                            foundRonaldoCar(car);
+                        } else if (!car.clicked) {
+                            wrongCarClicked(car);
+                        }
+                        return;
+                    }
+                }
+                // Clicked on empty space - subtle feedback
+                sfxClick();
+            }
+
+            function foundRonaldoCar(car) {
+                car.clicked = true;
+                sfxFound();
+                const bonus = Math.max(0, Math.floor(500 - levelTimer * 15));
+                const levelMult = 1 + (currentLevel - 1) * 0.5;
+                const points = Math.floor((1000 + bonus) * levelMult);
+                score += points;
+                wrongClicks += levelWrongClicks;
+                totalTime += levelTimer;
+                foundFlash = 0.6;
+                spawnParticles(car.x, car.y, 60, ['#ffd700', '#ffec8b', '#fff', '#ffaa00', '#ffdd55', '#ffcc00'], [2, 8],
+                    0.35, [0.6, 1.8]);
+                gameState = 'levelClear';
+                levelClearAlpha = 1;
+                levelClearTimer = LEVEL_CLEAR_DELAY;
+                transitionTimer = LEVEL_CLEAR_DELAY;
+            }
+
+            function wrongCarClicked(car) {
+                car.clicked = true;
+                levelWrongClicks++;
+                sfxWrong();
+                shakeAmount = 0.3;
+                spawnParticles(car.x, car.y, 8, ['#ff4444', '#ff6666', '#ff8888'], [1, 3], 0.15, [0.2, 0.5]);
+                // Penalty
+                score = Math.max(0, score - 50);
+                // Reset clicked after a moment so player can click again (but penalty already applied)
+                setTimeout(() => { car.clicked = false; }, 800);
+            }
+
+            function startGame() {
+                initAudio();
+                currentLevel = 1;
+                score = 0;
+                totalTime = 0;
+                wrongClicks = 0;
+                levelWrongClicks = 0;
+                levelTimer = 0;
+                foundFlash = 0;
+                gameState = 'playing';
+                introAlpha = 0;
+                gameOverAlpha = 0;
+                levelClearAlpha = 0;
+                generateParkingLot(currentLevel);
+                sfxClick();
+            }
+
+            function restartGame() {
+                initAudio();
+                currentLevel = 1;
+                score = 0;
+                totalTime = 0;
+                wrongClicks = 0;
+                levelWrongClicks = 0;
+                levelTimer = 0;
+                foundFlash = 0;
+                gameState = 'playing';
+                introAlpha = 0;
+                gameOverAlpha = 0;
+                levelClearAlpha = 0;
+                transitionTimer = 0;
+                generateParkingLot(currentLevel);
+                sfxClick();
+            }
+
+            function nextLevel() {
+                currentLevel++;
+                if (currentLevel > TOTAL_LEVELS) {
+                    gameState = 'gameOver';
+                    gameOverAlpha = 1;
+                    sfxGameOver();
+                    spawnParticles(canvas.width / 2, canvas.height / 2, 100, ['#ffd700', '#ffec8b', '#fff', '#ffaa00',
+                        '#ffdd55', '#ffcc00', '#ff6600'
+                    ], [3, 12], 0.5, [0.8, 2.5]);
+                } else {
+                    levelWrongClicks = 0;
+                    levelTimer = 0;
+                    foundFlash = 0;
+                    gameState = 'playing';
+                    levelClearAlpha = 0;
+                    generateParkingLot(currentLevel);
+                    sfxLevelUp();
+                    spawnParticles(canvas.width / 2, canvas.height / 2, 40, ['#ffd700', '#fff', '#ffec8b'], [2, 7], 0.3, [0.5,
+                        1.5
+                    ]);
+                }
+            }
+
+            // --- Event Listeners ---
+            canvas.addEventListener('click', (e) => {
+                const pos = getClickPos(e);
+                handleClick(pos);
+            });
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                const pos = getClickPos(e);
+                handleClick(pos);
+            }, { passive: false });
+            canvas.addEventListener('mousemove', (e) => {
+                const pos = getClickPos(e);
+                let hoveredAny = false;
+                for (const car of cars) {
+                    const wasHovered = car.hovered;
+                    car.hovered = car.bounds.contains(pos.x, pos.y);
+                    if (car.hovered) hoveredAny = true;
+                }
+                if (hoveredAny && gameState === 'playing') {
+                    canvas.style.cursor = 'pointer';
+                } else if (gameState === 'intro' || gameState === 'gameOver') {
+                    const btnW = 160;
+                    const btnH = 50;
+                    const btnX = canvas.width / 2 - btnW / 2;
+                    const btnY = gameState === 'intro' ? canvas.height / 2 + 55 : canvas.height / 2 + 70;
+                    if (pos.x >= btnX && pos.x <= btnX + btnW && pos.y >= btnY && pos.y <= btnY + btnH) {
+                        canvas.style.cursor = 'pointer';
+                    } else {
+                        canvas.style.cursor = 'default';
+                    }
+                } else {
+                    canvas.style.cursor = 'default';
+                }
+            });
+
+            // --- Resize Handler ---
+            function resize() {
+                const maxW = Math.min(window.innerWidth - 10, 900);
+                const maxH = Math.min(window.innerHeight - 10, 700);
+                const aspect = 4 / 3;
+                let w, h;
+                if (maxW / maxH > aspect) {
+                    h = maxH;
+                    w = h * aspect;
+                } else {
+                    w = maxW;
+                    h = w / aspect;
+                }
+                canvas.width = Math.floor(w);
+                canvas.height = Math.floor(h);
+                if (gameState === 'playing' || gameState === 'levelClear') {
+                    generateParkingLot(currentLevel);
+                } else if (gameState === 'intro') {
+                    generateParkingLot(1);
+                }
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            // --- Game Loop ---
+            let lastTime = performance.now();
+            let introStartTime = performance.now();
+
+            function gameLoop(timestamp) {
+                const dt = Math.min(0.1, (timestamp - lastTime) / 1000);
+                lastTime = timestamp;
+
+                // Update
+                if (gameState === 'intro') {
+                    introAlpha = Math.min(1, (timestamp - introStartTime) / 600);
+                }
+                if (gameState === 'playing') {
+                    levelTimer += dt;
+                    if (foundFlash > 0) foundFlash = Math.max(0, foundFlash - dt);
+                    if (shakeAmount > 0) {
+                        shakeAmount = Math.max(0, shakeAmount - dt * 2.5);
+                        shakeX = (Math.random() - 0.5) * shakeAmount * 20;
+                        shakeY = (Math.random() - 0.5) * shakeAmount * 20;
+                    } else {
+                        shakeX = 0;
+                        shakeY = 0;
+                    }
+                }
+                if (gameState === 'levelClear') {
+                    levelClearTimer -= dt;
+                    if (levelClearAlpha > 0) levelClearAlpha = Math.max(0, levelClearAlpha - dt * 1.2);
+                    transitionTimer -= dt;
+                    if (transitionTimer <= 0) {
+                        nextLevel();
+                    }
+                }
+                if (gameState === 'gameOver') {
+                    gameOverAlpha = Math.min(1, gameOverAlpha + dt * 2);
+                }
+                updateParticles(dt * 1000);
+
+                // Clear
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                // Background
+                const bgGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+                bgGrad.addColorStop(0, '#1a1a2e');
+                bgGrad.addColorStop(0.5, '#222236');
+                bgGrad.addColorStop(1, '#1a1a2e');
+                ctx.fillStyle = bgGrad;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Apply shake
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                // Draw parking lot
+                drawParkingLot(ctx);
+
+                // Draw cars
+                for (const car of cars) {
+                    car.draw(ctx);
+                    // Hover highlight
+                    if (car.hovered && gameState === 'playing' && !car.clicked) {
+                        ctx.save();
+                        ctx.translate(car.x, car.y);
+                        if (car.angle !== 0) ctx.rotate(car.angle);
+                        const hw = car.w / 2 + 3;
+                        const hh = car.h / 2 + 3;
+                        const r = Math.min(hw, hh) * 0.3;
+                        ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+                        ctx.lineWidth = 2;
+                        ctx.setLineDash([4, 3]);
+                        ctx.beginPath();
+                        car.roundRect(ctx, -hw, -hh, car.w + 6, car.h + 6, r);
+                        ctx.stroke();
+                        ctx.setLineDash([]);
+                        ctx.restore();
+                    }
+                    // Ronaldo's car subtle glow
+                    if (car.isRonaldo && gameState === 'playing') {
+                        const glowAlpha = 0.25 + Math.sin(timestamp / 800) * 0.15;
+                        ctx.save();
+                        ctx.translate(car.x, car.y);
+                        if (car.angle !== 0) ctx.rotate(car.angle);
+                        const glowGrad = ctx.createRadialGradient(0, 0, car.w * 0.3, 0, 0, car.w * 0.9);
+                        glowGrad.addColorStop(0, `rgba(255,215,0,${glowAlpha})`);
+                        glowGrad.addColorStop(1, 'rgba(255,215,0,0)');
+                        ctx.fillStyle = glowGrad;
+                        ctx.fillRect(-car.w, -car.h, car.w * 2, car.h * 2);
+                        ctx.restore();
+                    }
+                }
+
+                // Found flash
+                if (foundFlash > 0 && ronaldoCarIndex >= 0 && ronaldoCarIndex < cars.length) {
+                    const rc = cars[ronaldoCarIndex];
+                    ctx.save();
+                    ctx.translate(rc.x, rc.y);
+                    const flashGrad = ctx.createRadialGradient(0, 0, rc.w * 0.2, 0, 0, rc.w * 2);
+                    flashGrad.addColorStop(0, `rgba(255,255,255,${foundFlash})`);
+                    flashGrad.addColorStop(0.5, `rgba(255,215,0,${foundFlash * 0.7})`);
+                    flashGrad.addColorStop(1, 'rgba(255,215,0,0)');
+                    ctx.fillStyle = flashGrad;
+                    ctx.fillRect(-rc.w * 2, -rc.h * 2, rc.w * 4, rc.h * 4);
+                    ctx.restore();
+                }
+
+                ctx.restore(); // undo shake
+
+                // Draw particles
+                drawParticles(ctx);
+
+                // Draw UI
+                drawTopBar(ctx);
+                drawReferencePanel(ctx);
+                drawInstructions(ctx);
+                drawGameOver(ctx);
+                drawLevelClear(ctx);
+
+                requestAnimationFrame(gameLoop);
+            }
+
+            // --- Initialize ---
+            generateParkingLot(1);
+            introStartTime = performance.now();
+            lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+
+            console.log('🏎️ Where is Ronaldo\'s Car? - Ready to play!');
+            console.log('Find the golden CR7 sports car in the parking lot.');
+            console.log('Click on cars to identify them. Good luck!');
+        })();
+    </script>
+</body>
+</html>
