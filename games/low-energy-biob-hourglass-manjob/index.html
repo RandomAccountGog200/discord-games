@@ -1,0 +1,1142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Low Energy Biob: Hourglass Manjob</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        canvas {
+            border-radius: 16px;
+            box-shadow: 0 0 60px rgba(180, 130, 80, 0.4), 0 0 120px rgba(100, 60, 30, 0.25);
+            max-width: 100vw;
+            max-height: 100vh;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            // Logical game resolution
+            const GAME_W = 800;
+            const GAME_H = 500;
+            canvas.width = GAME_W;
+            canvas.height = GAME_H;
+
+            // Scale canvas to fit screen
+            function resizeCanvas() {
+                const scale = Math.min(window.innerWidth / GAME_W, window.innerHeight / GAME_H) * 0.95;
+                canvas.style.width = (GAME_W * scale) + 'px';
+                canvas.style.height = (GAME_H * scale) + 'px';
+            }
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+
+            // --- Audio Engine ---
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            let audioCtx;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new AudioCtx();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playSound(freq, type, duration, vol = 0.15, glideTo = null) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (glideTo) osc.frequency.linearRampToValueAtTime(glideTo, t + duration);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) { /* mute */ }
+            }
+
+            function sfxJump() { playSound(180, 'triangle', 0.15, 0.12, 420); }
+
+            function sfxCollect() {
+                playSound(600, 'sine', 0.08, 0.1);
+                setTimeout(() => playSound(900, 'sine', 0.06, 0.12), 60);
+            }
+
+            function sfxGoldCollect() {
+                playSound(500, 'sine', 0.06, 0.08);
+                setTimeout(() => playSound(700, 'sine', 0.06, 0.08), 50);
+                setTimeout(() => playSound(1000, 'sine', 0.07, 0.12), 100);
+            }
+
+            function sfxGameOver() {
+                playSound(200, 'sawtooth', 0.2, 0.4, 60);
+            }
+
+            function sfxWarning() { playSound(300, 'square', 0.05, 0.08); }
+
+            // --- Game State ---
+            const STATE = { MENU: 'menu', PLAYING: 'playing', GAMEOVER: 'gameover' };
+            let gameState = STATE.MENU;
+            let score = 0;
+            let distanceTraveled = 0;
+            let difficulty = 1;
+            let menuBlink = 0;
+
+            // --- Player (Biob) ---
+            const player = {
+                x: 150,
+                y: 300,
+                w: 44,
+                h: 44,
+                vx: 1.2, // auto-walk speed (low energy)
+                vy: 0,
+                onGround: false,
+                squish: 0, // visual squish on landing
+                eyeBlink: 0,
+                eyeBlinkTimer: 0,
+                tieWobble: 0,
+                walkBob: 0,
+                trailParticles: [],
+            };
+
+            function resetPlayer() {
+                player.x = 150;
+                player.y = 280;
+                player.vy = 0;
+                player.onGround = false;
+                player.squish = 0;
+                player.eyeBlink = 0;
+                player.eyeBlinkTimer = 60;
+                player.tieWobble = 0;
+                player.walkBob = 0;
+                player.trailParticles = [];
+            }
+
+            // --- World ---
+            let platforms = [];
+            let collectibles = [];
+            let particles = [];
+            let cameraX = 0;
+
+            const PLATFORM_MIN_W = 70;
+            const PLATFORM_MAX_W = 160;
+            const PLATFORM_GAP_MIN = 100;
+            const PLATFORM_GAP_MAX = 190;
+            const JUMP_HEIGHT = 170;
+
+            function createPlatform(wx, wy, w) {
+                return {
+                    x: wx,
+                    y: wy,
+                    w: w,
+                    h: 16,
+                    color: null,
+                    grass: true,
+                };
+            }
+
+            function generateInitialPlatforms() {
+                platforms = [];
+                collectibles = [];
+                // Ground platform under player start
+                platforms.push(createPlatform(80, 340, 180));
+                platforms.push(createPlatform(310, 310, 120));
+                platforms.push(createPlatform(500, 280, 100));
+                platforms.push(createPlatform(660, 320, 140));
+                platforms.push(createPlatform(860, 260, 110));
+                platforms.push(createPlatform(1030, 300, 130));
+                platforms.push(createPlatform(1200, 240, 100));
+                platforms.push(createPlatform(1360, 290, 150));
+                // Place some energy orbs
+                spawnOrbOnPlatform(platforms[1]);
+                spawnOrbOnPlatform(platforms[3]);
+                spawnOrbOnPlatform(platforms[5]);
+                spawnOrbOnPlatform(platforms[6]);
+            }
+
+            function spawnOrbOnPlatform(plat) {
+                if (Math.random() < 0.55) {
+                    const isGold = Math.random() < 0.18;
+                    collectibles.push({
+                        x: plat.x + plat.w / 2 + (Math.random() - 0.5) * plat.w * 0.6,
+                        y: plat.y - 28 - Math.random() * 12,
+                        r: 10,
+                        type: isGold ? 'gold' : 'energy',
+                        bobOffset: Math.random() * Math.PI * 2,
+                        sparkTimer: 0,
+                    });
+                }
+            }
+
+            function ensurePlatformsAhead() {
+                const rightEdge = cameraX + GAME_W + 200;
+                let lastPlat = platforms[platforms.length - 1];
+                if (!lastPlat) {
+                    generateInitialPlatforms();
+                    return;
+                }
+                while (lastPlat.x + lastPlat.w < rightEdge) {
+                    const gap = PLATFORM_GAP_MIN + Math.random() * (PLATFORM_GAP_MAX - PLATFORM_GAP_MIN) - difficulty * 8;
+                    const gapClamped = Math.max(70, Math.min(gap, PLATFORM_GAP_MAX));
+                    const nx = lastPlat.x + lastPlat.w + gapClamped;
+                    const prevY = lastPlat.y;
+                    const dy = (Math.random() - 0.5) * 140;
+                    let ny = prevY + dy;
+                    ny = Math.max(140, Math.min(400, ny));
+                    // Ensure jumpable
+                    const jumpReach = JUMP_HEIGHT - difficulty * 3;
+                    if (Math.abs(ny - prevY) > jumpReach * 0.75) {
+                        ny = prevY + (ny > prevY ? jumpReach * 0.7 : -jumpReach * 0.7);
+                    }
+                    ny = Math.max(140, Math.min(400, ny));
+                    const w = PLATFORM_MIN_W + Math.random() * (PLATFORM_MAX_W - PLATFORM_MIN_W);
+                    const plat = createPlatform(nx, ny, w);
+                    platforms.push(plat);
+                    spawnOrbOnPlatform(plat);
+                    lastPlat = plat;
+                }
+                // Cleanup far behind platforms
+                const leftEdge = cameraX - 400;
+                platforms = platforms.filter(p => p.x + p.w > leftEdge);
+                collectibles = collectibles.filter(c => c.x > leftEdge - 50);
+            }
+
+            // --- Hourglass (Sand Timer) ---
+            const hourglass = {
+                sandLevel: 1.0, // 0 = empty, 1 = full
+                maxSand: 1.0,
+                depletionRate: 0.012, // per second at difficulty 1
+                warningBeepTimer: 0,
+                flashAlpha: 0,
+            };
+
+            function resetHourglass() {
+                hourglass.sandLevel = 1.0;
+                hourglass.maxSand = 1.0;
+                hourglass.depletionRate = 0.012;
+                hourglass.warningBeepTimer = 0;
+                hourglass.flashAlpha = 0;
+            }
+
+            // --- Particles ---
+            function spawnParticles(x, y, count, color, spread = 3, life = 25) {
+                for (let i = 0; i < count; i++) {
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: (Math.random() - 0.5) * spread,
+                        vy: (Math.random() - 1) * spread * 1.5,
+                        life: life + Math.random() * 15,
+                        maxLife: life + 15,
+                        color: color,
+                        r: 1.5 + Math.random() * 3,
+                    });
+                }
+            }
+
+            // --- Input ---
+            let jumpPressed = false;
+            let jumpBuffered = false;
+            let bufferTimer = 0;
+
+            function handleJump() {
+                initAudio();
+                if (gameState === STATE.MENU) {
+                    startGame();
+                    return;
+                }
+                if (gameState === STATE.GAMEOVER) {
+                    restartGame();
+                    return;
+                }
+                if (player.onGround || player.squish > 0.5) {
+                    player.vy = -9.5;
+                    player.onGround = false;
+                    player.squish = 1.4;
+                    sfxJump();
+                    spawnParticles(player.x, player.y + player.h / 2, 6, '#c8b89a', 3, 18);
+                } else {
+                    // Buffer jump for coyote time
+                    jumpBuffered = true;
+                    bufferTimer = 8;
+                }
+            }
+
+            canvas.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                handleJump();
+            });
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                handleJump();
+            }, { passive: false });
+            document.addEventListener('keydown', (e) => {
+                if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
+                    e.preventDefault();
+                    handleJump();
+                }
+            });
+
+            // --- Game Flow ---
+            function startGame() {
+                initAudio();
+                gameState = STATE.PLAYING;
+                score = 0;
+                distanceTraveled = 0;
+                difficulty = 1;
+                resetPlayer();
+                resetHourglass();
+                platforms = [];
+                collectibles = [];
+                particles = [];
+                cameraX = 0;
+                generateInitialPlatforms();
+                player.x = 150;
+                player.y = platforms[0].y - player.h;
+                player.vy = 0;
+                player.onGround = false;
+                ensurePlatformsAhead();
+            }
+
+            function restartGame() { startGame(); }
+
+            function endGame() {
+                gameState = STATE.GAMEOVER;
+                sfxGameOver();
+                spawnParticles(player.x, player.y, 30, '#ff8866', 6, 40);
+                spawnParticles(player.x, player.y, 20, '#ffcc44', 5, 35);
+            }
+
+            // --- Update ---
+            function update(dt) {
+                if (gameState !== STATE.PLAYING) return;
+
+                // Update difficulty
+                distanceTraveled = Math.max(distanceTraveled, player.x - 150);
+                difficulty = 1 + Math.floor(distanceTraveled / 800);
+                hourglass.depletionRate = 0.012 + difficulty * 0.003;
+
+                // Deplete hourglass
+                hourglass.sandLevel -= hourglass.depletionRate * dt;
+                if (hourglass.sandLevel <= 0) {
+                    hourglass.sandLevel = 0;
+                    endGame();
+                    return;
+                }
+
+                // Warning beeps when low
+                if (hourglass.sandLevel < 0.25) {
+                    hourglass.warningBeepTimer -= dt * 60;
+                    if (hourglass.warningBeepTimer <= 0) {
+                        hourglass.warningBeepTimer = 40 - hourglass.sandLevel * 60;
+                        sfxWarning();
+                    }
+                    hourglass.flashAlpha = 0.35 + Math.sin(Date.now() * 0.015) * 0.25;
+                } else {
+                    hourglass.warningBeepTimer = 0;
+                    hourglass.flashAlpha *= 0.9;
+                }
+
+                // Buffer timer for jump
+                if (jumpBuffered) {
+                    bufferTimer--;
+                    if (bufferTimer <= 0) jumpBuffered = false;
+                }
+
+                // Apply buffered jump if on ground
+                if (jumpBuffered && player.onGround) {
+                    player.vy = -9.5;
+                    player.onGround = false;
+                    player.squish = 1.4;
+                    jumpBuffered = false;
+                    sfxJump();
+                    spawnParticles(player.x, player.y + player.h / 2, 6, '#c8b89a', 3, 18);
+                }
+
+                // Player physics
+                const gravity = 0.55;
+                player.vy += gravity * dt * 60;
+                player.y += player.vy * dt * 60;
+                player.x += player.vx * dt * 60;
+
+                // Squish recovery
+                if (player.squish > 1.0) player.squish += (1.0 - player.squish) * 0.3;
+                else player.squish = 1.0;
+
+                // Walking bob
+                if (player.onGround) player.walkBob += 0.15;
+                else player.walkBob *= 0.9;
+
+                // Tie wobble
+                player.tieWobble += (Math.random() - 0.5) * 0.2;
+                player.tieWobble *= 0.85;
+
+                // Eye blink
+                player.eyeBlinkTimer--;
+                if (player.eyeBlinkTimer <= 0) {
+                    player.eyeBlink = 6;
+                    player.eyeBlinkTimer = 80 + Math.random() * 200;
+                }
+                if (player.eyeBlink > 0) player.eyeBlink -= 0.5;
+
+                // Platform collision
+                player.onGround = false;
+                const px = player.x - player.w / 2;
+                const py = player.y - player.h / 2;
+                const pw = player.w;
+                const ph = player.h;
+
+                for (const plat of platforms) {
+                    // One-way platform: only collide when falling and player bottom was above platform top
+                    const platTop = plat.y;
+                    const playerBottom = py + ph;
+                    const playerPrevBottom = playerBottom - player.vy * dt * 60;
+
+                    if (player.vy >= -1 &&
+                        px + pw > plat.x + 4 &&
+                        px < plat.x + plat.w - 4 &&
+                        playerPrevBottom <= platTop + 4 &&
+                        playerBottom >= platTop - 2 &&
+                        playerBottom <= platTop + 18) {
+                        // Land on platform
+                        player.y = platTop - ph / 2;
+                        player.vy = 0;
+                        player.onGround = true;
+                        if (playerPrevBottom < platTop - 2) {
+                            player.squish = 1.35;
+                        }
+                    }
+                }
+
+                // Fall off screen
+                if (player.y > GAME_H + 80) {
+                    endGame();
+                    return;
+                }
+
+                // Camera follow
+                const targetCamX = player.x - GAME_W * 0.28;
+                cameraX += (targetCamX - cameraX) * 0.08;
+                if (cameraX < 0) cameraX = 0;
+
+                // Ensure platforms ahead
+                ensurePlatformsAhead();
+
+                // Collect collectibles
+                for (let i = collectibles.length - 1; i >= 0; i--) {
+                    const c = collectibles[i];
+                    const dx = player.x - c.x;
+                    const dy = player.y - player.h / 2 - c.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < player.w / 2 + c.r) {
+                        // Collected!
+                        if (c.type === 'gold') {
+                            hourglass.sandLevel = Math.min(hourglass.maxSand, hourglass.sandLevel + 0.35);
+                            sfxGoldCollect();
+                            spawnParticles(c.x, c.y, 18, '#ffd700', 5, 30);
+                            score += 50;
+                        } else {
+                            hourglass.sandLevel = Math.min(hourglass.maxSand, hourglass.sandLevel + 0.18);
+                            sfxCollect();
+                            spawnParticles(c.x, c.y, 10, '#88ccff', 4, 22);
+                            score += 20;
+                        }
+                        collectibles.splice(i, 1);
+                    }
+                }
+
+                // Update collectibles bob
+                for (const c of collectibles) {
+                    c.bobOffset += 0.04;
+                    c.sparkTimer++;
+                }
+
+                // Update particles
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += 0.08;
+                    p.life--;
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+
+                // Player trail particles
+                if (player.onGround && Math.abs(player.vx) > 0.3 && Math.random() < 0.3) {
+                    player.trailParticles.push({
+                        x: player.x - player.w / 2 + Math.random() * 4,
+                        y: player.y + player.h / 2 - 2,
+                        life: 15,
+                        maxLife: 15,
+                        r: 1.5 + Math.random() * 2,
+                    });
+                }
+                for (let i = player.trailParticles.length - 1; i >= 0; i--) {
+                    player.trailParticles[i].life--;
+                    player.trailParticles[i].y -= 0.3;
+                    if (player.trailParticles[i].life <= 0) player.trailParticles.splice(i, 1);
+                }
+
+                // Score increment
+                score += Math.floor(player.vx * dt * 60 * 0.5);
+            }
+
+            // --- Render ---
+            function drawBackground() {
+                // Sky gradient
+                const grad = ctx.createLinearGradient(0, 0, 0, GAME_H);
+                grad.addColorStop(0, '#1a1a3e');
+                grad.addColorStop(0.3, '#2d3a6e');
+                grad.addColorStop(0.6, '#4a6094');
+                grad.addColorStop(1, '#6b8ab5');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, GAME_W, GAME_H);
+
+                // Stars / distant particles
+                ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                const starSeed = 42;
+                for (let i = 0; i < 60; i++) {
+                    const sx = ((i * 173 + starSeed) % GAME_W);
+                    const sy = ((i * 97 + starSeed * 3) % (GAME_H * 0.55));
+                    const twinkle = 0.3 + 0.7 * Math.abs(Math.sin(Date.now() * 0.0008 + i));
+                    ctx.globalAlpha = twinkle * 0.7;
+                    ctx.fillRect(sx, sy, 1.5, 1.5);
+                }
+                ctx.globalAlpha = 1;
+
+                // Subtle distant clouds
+                ctx.fillStyle = 'rgba(255,255,255,0.06)';
+                for (let i = 0; i < 5; i++) {
+                    const cx = ((i * 220 + (cameraX * 0.1)) % (GAME_W + 300)) - 150;
+                    const cy = 50 + i * 30;
+                    ctx.beginPath();
+                    ctx.ellipse(cx, cy, 80 + i * 15, 22 + i * 5, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function drawPlatform(plat) {
+                const sx = plat.x - cameraX;
+                const sy = plat.y;
+                if (sx + plat.w < -20 || sx > GAME_W + 20) return;
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.25)';
+                ctx.fillRect(sx + 2, sy + 3, plat.w, plat.h);
+
+                // Platform body
+                const bodyGrad = ctx.createLinearGradient(0, sy, 0, sy + plat.h);
+                bodyGrad.addColorStop(0, '#8b7355');
+                bodyGrad.addColorStop(0.3, '#a0845c');
+                bodyGrad.addColorStop(0.6, '#6b5640');
+                bodyGrad.addColorStop(1, '#4a3828');
+                ctx.fillStyle = bodyGrad;
+                ctx.fillRect(sx, sy, plat.w, plat.h);
+
+                // Grass tufts on top
+                if (plat.grass !== false) {
+                    ctx.fillStyle = '#5a8a3c';
+                    for (let gx = sx; gx < sx + plat.w; gx += 8) {
+                        const gh = 5 + Math.abs(Math.sin(gx * 0.4 + plat.x) * 6);
+                        ctx.fillRect(gx, sy - gh + 2, 6, gh);
+                    }
+                    // Lighter grass highlights
+                    ctx.fillStyle = '#7aad50';
+                    for (let gx = sx + 3; gx < sx + plat.w - 3; gx += 11) {
+                        const gh = 3 + Math.abs(Math.cos(gx * 0.5 + plat.x) * 4);
+                        ctx.fillRect(gx, sy - gh + 2, 4, gh);
+                    }
+                }
+
+                // Top edge highlight
+                ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                ctx.fillRect(sx, sy, plat.w, 2);
+            }
+
+            function drawCollectible(c) {
+                const sx = c.x - cameraX;
+                const sy = c.y + Math.sin(c.bobOffset) * 5;
+                if (sx < -30 || sx > GAME_W + 30) return;
+
+                // Glow
+                const glowGrad = ctx.createRadialGradient(sx, sy, c.r * 0.3, sx, sy, c.r * 1.8);
+                if (c.type === 'gold') {
+                    glowGrad.addColorStop(0, 'rgba(255,215,0,0.7)');
+                    glowGrad.addColorStop(0.5, 'rgba(255,180,0,0.3)');
+                    glowGrad.addColorStop(1, 'rgba(255,150,0,0)');
+                } else {
+                    glowGrad.addColorStop(0, 'rgba(130,200,255,0.7)');
+                    glowGrad.addColorStop(0.5, 'rgba(80,160,240,0.3)');
+                    glowGrad.addColorStop(1, 'rgba(40,100,200,0)');
+                }
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(sx, sy, c.r * 1.8, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Orb body
+                const orbGrad = ctx.createRadialGradient(sx - c.r * 0.3, sy - c.r * 0.3, c.r * 0.1, sx, sy, c.r);
+                if (c.type === 'gold') {
+                    orbGrad.addColorStop(0, '#fffde0');
+                    orbGrad.addColorStop(0.4, '#ffd700');
+                    orbGrad.addColorStop(1, '#b8860b');
+                } else {
+                    orbGrad.addColorStop(0, '#e8f4ff');
+                    orbGrad.addColorStop(0.4, '#5baeff');
+                    orbGrad.addColorStop(1, '#1a5faa');
+                }
+                ctx.fillStyle = orbGrad;
+                ctx.beginPath();
+                ctx.arc(sx, sy, c.r, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Highlight
+                ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                ctx.beginPath();
+                ctx.arc(sx - c.r * 0.3, sy - c.r * 0.35, c.r * 0.35, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Sparkles
+                if (c.sparkTimer % 12 < 6 && c.type === 'gold') {
+                    ctx.fillStyle = '#fff';
+                    const sparkAngle = Date.now() * 0.005 + c.bobOffset;
+                    const sparkX = sx + Math.cos(sparkAngle) * c.r * 1.3;
+                    const sparkY = sy + Math.sin(sparkAngle) * c.r * 1.3;
+                    ctx.beginPath();
+                    ctx.arc(sparkX, sparkY, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function drawPlayer() {
+                const px = player.x - cameraX;
+                const py = player.y;
+                const squishX = 1 + (player.squish - 1) * 0.5;
+                const squishY = 1 - (player.squish - 1) * 0.5;
+                const bobY = player.onGround ? Math.sin(player.walkBob) * 2 : 0;
+
+                // Trail particles
+                for (const tp of player.trailParticles) {
+                    const alpha = tp.life / tp.maxLife;
+                    ctx.fillStyle = `rgba(180,160,140,${alpha * 0.5})`;
+                    ctx.beginPath();
+                    ctx.arc(tp.x - cameraX, tp.y, tp.r, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                ctx.save();
+                ctx.translate(px, py + bobY);
+                ctx.scale(squishX, squishY);
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.35)';
+                ctx.beginPath();
+                ctx.ellipse(0, player.h / 2 + 1, player.w / 2, 6, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body (blob shape)
+                const bodyGrad = ctx.createRadialGradient(-5, -8, 3, 0, 0, player.w / 2);
+                bodyGrad.addColorStop(0, '#e8dcc8');
+                bodyGrad.addColorStop(0.5, '#c8b898');
+                bodyGrad.addColorStop(1, '#8a7058');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                // Slightly irregular blob shape
+                const bw = player.w / 2;
+                const bh = player.h / 2;
+                ctx.moveTo(0, -bh);
+                ctx.bezierCurveTo(bw * 1.1, -bh * 0.9, bw * 1.05, -bh * 0.2, bw * 0.95, bh * 0.2);
+                ctx.bezierCurveTo(bw * 0.9, bh * 0.8, bw * 0.3, bh * 1.05, -bw * 0.1, bh * 0.95);
+                ctx.bezierCurveTo(-bw * 0.6, bh * 0.85, -bw * 1.0, bh * 0.3, -bw * 0.95, -bh * 0.15);
+                ctx.bezierCurveTo(-bw * 0.9, -bh * 0.7, -bw * 0.5, -bh * 1.0, 0, -bh);
+                ctx.fill();
+
+                // Lighter belly
+                const bellyGrad = ctx.createRadialGradient(0, 4, 2, 0, 5, bw * 0.7);
+                bellyGrad.addColorStop(0, 'rgba(255,240,220,0.6)');
+                bellyGrad.addColorStop(1, 'rgba(255,240,220,0)');
+                ctx.fillStyle = bellyGrad;
+                ctx.beginPath();
+                ctx.arc(0, 4, bw * 0.55, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Eyes - sleepy half-closed
+                const eyeY = -6;
+                const eyeSpacing = 9;
+                const eyelidDrop = player.eyeBlink > 0 ? player.eyeBlink * 2.5 : 3;
+
+                // Left eye white
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.ellipse(-eyeSpacing, eyeY, 7, 8, 0, 0, Math.PI * 2);
+                ctx.fill();
+                // Right eye white
+                ctx.beginPath();
+                ctx.ellipse(eyeSpacing, eyeY, 7, 8, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Pupils (looking tired, half-covered by eyelids)
+                ctx.fillStyle = '#3a2a1a';
+                ctx.beginPath();
+                ctx.arc(-eyeSpacing + 1, eyeY + 1, 3.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(eyeSpacing + 1, eyeY + 1, 3.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Pupil highlights
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(-eyeSpacing - 1, eyeY - 2, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(eyeSpacing - 1, eyeY - 2, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Eyelids (sleepy droopy)
+                ctx.fillStyle = '#8a7058';
+                ctx.beginPath();
+                ctx.ellipse(-eyeSpacing, eyeY - 2 - eyelidDrop, 7.5, 5, 0, Math.PI, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(eyeSpacing, eyeY - 2 - eyelidDrop, 7.5, 5, 0, Math.PI, Math.PI * 2);
+                ctx.fill();
+
+                // Bags under eyes (tired)
+                ctx.strokeStyle = 'rgba(120,90,70,0.5)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.arc(-eyeSpacing, eyeY + 9, 5, 0.2, Math.PI - 0.2);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.arc(eyeSpacing, eyeY + 9, 5, 0.2, Math.PI - 0.2);
+                ctx.stroke();
+
+                // Mouth (slight frown/tired)
+                ctx.strokeStyle = '#5a4030';
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                ctx.arc(0, eyeY + 16, 5, 0.15, Math.PI - 0.15);
+                ctx.stroke();
+
+                // Necktie (man job!)
+                const tieX = Math.sin(player.tieWobble) * 2;
+                const tieY = bh - 2;
+                ctx.fillStyle = '#c0392b';
+                ctx.beginPath();
+                ctx.moveTo(tieX - 4, tieY);
+                ctx.lineTo(tieX + 4, tieY);
+                ctx.lineTo(tieX + 1, tieY + 16);
+                ctx.lineTo(tieX - 1, tieY + 16);
+                ctx.closePath();
+                ctx.fill();
+                // Tie knot
+                ctx.fillStyle = '#a93226';
+                ctx.beginPath();
+                ctx.arc(tieX, tieY + 1, 4.5, 0, Math.PI * 2);
+                ctx.fill();
+                // Tie stripes
+                ctx.fillStyle = '#e8dcc8';
+                ctx.fillRect(tieX - 2.5, tieY + 3, 5, 1.5);
+                ctx.fillRect(tieX - 2, tieY + 7, 4, 1.5);
+                ctx.fillRect(tieX - 1.5, tieY + 11, 3, 1.5);
+
+                // Tiny coffee cup stain on tie (detail)
+                ctx.fillStyle = 'rgba(139,100,70,0.4)';
+                ctx.beginPath();
+                ctx.arc(tieX + 1, tieY + 9, 1.8, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.restore();
+            }
+
+            function drawHourglassUI() {
+                const hgx = GAME_W / 2;
+                const hgy = 50;
+                const hgw = 44;
+                const hgh = 70;
+
+                // Glow when low
+                if (hourglass.flashAlpha > 0.05) {
+                    const glowGrad = ctx.createRadialGradient(hgx, hgy, hgw * 0.4, hgx, hgy, hgw * 1.5);
+                    glowGrad.addColorStop(0, `rgba(255,80,50,${hourglass.flashAlpha})`);
+                    glowGrad.addColorStop(1, 'rgba(255,50,30,0)');
+                    ctx.fillStyle = glowGrad;
+                    ctx.beginPath();
+                    ctx.arc(hgx, hgy, hgw * 1.5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Wooden frame
+                const frameGrad = ctx.createLinearGradient(hgx - hgw / 2, 0, hgx + hgw / 2, 0);
+                frameGrad.addColorStop(0, '#5a3a20');
+                frameGrad.addColorStop(0.3, '#8b5e3c');
+                frameGrad.addColorStop(0.5, '#a07040');
+                frameGrad.addColorStop(0.7, '#8b5e3c');
+                frameGrad.addColorStop(1, '#4a2810');
+                ctx.strokeStyle = frameGrad;
+                ctx.lineWidth = 5;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+
+                // Draw hourglass shape
+                const topY = hgy - hgh / 2;
+                const botY = hgy + hgh / 2;
+                const neckY = hgy;
+                const neckW = 6;
+                const bulbW = hgw / 2;
+
+                // Top bulb outline
+                ctx.beginPath();
+                ctx.moveTo(hgx - bulbW, topY);
+                ctx.lineTo(hgx - neckW, neckY);
+                ctx.lineTo(hgx + neckW, neckY);
+                ctx.lineTo(hgx + bulbW, topY);
+                ctx.closePath();
+                ctx.stroke();
+
+                // Bottom bulb outline
+                ctx.beginPath();
+                ctx.moveTo(hgx - bulbW, botY);
+                ctx.lineTo(hgx - neckW, neckY);
+                ctx.lineTo(hgx + neckW, neckY);
+                ctx.lineTo(hgx + bulbW, botY);
+                ctx.closePath();
+                ctx.stroke();
+
+                // Top cap
+                ctx.fillStyle = '#6b3a1f';
+                ctx.fillRect(hgx - bulbW - 3, topY - 6, bulbW * 2 + 6, 8);
+                ctx.fillRect(hgx - bulbW - 3, botY - 2, bulbW * 2 + 6, 8);
+
+                // Sand in top bulb
+                const sandLevel = hourglass.sandLevel;
+                const topBulbHeight = neckY - topY;
+                const sandTopY = neckY - sandLevel * topBulbHeight;
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.moveTo(hgx - bulbW, topY);
+                ctx.lineTo(hgx - neckW, neckY);
+                ctx.lineTo(hgx + neckW, neckY);
+                ctx.lineTo(hgx + bulbW, topY);
+                ctx.closePath();
+                ctx.clip();
+
+                // Sand gradient
+                const sandGrad = ctx.createLinearGradient(0, topY, 0, neckY);
+                sandGrad.addColorStop(0, '#f5d78c');
+                sandGrad.addColorStop(0.5, '#e8b84b');
+                sandGrad.addColorStop(1, '#c8922a');
+                ctx.fillStyle = sandGrad;
+                ctx.fillRect(hgx - bulbW, sandTopY, bulbW * 2, neckY - sandTopY);
+
+                // Sand surface shimmer
+                if (sandLevel > 0.02) {
+                    ctx.fillStyle = 'rgba(255,255,220,0.5)';
+                    ctx.fillRect(hgx - bulbW + 2, sandTopY, bulbW * 2 - 4, 2);
+                }
+                ctx.restore();
+
+                // Sand in bottom bulb
+                const bottomSandLevel = 1 - sandLevel;
+                const botBulbHeight = botY - neckY;
+                const sandBotY = neckY + bottomSandLevel * botBulbHeight;
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.moveTo(hgx - bulbW, botY);
+                ctx.lineTo(hgx - neckW, neckY);
+                ctx.lineTo(hgx + neckW, neckY);
+                ctx.lineTo(hgx + bulbW, botY);
+                ctx.closePath();
+                ctx.clip();
+
+                const sandGrad2 = ctx.createLinearGradient(0, neckY, 0, botY);
+                sandGrad2.addColorStop(0, '#d4a840');
+                sandGrad2.addColorStop(1, '#a07020');
+                ctx.fillStyle = sandGrad2;
+                ctx.fillRect(hgx - bulbW, neckY, bulbW * 2, sandBotY - neckY);
+                ctx.restore();
+
+                // Falling sand stream
+                if (sandLevel > 0.01) {
+                    const streamAlpha = Math.min(1, sandLevel * 4);
+                    ctx.fillStyle = `rgba(220,170,60,${streamAlpha})`;
+                    const streamW = 2.5;
+                    ctx.fillRect(hgx - streamW / 2, neckY - 2, streamW, Math.min(botBulbHeight * 0.6, 20));
+                    // Individual grains
+                    for (let i = 0; i < 5; i++) {
+                        const grainY = neckY + (Date.now() * 0.08 + i * 7) % (sandBotY - neckY);
+                        const grainX = hgx + (Math.sin(i * 2.7 + Date.now() * 0.01) * 2);
+                        if (grainY < sandBotY && grainY > neckY) {
+                            ctx.fillStyle = `rgba(240,200,100,${streamAlpha * 0.8})`;
+                            ctx.beginPath();
+                            ctx.arc(grainX, grainY, 1.2, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                    }
+                }
+
+                // Glass shine
+                ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(hgx - bulbW + 6, topY + 8);
+                ctx.lineTo(hgx - neckW + 2, neckY - 4);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(hgx - bulbW + 6, botY - 8);
+                ctx.lineTo(hgx - neckW + 2, neckY + 4);
+                ctx.stroke();
+
+                // Label
+                ctx.fillStyle = 'rgba(255,255,255,0.8)';
+                ctx.font = 'bold 10px "Segoe UI", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('SANDS OF ENERGY', hgx, botY + 22);
+            }
+
+            function drawParticles() {
+                for (const p of particles) {
+                    const alpha = p.life / p.maxLife;
+                    ctx.fillStyle = p.color.replace(')', `,${alpha})`).replace('rgb',
+                        'rgba');
+                    if (p.color.startsWith('#')) {
+                        ctx.fillStyle = p.color;
+                        ctx.globalAlpha = alpha;
+                    }
+                    ctx.beginPath();
+                    ctx.arc(p.x - cameraX, p.y, p.r * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+            }
+
+            function drawUI() {
+                // Score
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.fillRect(GAME_W - 170, 8, 160, 36);
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 15px "Segoe UI", sans-serif';
+                ctx.textAlign = 'right';
+                ctx.fillText(`Score: ${score}`, GAME_W - 20, 32);
+                ctx.font = '10px "Segoe UI", sans-serif';
+                ctx.fillText(`Dist: ${Math.floor(distanceTraveled)}m`, GAME_W - 20, 48);
+
+                // Mobile hint
+                if (gameState === STATE.PLAYING && 'ontouchstart' in window) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                    ctx.font = '11px "Segoe UI", sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('TAP TO JUMP', GAME_W / 2, GAME_H - 18);
+                }
+            }
+
+            function drawMenuScreen() {
+                drawBackground();
+                // Render some platforms in background
+                const savedCam = cameraX;
+                cameraX = 0;
+                for (const plat of platforms) drawPlatform(plat);
+                for (const c of collectibles) drawCollectible(c);
+                cameraX = savedCam;
+
+                // Overlay
+                ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                ctx.fillRect(0, 0, GAME_W, GAME_H);
+
+                // Title
+                const titleY = 110;
+                ctx.fillStyle = '#ffd700';
+                ctx.font = 'bold 36px "Segoe UI", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = 'rgba(0,0,0,0.6)';
+                ctx.shadowBlur = 15;
+                ctx.fillText('LOW ENERGY BIOB', GAME_W / 2, titleY);
+                ctx.fillStyle = '#f0c090';
+                ctx.font = 'bold 22px "Segoe UI", sans-serif';
+                ctx.fillText('Hourglass Manjob', GAME_W / 2, titleY + 38);
+                ctx.shadowBlur = 0;
+
+                // Draw sleepy blob
+                const blobX = GAME_W / 2;
+                const blobY = titleY + 110;
+                ctx.fillStyle = '#c8b898';
+                ctx.beginPath();
+                ctx.arc(blobX, blobY, 30, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.ellipse(blobX - 9, blobY - 5, 6, 7, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(blobX + 9, blobY - 5, 6, 7, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#3a2a1a';
+                ctx.beginPath();
+                ctx.arc(blobX - 8, blobY - 4, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(blobX + 10, blobY - 4, 3, 0, Math.PI * 2);
+                ctx.fill();
+                // Sleepy eyelids
+                ctx.fillStyle = '#c8b898';
+                ctx.fillRect(blobX - 16, blobY - 12, 14, 9);
+                ctx.fillRect(blobX + 2, blobY - 12, 14, 9);
+                // Tie
+                ctx.fillStyle = '#c0392b';
+                ctx.beginPath();
+                ctx.moveTo(blobX - 3, blobY + 26);
+                ctx.lineTo(blobX + 3, blobY + 26);
+                ctx.lineTo(blobX + 1, blobY + 42);
+                ctx.lineTo(blobX - 1, blobY + 42);
+                ctx.closePath();
+                ctx.fill();
+
+                // Instructions
+                const instY = blobY + 70;
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 16px "Segoe UI", sans-serif';
+                ctx.fillText('🕹️  SPACE / CLICK / TAP  to JUMP', GAME_W / 2, instY);
+                ctx.fillStyle = '#ddd';
+                ctx.font = '13px "Segoe UI", sans-serif';
+                ctx.fillText('Collect ⚡ energy orbs to refill your hourglass', GAME_W / 2, instY + 26);
+                ctx.fillText('🌟 Golden orbs give extra time!', GAME_W / 2, instY + 46);
+                ctx.fillText('Don\'t fall off or run out of sand!', GAME_W / 2, instY + 66);
+
+                // Blink prompt
+                menuBlink += 0.04;
+                const blinkAlpha = 0.5 + Math.sin(menuBlink) * 0.5;
+                ctx.fillStyle = `rgba(255,220,150,${blinkAlpha})`;
+                ctx.font = 'bold 20px "Segoe UI", sans-serif';
+                ctx.fillText('►  TAP TO START  ◄', GAME_W / 2, instY + 110);
+            }
+
+            function drawGameOverScreen() {
+                // Darken
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(0, 0, GAME_W, GAME_H);
+
+                // Game over panel
+                const px = GAME_W / 2 - 140;
+                const py = GAME_H / 2 - 90;
+                ctx.fillStyle = 'rgba(30,20,40,0.9)';
+                ctx.fillRect(px, py, 280, 180);
+                ctx.strokeStyle = '#ff8866';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(px, py, 280, 180);
+
+                ctx.fillStyle = '#ff8866';
+                ctx.font = 'bold 30px "Segoe UI", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('SAND RAN OUT!', GAME_W / 2, py + 42);
+
+                ctx.fillStyle = '#fff';
+                ctx.font = '16px "Segoe UI", sans-serif';
+                ctx.fillText(`Score: ${score}`, GAME_W / 2, py + 75);
+                ctx.fillText(`Distance: ${Math.floor(distanceTraveled)}m`, GAME_W / 2, py + 98);
+                ctx.fillText(`Difficulty: ${difficulty}`, GAME_W / 2, py + 120);
+
+                const blinkAlpha2 = 0.5 + Math.sin(Date.now() * 0.005) * 0.5;
+                ctx.fillStyle = `rgba(255,220,150,${blinkAlpha2})`;
+                ctx.font = 'bold 18px "Segoe UI", sans-serif';
+                ctx.fillText('► TAP TO RETRY ◄', GAME_W / 2, py + 158);
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, GAME_W, GAME_H);
+                drawBackground();
+
+                if (gameState === STATE.MENU) {
+                    drawMenuScreen();
+                    return;
+                }
+
+                // Draw world
+                for (const plat of platforms) drawPlatform(plat);
+                for (const c of collectibles) drawCollectible(c);
+                drawParticles();
+                drawPlayer();
+                drawHourglassUI();
+                drawUI();
+
+                if (gameState === STATE.GAMEOVER) {
+                    drawGameOverScreen();
+                }
+            }
+
+            // --- Game Loop ---
+            let lastTime = performance.now();
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.1) dt = 0.1; // Cap to avoid jumps
+                lastTime = timestamp;
+
+                update(dt);
+                render();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // --- Initialize ---
+            function init() {
+                resetPlayer();
+                resetHourglass();
+                platforms = [];
+                collectibles = [];
+                particles = [];
+                cameraX = 0;
+                generateInitialPlatforms();
+                player.x = 150;
+                player.y = platforms[0].y - player.h;
+                player.vy = 0;
+                player.onGround = false;
+                ensurePlatformsAhead();
+                gameState = STATE.MENU;
+                score = 0;
+                distanceTraveled = 0;
+                difficulty = 1;
+            }
+
+            init();
+            lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+
+            console.log('🕐 Low Energy Biob: Hourglass Manjob - Ready!');
+            console.log('   Help our tired blob survive the workday!');
+            console.log('   Collect energy orbs, avoid falling, watch the hourglass!');
+        })();
+    </script>
+</body>
+</html>
