@@ -151,5 +151,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T04:43:13.605Z",
     "updatedAt": "2026-07-16T04:43:13.605Z"
+  },
+  {
+    "slug": "jamey-7-neon-harvest",
+    "title": "Jamey 7 · Neon Harvest",
+    "description": "Jamey 7",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T04:43:34.705Z",
+    "updatedAt": "2026-07-16T04:43:34.705Z"
   }
 ]
