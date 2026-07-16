@@ -187,5 +187,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T04:44:20.038Z",
     "updatedAt": "2026-07-16T04:44:20.038Z"
+  },
+  {
+    "slug": "gunfight-western-showdown",
+    "title": "GUNFIGHT - Western Showdown",
+    "description": "dgfxfdbxtgdx5 gunfight",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T04:44:41.336Z",
+    "updatedAt": "2026-07-16T04:44:41.336Z"
   }
 ]
