@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Slop Blast</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0f1a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            touch-action: pan-x pan-y; /* allow canvas gestures */
+            margin: 0;
+            padding: 15px;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: auto;
+            max-width: 500px;
+            border-radius: 28px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.6), 0 0 0 2px rgba(255, 180, 80, 0.4);
+            background: radial-gradient(circle at 20% 20%, #18243c, #0b111e);
+            touch-action: none;  /* prevent scroll/pinch on canvas */
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" aria-label="Slop Blast game canvas"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            // --- SIZING & ADAPTIVE RESOLUTION ---
+            function resizeCanvas() {
+                const containerWidth = Math.min(window.innerWidth - 30, 500);
+                const containerHeight = window.innerHeight - 30;
+                const size = Math.min(containerWidth, containerHeight, 600);
+                canvas.width = size;
+                canvas.height = size;
+            }
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+
+            // --- AUDIO ENGINE (Web Audio API) ---
+            let audioCtx = null;
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            }
+
+            function playBeep(freq, type = 'sine', duration = 0.15, volume = 0.1, delay = 0) {
+                if (!audioCtx) return;
+                try {
+                    const time = audioCtx.currentTime + delay;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, time);
+                    gain.gain.setValueAtTime(volume, time);
+                    gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(time);
+                    osc.stop(time + duration + 0.02);
+                } catch (e) {
+                    // ignore audio errors
+                }
+            }
+
+            function sfxCollect() { playBeep(620, 'sine', 0.1, 0.15); playBeep(780, 'sine', 0.12, 0.12, 0.06); }
+            function sfxSplat() { playBeep(120, 'triangle', 0.3, 0.15); playBeep(80, 'sawtooth', 0.2, 0.1, 0.05); }
+            function sfxGameOver() { playBeep(200, 'sawtooth', 0.4, 0.1); setTimeout(()=> playBeep(150, 'triangle', 0.5, 0.08), 150); }
+            function sfxStart() { playBeep(440, 'sine', 0.1, 0.1); playBeep(660, 'sine', 0.1, 0.15, 0.08); }
+
+            // --- GAME STATE ---
+            const STATE = {
+                MENU: 'menu',
+                PLAYING: 'playing',
+                GAMEOVER: 'gameover'
+            };
+
+            let gameState = STATE.MENU;
+            let score = 0;
+            let bestScore = parseInt(localStorage.getItem('slopBestScore')) || 0;
+
+            // Player slop (the blob you control)
+            const player = {
+                x: canvas.width / 2,
+                y: canvas.height / 2,
+                radius: 24,
+                color: '#ff9f4b',
+                glow: '#ffb86c'
+            };
+
+            // Falling slops / collectibles
+            let slops = [];
+            let spawnTimer = 0;
+            const SPAWN_DELAY = 38; // frames between spawns
+            let gameFrame = 0;
+            let difficulty = 1.0;
+
+            // Visual effects
+            let particles = [];
+            let splatEffects = [];
+
+            // --- HELPER: reset game ---
+            function resetGame() {
+                score = 0;
+                slops = [];
+                particles = [];
+                splatEffects = [];
+                spawnTimer = 0;
+                gameFrame = 0;
+                difficulty = 1.0;
+                player.x = canvas.width / 2;
+                player.y = canvas.height / 2;
+            }
+
+            // --- PARTICLE SYSTEM ---
+            function createParticles(x, y, color, count = 8) {
+                for (let i = 0; i < count; i++) {
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: (Math.random() - 0.5) * 4.5,
+                        vy: (Math.random() - 0.5) * 4.5 - 1.2,
+                        life: 0.7 + Math.random() * 0.6,
+                        maxLife: 0.7 + Math.random() * 0.6,
+                        radius: 2.5 + Math.random() * 4,
+                        color: color
+                    });
+                }
+            }
+
+            function createSplatEffect(x, y) {
+                splatEffects.push({
+                    x: x,
+                    y: y,
+                    radius: 5,
+                    maxRadius: 28 + Math.random() * 20,
+                    life: 0.5,
+                    maxLife: 0.5,
+                    color: 'rgba(255, 140, 60, 0.8)'
+                });
+            }
+
+            // --- SPAWN SLOP (falling collectible) ---
+            function spawnSlop() {
+                const margin = 35;
+                const x = margin + Math.random() * (canvas.width - margin * 2);
+                const y = -15 - Math.random() * 25;
+
+                // Different slop types: normal, bonus, dangerous
+                const r = Math.random();
+                let type = 'normal';
+                let color = '#ffaa5e';
+                let radius = 12 + Math.random() * 8;
+                let points = 10;
+                let fallSpeed = 1.8 + Math.random() * 1.5 + difficulty * 0.25;
+
+                if (r < 0.12) {
+                    type = 'bonus';
+                    color = '#fce38a';
+                    radius = 10 + Math.random() * 6;
+                    points = 30;
+                    fallSpeed *= 1.1;
+                } else if (r < 0.22) {
+                    type = 'danger';
+                    color = '#ff4d6a';
+                    radius = 14 + Math.random() * 7;
+                    points = -15;
+                    fallSpeed *= 0.8;
+                }
+
+                slops.push({
+                    x, y,
+                    radius,
+                    color,
+                    type,
+                    points,
+                    fallSpeed,
+                    wobble: Math.random() * Math.PI * 2,
+                    wobbleSpeed: (Math.random() - 0.5) * 0.08
+                });
+            }
+
+            // --- UPDATE GAME ---
+            function update() {
+                if (gameState !== STATE.PLAYING) return;
+
+                gameFrame++;
+                difficulty = 1.0 + Math.floor(score / 120) * 0.3;
+
+                // Spawn slops
+                spawnTimer--;
+                if (spawnTimer <= 0) {
+                    spawnSlop();
+                    // spawn occasionally extra based on difficulty
+                    if (Math.random() < difficulty * 0.18) spawnSlop();
+                    spawnTimer = Math.max(12, SPAWN_DELAY - Math.floor(difficulty * 2.5));
+                }
+
+                // Move slops downward
+                for (let slop of slops) {
+                    slop.y += slop.fallSpeed;
+                    slop.wobble += slop.wobbleSpeed;
+                    // slight horizontal drift for visual interest
+                    slop.x += Math.sin(slop.wobble * 2) * 0.25;
+                }
+
+                // Collision detection with player
+                for (let i = slops.length - 1; i >= 0; i--) {
+                    const s = slops[i];
+                    const dx = player.x - s.x;
+                    const dy = player.y - s.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const threshold = player.radius + s.radius - 4; // slightly forgiving
+
+                    if (dist < threshold) {
+                        // Collision!
+                        if (s.type === 'danger') {
+                            // Game over on danger touch
+                            sfxSplat();
+                            createSplatEffect(s.x, s.y);
+                            createParticles(s.x, s.y, '#ff4d6a', 14);
+                            gameState = STATE.GAMEOVER;
+                            if (score > bestScore) {
+                                bestScore = score;
+                                localStorage.setItem('slopBestScore', bestScore);
+                            }
+                            sfxGameOver();
+                            slops.splice(i, 1);
+                            break; // stop checking collisions this frame
+                        } else {
+                            // Collect normal or bonus
+                            score += s.points;
+                            if (score < 0) score = 0;
+                            sfxCollect();
+                            createParticles(s.x, s.y, s.color, s.type === 'bonus' ? 14 : 7);
+                            slops.splice(i, 1);
+                        }
+                    }
+                }
+
+                // Remove off-screen slops (no penalty, just miss)
+                slops = slops.filter(s => s.y < canvas.height + 40);
+
+                // Update particles
+                for (let p of particles) {
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += 0.12;
+                    p.life -= 0.016;
+                }
+                particles = particles.filter(p => p.life > 0);
+
+                // Update splat effects
+                for (let sp of splatEffects) {
+                    sp.life -= 0.025;
+                    sp.radius = sp.maxRadius * (1 - sp.life / sp.maxLife);
+                }
+                splatEffects = splatEffects.filter(sp => sp.life > 0);
+            }
+
+            // --- INPUT HANDLING (Mouse / Touch) ---
+            function handleMove(clientX, clientY) {
+                if (gameState !== STATE.PLAYING) return;
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;   // canvas physical vs CSS
+                const scaleY = canvas.height / rect.height;
+
+                let canvasX = (clientX - rect.left) * scaleX;
+                let canvasY = (clientY - rect.top) * scaleY;
+
+                // Clamp inside canvas with padding
+                const pad = player.radius + 4;
+                canvasX = Math.min(Math.max(canvasX, pad), canvas.width - pad);
+                canvasY = Math.min(Math.max(canvasY, pad), canvas.height - pad);
+
+                player.x = canvasX;
+                player.y = canvasY;
+            }
+
+            function onMouseMove(e) {
+                e.preventDefault();
+                handleMove(e.clientX, e.clientY);
+            }
+
+            function onTouchMove(e) {
+                e.preventDefault();
+                if (e.touches.length > 0) {
+                    handleMove(e.touches[0].clientX, e.touches[0].clientY);
+                }
+            }
+
+            function onTouchStart(e) {
+                e.preventDefault();
+                initAudio();
+                if (gameState === STATE.MENU) {
+                    startGame();
+                } else if (gameState === STATE.GAMEOVER) {
+                    resetGame();
+                    gameState = STATE.PLAYING;
+                    sfxStart();
+                } else if (e.touches.length > 0) {
+                    handleMove(e.touches[0].clientX, e.touches[0].clientY);
+                }
+            }
+
+            function onMouseDown(e) {
+                e.preventDefault();
+                initAudio();
+                if (gameState === STATE.MENU) {
+                    startGame();
+                } else if (gameState === STATE.GAMEOVER) {
+                    resetGame();
+                    gameState = STATE.PLAYING;
+                    sfxStart();
+                }
+            }
+
+            function startGame() {
+                resetGame();
+                gameState = STATE.PLAYING;
+                sfxStart();
+                // initial spawns
+                for (let i = 0; i < 3; i++) spawnSlop();
+            }
+
+            // Attach listeners
+            canvas.addEventListener('mousemove', onMouseMove);
+            canvas.addEventListener('mousedown', onMouseDown);
+            canvas.addEventListener('touchmove', onTouchMove, { passive: false });
+            canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+            // prevent context menu on canvas
+            canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+            // Keyboard fallback for desktop (arrow keys / wasd)
+            window.addEventListener('keydown', (e) => {
+                if (gameState === STATE.MENU || gameState === STATE.GAMEOVER) {
+                    initAudio();
+                    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Space') {
+                        e.preventDefault();
+                        if (gameState === STATE.MENU) startGame();
+                        else if (gameState === STATE.GAMEOVER) {
+                            resetGame();
+                            gameState = STATE.PLAYING;
+                            sfxStart();
+                        }
+                    }
+                }
+            });
+
+            // --- RENDERING ---
+            function drawBackground() {
+                // Deep space gradient
+                const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+                grad.addColorStop(0, '#131e3a');
+                grad.addColorStop(0.7, '#0c1428');
+                grad.addColorStop(1, '#1a1f2e');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Subtle grid or stars
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
+                for (let i = 0; i < 30; i++) {
+                    ctx.beginPath();
+                    ctx.arc(
+                        (i * 37 + gameFrame * 0.2) % canvas.width,
+                        (i * 23 + 15) % canvas.height,
+                        1 + Math.sin(i + gameFrame*0.1)*0.5,
+                        0, Math.PI*2
+                    );
+                    ctx.fill();
+                }
+            }
+
+            function drawPlayer() {
+                ctx.save();
+                // Glow
+                ctx.shadowColor = player.glow;
+                ctx.shadowBlur = 22;
+                // Main blob
+                const gradient = ctx.createRadialGradient(
+                    player.x - 5, player.y - 5, player.radius * 0.2,
+                    player.x, player.y, player.radius
+                );
+                gradient.addColorStop(0, '#ffbd7a');
+                gradient.addColorStop(0.7, player.color);
+                gradient.addColorStop(1, '#d45d2c');
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Eye highlights
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = 'white';
+                ctx.beginPath();
+                ctx.arc(player.x - 7, player.y - 6, 5, 0, Math.PI*2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(player.x + 7, player.y - 6, 4.5, 0, Math.PI*2);
+                ctx.fill();
+                ctx.fillStyle = '#1a1c2b';
+                ctx.beginPath();
+                ctx.arc(player.x - 8, player.y - 7, 2.5, 0, Math.PI*2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(player.x + 6, player.y - 7, 2.2, 0, Math.PI*2);
+                ctx.fill();
+
+                // Smile
+                ctx.strokeStyle = '#5c2e1f';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(player.x, player.y + 4, 8, 0.1, Math.PI - 0.1);
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            function drawSlops() {
+                for (let s of slops) {
+                    ctx.save();
+                    ctx.shadowColor = s.color;
+                    ctx.shadowBlur = 13;
+                    // gradient
+                    const grad = ctx.createRadialGradient(s.x-2, s.y-2, s.radius*0.1, s.x, s.y, s.radius);
+                    if (s.type === 'bonus') {
+                        grad.addColorStop(0, '#fff7c0');
+                        grad.addColorStop(0.9, s.color);
+                    } else if (s.type === 'danger') {
+                        grad.addColorStop(0, '#ff9aa2');
+                        grad.addColorStop(0.8, s.color);
+                    } else {
+                        grad.addColorStop(0, '#ffcc99');
+                        grad.addColorStop(0.85, s.color);
+                    }
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.arc(s.x, s.y, s.radius, 0, 2*Math.PI);
+                    ctx.fill();
+
+                    // little shine
+                    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+                    ctx.beginPath();
+                    ctx.arc(s.x - s.radius*0.3, s.y - s.radius*0.3, s.radius*0.25, 0, Math.PI*2);
+                    ctx.fill();
+
+                    if (s.type === 'danger') {
+                        ctx.fillStyle = '#ffffff';
+                        ctx.font = `${s.radius*0.7}px "Segoe UI"`;
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText('✖', s.x, s.y-1);
+                    } else if (s.type === 'bonus') {
+                        ctx.fillStyle = '#5c3b1f';
+                        ctx.font = `bold ${s.radius*0.75}px "Segoe UI"`;
+                        ctx.fillText('★', s.x, s.y);
+                    }
+                    ctx.restore();
+                }
+            }
+
+            function drawParticlesAndSplats() {
+                for (let p of particles) {
+                    ctx.globalAlpha = p.life / p.maxLife;
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.radius, 0, 2*Math.PI);
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+
+                for (let sp of splatEffects) {
+                    const alpha = sp.life / sp.maxLife;
+                    ctx.strokeStyle = `rgba(255, 120, 40, ${alpha})`;
+                    ctx.lineWidth = 2.5;
+                    ctx.beginPath();
+                    ctx.arc(sp.x, sp.y, sp.radius, 0, Math.PI*2);
+                    ctx.stroke();
+                }
+            }
+
+            function drawUI() {
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 20px "Segoe UI", system-ui';
+                ctx.textAlign = 'left';
+                ctx.shadowColor = '#00000080';
+                ctx.shadowBlur = 8;
+                ctx.fillText(`🍊 ${score}`, 20, 40);
+                
+                ctx.textAlign = 'right';
+                ctx.font = '13px "Segoe UI"';
+                ctx.fillStyle = '#ccd6f0';
+                ctx.fillText(`Best: ${bestScore}`, canvas.width - 20, 36);
+                ctx.shadowBlur = 0;
+                ctx.shadowColor = 'transparent';
+            }
+
+            function drawMenuOverlay() {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 34px "Segoe UI", system-ui';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = '#ff8c42';
+                ctx.shadowBlur = 18;
+                ctx.fillText('SLOP BLAST', canvas.width/2, canvas.height/2 - 35);
+                
+                ctx.shadowBlur = 0;
+                ctx.font = '16px "Segoe UI"';
+                ctx.fillStyle = '#e0e7ff';
+                ctx.fillText('Move to collect slops', canvas.width/2, canvas.height/2 + 25);
+                ctx.fillText('Avoid red dangers!', canvas.width/2, canvas.height/2 + 50);
+                
+                ctx.fillStyle = '#ffb347';
+                ctx.font = 'bold 18px "Segoe UI"';
+                ctx.fillText('TAP / CLICK / ENTER to start', canvas.width/2, canvas.height/2 + 95);
+            }
+
+            function drawGameOverOverlay() {
+                ctx.fillStyle = 'rgba(10, 5, 20, 0.8)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#ff6b6b';
+                ctx.font = 'bold 38px "Segoe UI"';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = '#aa0000';
+                ctx.shadowBlur = 15;
+                ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2 - 45);
+                
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '22px "Segoe UI"';
+                ctx.fillText(`Score: ${score}`, canvas.width/2, canvas.height/2 + 10);
+                
+                ctx.fillStyle = '#ffc857';
+                ctx.font = 'bold 18px "Segoe UI"';
+                ctx.fillText('Tap to play again', canvas.width/2, canvas.height/2 + 60);
+            }
+
+            function drawGame() {
+                drawBackground();
+                drawSlops();
+                drawPlayer();
+                drawParticlesAndSplats();
+                drawUI();
+
+                if (gameState === STATE.MENU) {
+                    drawMenuOverlay();
+                } else if (gameState === STATE.GAMEOVER) {
+                    drawGameOverOverlay();
+                }
+            }
+
+            // --- GAME LOOP ---
+            function gameLoop() {
+                update();
+                drawGame();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // Initialize resize again after fonts etc
+            window.addEventListener('resize', () => {
+                resizeCanvas();
+                // keep player in bounds after resize
+                player.x = Math.min(player.x, canvas.width - player.radius);
+                player.y = Math.min(player.y, canvas.height - player.radius);
+            });
+
+            // Start loop
+            gameLoop();
+        })();
+    </script>
+</body>
+</html>
