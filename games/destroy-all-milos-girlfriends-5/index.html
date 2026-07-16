@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Destroy All Milos Girlfriends 5</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #0a0014;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-user-select: none;
+            user-select: none;
+            cursor: none;
+        }
+        canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+
+            let W, H;
+            let mouseX = 0,
+                mouseY = 0;
+            let mouseDown = false;
+            let shakeAmount = 0;
+            let shakeX = 0,
+                shakeY = 0;
+
+            // --- AUDIO ENGINE ---
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playSound(freq, type, duration, vol = 0.15, glideTo = null) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (glideTo) osc.frequency.linearRampToValueAtTime(glideTo, t + duration);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) { /* ignore */ }
+            }
+
+            function sfxHit() { playSound(800, 'sine', 0.12, 0.2, 400);
+                playSound(200, 'triangle', 0.08, 0.1); }
+
+            function sfxMiss() { playSound(80, 'sawtooth', 0.15, 0.25);
+                playSound(50, 'triangle', 0.1, 0.3); }
+
+            function sfxWaveComplete() {
+                playSound(523, 'sine', 0.15, 0.2);
+                setTimeout(() => playSound(659, 'sine', 0.15, 0.2), 150);
+                setTimeout(() => playSound(784, 'sine', 0.2, 0.35), 300);
+            }
+
+            function sfxGameOver() {
+                playSound(200, 'sawtooth', 0.2, 0.5, 60);
+                playSound(150, 'triangle', 0.15, 0.6, 40);
+            }
+
+            function sfxVictory() {
+                const notes = [523, 659, 784, 1047, 784, 1047];
+                notes.forEach((f, i) => setTimeout(() => playSound(f, 'sine', 0.2, 0.3), i * 120));
+            }
+
+            function sfxClick() { playSound(1000, 'sine', 0.05, 0.06, 600); }
+
+            // --- GAME STATE ---
+            const STATE = { START: 'start', PLAYING: 'playing', WAVE_TRANSITION: 'waveTransition', GAME_OVER: 'gameOver',
+                VICTORY: 'victory' };
+            let gameState = STATE.START;
+            let score = 0;
+            let lives = 3;
+            let currentWave = 0;
+            let waveTargetsDestroyed = 0;
+            let waveTargetsRequired = 0;
+            let comboCount = 0;
+            let comboTimer = 0;
+            let maxCombo = 0;
+            let spawnTimer = 0;
+            let waveTransitionTimer = 0;
+            const WAVE_TRANSITION_DURATION = 2.0;
+            let targets = [];
+            let particles = [];
+            let floatingHearts = [];
+            let activeTargets = [];
+            let totalTargetsSpawnedThisWave = 0;
+            let waveQuotaMet = false;
+
+            // Wave definitions
+            const waveDefs = [
+                { required: 10, spawnInterval: 1.4, lifetime: 2.8, miloChance: 0.08, speed: 0.3 },
+                { required: 15, spawnInterval: 1.1, lifetime: 2.4, miloChance: 0.12, speed: 0.5 },
+                { required: 20, spawnInterval: 0.85, lifetime: 2.0, miloChance: 0.15, speed: 0.7 },
+                { required: 25, spawnInterval: 0.65, lifetime: 1.7, miloChance: 0.18, speed: 0.9 },
+                { required: 30, spawnInterval: 0.5, lifetime: 1.3, miloChance: 0.20, speed: 1.1 },
+            ];
+
+            // --- CLASSES ---
+            class Target {
+                constructor(x, y, isMilo, waveDef) {
+                    this.x = x;
+                    this.y = y;
+                    this.isMilo = isMilo;
+                    this.radius = Math.min(70, Math.max(40, W * 0.07));
+                    this.lifetime = waveDef.lifetime;
+                    this.maxLifetime = waveDef.lifetime;
+                    this.alive = true;
+                    this.escaped = false;
+                    this.scale = 1;
+                    this.wobble = Math.random() * Math.PI * 2;
+                    this.wobbleSpeed = 0.8 + Math.random() * 1.5;
+                    this.wobbleAmp = 3 + Math.random() * 4;
+                    this.color = isMilo ? this._miloColor() : this._gfColor();
+                    this.eyeColor = isMilo ? '#1a3a5c' : '#ff2d55';
+                    this.hasBow = !isMilo && Math.random() > 0.4;
+                    this.bowColor = ['#ff6b8a', '#ff4081', '#ffab40', '#ff5252'][Math.floor(Math.random() * 4)];
+                    this.hasHair = !isMilo && Math.random() > 0.5;
+                    this.hairColor = ['#e91e63', '#f06292', '#ff80ab', '#c2185b'][Math.floor(Math.random() * 4)];
+                    this.sunglasses = isMilo && Math.random() > 0.4;
+                    this.expression = isMilo ? 'neutral' : ['happy', 'shy', 'excited'][Math.floor(Math.random() * 3)];
+                    this.flashTimer = 0;
+                }
+
+                _gfColor() {
+                    const colors = ['#ff6b8a', '#ff8fa3', '#ffb3c6', '#ff4081', '#f06292', '#ff80ab', '#ff5252',
+                        '#ffab91'
+                    ];
+                    return colors[Math.floor(Math.random() * colors.length)];
+                }
+                _miloColor() {
+                    const colors = ['#5c9ce6', '#6db3f2', '#4a8fd4', '#7ec8f8', '#3d7ec5'];
+                    return colors[Math.floor(Math.random() * colors.length)];
+                }
+
+                update(dt) {
+                    this.lifetime -= dt;
+                    this.wobble += this.wobbleSpeed * dt;
+                    const lifeRatio = this.lifetime / this.maxLifetime;
+                    if (lifeRatio < 0.3) {
+                        this.scale = 0.7 + 0.3 * (lifeRatio / 0.3);
+                        this.flashTimer += dt;
+                    } else {
+                        this.scale = 1;
+                        this.flashTimer = 0;
+                    }
+                    if (this.lifetime <= 0) {
+                        this.alive = false;
+                        this.escaped = !this.isMilo;
+                    }
+                }
+
+                draw(ctx) {
+                    ctx.save();
+                    const wobX = Math.sin(this.wobble) * this.wobbleAmp;
+                    const wobY = Math.cos(this.wobble * 1.3) * this.wobbleAmp * 0.7;
+                    const cx = this.x + wobX;
+                    const cy = this.y + wobY;
+                    const r = this.radius * this.scale;
+                    const flashOn = this.flashTimer > 0 && Math.floor(this.flashTimer * 8) % 2 === 0;
+
+                    // Glow
+                    const glowGrad = ctx.createRadialGradient(cx, cy, r * 0.7, cx, cy, r * 1.6);
+                    glowGrad.addColorStop(0, this.isMilo ? 'rgba(100,180,240,0.5)' : 'rgba(255,120,160,0.5)');
+                    glowGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                    ctx.fillStyle = glowGrad;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, r * 1.6, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Shadow
+                    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                    ctx.beginPath();
+                    ctx.arc(cx + 2, cy + 3, r, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Face
+                    const faceGrad = ctx.createRadialGradient(cx - r * 0.2, cy - r * 0.3, r * 0.1, cx, cy, r);
+                    faceGrad.addColorStop(0, flashOn ? '#ffffff' : this._lightenColor(this.color, 0.4));
+                    faceGrad.addColorStop(0.7, this.color);
+                    faceGrad.addColorStop(1, this._darkenColor(this.color, 0.3));
+                    ctx.fillStyle = faceGrad;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = this._darkenColor(this.color, 0.5);
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    // Hair
+                    if (this.hasHair && !this.isMilo) {
+                        ctx.fillStyle = this.hairColor;
+                        ctx.beginPath();
+                        ctx.arc(cx, cy - r * 0.55, r * 1.05, Math.PI, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = this.hairColor;
+                        ctx.beginPath();
+                        ctx.arc(cx - r * 0.6, cy - r * 0.15, r * 0.35, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.beginPath();
+                        ctx.arc(cx + r * 0.6, cy - r * 0.15, r * 0.35, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+
+                    // Bow
+                    if (this.hasBow && !this.isMilo) {
+                        ctx.fillStyle = this.bowColor;
+                        ctx.beginPath();
+                        ctx.moveTo(cx, cy - r * 0.65);
+                        ctx.lineTo(cx - r * 0.5, cy - r * 1.0);
+                        ctx.lineTo(cx - r * 0.15, cy - r * 0.7);
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.beginPath();
+                        ctx.moveTo(cx, cy - r * 0.65);
+                        ctx.lineTo(cx + r * 0.5, cy - r * 1.0);
+                        ctx.lineTo(cx + r * 0.15, cy - r * 0.7);
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.fillStyle = this._darkenColor(this.bowColor, 0.3);
+                        ctx.beginPath();
+                        ctx.arc(cx, cy - r * 0.7, r * 0.18, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+
+                    // Milo cap
+                    if (this.isMilo && !this.sunglasses) {
+                        ctx.fillStyle = '#2c3e50';
+                        ctx.beginPath();
+                        ctx.arc(cx, cy - r * 0.4, r * 0.9, Math.PI, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillRect(cx - r * 0.9, cy - r * 0.4, r * 1.8, r * 0.25);
+                        ctx.fillStyle = '#1a252f';
+                        ctx.fillRect(cx + r * 0.3, cy - r * 0.4, r * 0.55, r * 0.2);
+                    }
+
+                    // Eyes
+                    const eyeY = cy - r * 0.15;
+                    const eyeSpacing = r * 0.35;
+                    if (this.isMilo && this.sunglasses) {
+                        ctx.fillStyle = '#1a1a2e';
+                        ctx.fillRect(cx - r * 0.6, eyeY - r * 0.22, r * 1.2, r * 0.4);
+                        ctx.strokeStyle = '#333';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(cx - r * 0.6, eyeY - r * 0.22, r * 1.2, r * 0.4);
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillRect(cx - r * 0.3, eyeY - r * 0.1, r * 0.2, r * 0.12);
+                        ctx.fillRect(cx + r * 0.1, eyeY - r * 0.1, r * 0.2, r * 0.12);
+                    } else if (this.isMilo) {
+                        // Simple dot eyes for Milo
+                        ctx.fillStyle = '#1a1a2e';
+                        ctx.beginPath();
+                        ctx.arc(cx - eyeSpacing, eyeY, r * 0.14, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.beginPath();
+                        ctx.arc(cx + eyeSpacing, eyeY, r * 0.14, 0, Math.PI * 2);
+                        ctx.fill();
+                    } else {
+                        // Heart eyes for girlfriends
+                        this._drawHeart(ctx, cx - eyeSpacing, eyeY, r * 0.22, this.eyeColor);
+                        this._drawHeart(ctx, cx + eyeSpacing, eyeY, r * 0.22, this.eyeColor);
+                    }
+
+                    // Mouth
+                    const mouthY = cy + r * 0.25;
+                    ctx.strokeStyle = this.isMilo ? '#2c3e50' : '#c0392b';
+                    ctx.lineWidth = 2;
+                    ctx.lineCap = 'round';
+                    ctx.beginPath();
+                    if (this.isMilo) {
+                        ctx.moveTo(cx - r * 0.2, mouthY);
+                        ctx.lineTo(cx + r * 0.2, mouthY);
+                    } else if (this.expression === 'happy') {
+                        ctx.arc(cx, mouthY, r * 0.25, 0.1, Math.PI - 0.1);
+                    } else if (this.expression === 'shy') {
+                        ctx.arc(cx, mouthY - r * 0.05, r * 0.15, 0.2, Math.PI - 0.2);
+                    } else {
+                        ctx.arc(cx, mouthY - r * 0.1, r * 0.2, 0.3, Math.PI - 0.3);
+                    }
+                    ctx.stroke();
+
+                    // Blush on girlfriends
+                    if (!this.isMilo) {
+                        ctx.fillStyle = 'rgba(255,150,150,0.5)';
+                        ctx.beginPath();
+                        ctx.arc(cx - r * 0.55, cy + r * 0.1, r * 0.2, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.beginPath();
+                        ctx.arc(cx + r * 0.55, cy + r * 0.1, r * 0.2, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+
+                    // Label
+                    ctx.fillStyle = this.isMilo ? '#7fb8e0' : '#ffccd5';
+                    ctx.font = `${Math.max(9, r * 0.25)}px 'Segoe UI', Arial, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(this.isMilo ? 'MILO' : 'GF', cx, cy + r * 0.7);
+
+                    ctx.restore();
+                }
+
+                _drawHeart(ctx, x, y, size, color) {
+                    ctx.fillStyle = color;
+                    ctx.beginPath();
+                    ctx.moveTo(x, y + size * 0.25);
+                    ctx.bezierCurveTo(x, y - size * 0.4, x - size * 0.9, y - size * 0.4, x - size * 0.9, y + size * 0.25);
+                    ctx.bezierCurveTo(x - size * 0.9, y + size * 0.7, x, y + size * 1.1, x, y + size * 1.1);
+                    ctx.bezierCurveTo(x, y + size * 1.1, x + size * 0.9, y + size * 0.7, x + size * 0.9, y + size * 0.25);
+                    ctx.bezierCurveTo(x + size * 0.9, y - size * 0.4, x, y - size * 0.4, x, y + size * 0.25);
+                    ctx.fill();
+                    // Highlight
+                    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                    ctx.beginPath();
+                    ctx.arc(x - size * 0.25, y - size * 0.1, size * 0.25, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                _lightenColor(hex, factor) {
+                    const r = parseInt(hex.slice(1, 3), 16);
+                    const g = parseInt(hex.slice(3, 5), 16);
+                    const b = parseInt(hex.slice(5, 7), 16);
+                    const lr = Math.min(255, Math.round(r + (255 - r) * factor));
+                    const lg = Math.min(255, Math.round(g + (255 - g) * factor));
+                    const lb = Math.min(255, Math.round(b + (255 - b) * factor));
+                    return `rgb(${lr},${lg},${lb})`;
+                }
+                _darkenColor(hex, factor) {
+                    const r = parseInt(hex.slice(1, 3), 16);
+                    const g = parseInt(hex.slice(3, 5), 16);
+                    const b = parseInt(hex.slice(5, 7), 16);
+                    const dr = Math.round(r * (1 - factor));
+                    const dg = Math.round(g * (1 - factor));
+                    const db = Math.round(b * (1 - factor));
+                    return `rgb(${dr},${dg},${db})`;
+                }
+
+                containsPoint(px, py) {
+                    const dx = px - this.x;
+                    const dy = py - this.y;
+                    return Math.sqrt(dx * dx + dy * dy) <= this.radius * this.scale;
+                }
+            }
+
+            class Particle {
+                constructor(x, y, color, size, vx, vy, life) {
+                    this.x = x;
+                    this.y = y;
+                    this.color = color;
+                    this.size = size;
+                    this.vx = vx;
+                    this.vy = vy;
+                    this.life = life;
+                    this.maxLife = life;
+                    this.alive = true;
+                }
+                update(dt) {
+                    this.x += this.vx * dt;
+                    this.y += this.vy * dt;
+                    this.vy += 200 * dt;
+                    this.life -= dt;
+                    if (this.life <= 0) this.alive = false;
+                }
+                draw(ctx) {
+                    const alpha = this.life / this.maxLife;
+                    const s = this.size * alpha;
+                    ctx.fillStyle = this.color.replace('1)', `${alpha})`).replace('rgb',
+                        'rgba');
+                    if (this.color.startsWith('#')) {
+                        ctx.globalAlpha = alpha;
+                        ctx.fillStyle = this.color;
+                    }
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, s, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+                }
+            }
+
+            class FloatingHeart {
+                constructor() {
+                    this.reset();
+                    this.y = Math.random() * H;
+                }
+                reset() {
+                    this.x = Math.random() * W;
+                    this.y = H + 30;
+                    this.size = 4 + Math.random() * 10;
+                    this.speed = 15 + Math.random() * 35;
+                    this.opacity = 0.08 + Math.random() * 0.15;
+                    this.wobble = Math.random() * Math.PI * 2;
+                    this.wobbleSpeed = 0.3 + Math.random() * 0.8;
+                }
+                update(dt) {
+                    this.y -= this.speed * dt;
+                    this.wobble += this.wobbleSpeed * dt;
+                    this.x += Math.sin(this.wobble) * 10 * dt;
+                    if (this.y < -40) this.reset();
+                }
+                draw(ctx) {
+                    ctx.fillStyle = `rgba(255,150,180,${this.opacity})`;
+                    const s = this.size;
+                    const x = this.x;
+                    const y = this.y;
+                    ctx.beginPath();
+                    ctx.moveTo(x, y + s * 0.3);
+                    ctx.bezierCurveTo(x, y - s * 0.3, x - s, y - s * 0.3, x - s, y + s * 0.3);
+                    ctx.bezierCurveTo(x - s, y + s * 0.7, x, y + s, x, y + s);
+                    ctx.bezierCurveTo(x, y + s, x + s, y + s * 0.7, x + s, y + s * 0.3);
+                    ctx.bezierCurveTo(x + s, y - s * 0.3, x, y - s * 0.3, x, y + s * 0.3);
+                    ctx.fill();
+                }
+            }
+
+            // --- GAME FUNCTIONS ---
+            function resizeCanvas() {
+                W = window.innerWidth;
+                H = window.innerHeight;
+                canvas.width = W;
+                canvas.height = H;
+            }
+
+            function spawnTarget() {
+                if (!waveDefs[currentWave]) return;
+                const wd = waveDefs[currentWave];
+                const margin = 80;
+                const x = margin + Math.random() * (W - margin * 2);
+                const y = margin + Math.random() * (H - margin * 2);
+                const isMilo = Math.random() < wd.miloChance;
+                const target = new Target(x, y, isMilo, wd);
+                targets.push(target);
+                activeTargets.push(target);
+                totalTargetsSpawnedThisWave++;
+            }
+
+            function spawnParticles(x, y, count, color) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 100 + Math.random() * 400;
+                    const vx = Math.cos(angle) * speed;
+                    const vy = Math.sin(angle) * speed - 150;
+                    const size = 2 + Math.random() * 6;
+                    const life = 0.3 + Math.random() * 0.7;
+                    particles.push(new Particle(x, y, color, size, vx, vy, life));
+                }
+            }
+
+            function startWave(waveIndex) {
+                currentWave = waveIndex;
+                waveTargetsDestroyed = 0;
+                waveTargetsRequired = waveDefs[waveIndex].required;
+                waveQuotaMet = false;
+                totalTargetsSpawnedThisWave = 0;
+                targets = [];
+                activeTargets = [];
+                spawnTimer = 0.3;
+                comboCount = 0;
+                comboTimer = 0;
+                gameState = STATE.PLAYING;
+            }
+
+            function endWave() {
+                waveQuotaMet = true;
+                // Clear remaining targets
+                for (const t of targets) {
+                    if (t.alive && !t.isMilo && !t.escaped) {
+                        spawnParticles(t.x, t.y, 8, '#ffcc00');
+                    }
+                }
+                targets = [];
+                activeTargets = [];
+                sfxWaveComplete();
+                if (currentWave >= 4) {
+                    // Victory!
+                    gameState = STATE.VICTORY;
+                    sfxVictory();
+                    spawnVictoryParticles();
+                } else {
+                    gameState = STATE.WAVE_TRANSITION;
+                    waveTransitionTimer = WAVE_TRANSITION_DURATION;
+                }
+            }
+
+            function spawnVictoryParticles() {
+                for (let i = 0; i < 80; i++) {
+                    const x = W / 2 + (Math.random() - 0.5) * W;
+                    const y = H / 2 + (Math.random() - 0.5) * H;
+                    const colors = ['#ff6b8a', '#ffcc00', '#ff4081', '#ffab40', '#69f0ae', '#40c4ff', '#ff80ab'];
+                    const color = colors[Math.floor(Math.random() * colors.length)];
+                    const size = 3 + Math.random() * 8;
+                    const life = 1 + Math.random() * 2.5;
+                    particles.push(new Particle(x, y, color, size, (Math.random() - 0.5) * 300, (Math.random() - 0.5) * 300 -
+                        200, life));
+                }
+            }
+
+            function loseLife() {
+                lives--;
+                shakeAmount = 12;
+                sfxMiss();
+                if (lives <= 0) {
+                    gameState = STATE.GAME_OVER;
+                    sfxGameOver();
+                    // Spawn sad particles
+                    for (const t of targets) {
+                        if (t.alive) {
+                            spawnParticles(t.x, t.y, 15, '#888888');
+                        }
+                    }
+                    targets = [];
+                    activeTargets = [];
+                }
+            }
+
+            function handleClick(px, py) {
+                initAudio();
+                if (gameState === STATE.START) {
+                    gameState = STATE.WAVE_TRANSITION;
+                    waveTransitionTimer = 0.5;
+                    currentWave = -1;
+                    score = 0;
+                    lives = 3;
+                    maxCombo = 0;
+                    comboCount = 0;
+                    comboTimer = 0;
+                    targets = [];
+                    activeTargets = [];
+                    particles = [];
+                    waveQuotaMet = false;
+                    return;
+                }
+                if (gameState === STATE.GAME_OVER || gameState === STATE.VICTORY) {
+                    // Restart
+                    gameState = STATE.WAVE_TRANSITION;
+                    waveTransitionTimer = 0.5;
+                    currentWave = -1;
+                    score = 0;
+                    lives = 3;
+                    maxCombo = 0;
+                    comboCount = 0;
+                    comboTimer = 0;
+                    targets = [];
+                    activeTargets = [];
+                    particles = [];
+                    waveQuotaMet = false;
+                    shakeAmount = 0;
+                    return;
+                }
+                if (gameState !== STATE.PLAYING) return;
+
+                sfxClick();
+                let hitSomething = false;
+                // Check targets in reverse (topmost first)
+                for (let i = targets.length - 1; i >= 0; i--) {
+                    const t = targets[i];
+                    if (!t.alive) continue;
+                    if (t.containsPoint(px, py)) {
+                        hitSomething = true;
+                        if (t.isMilo) {
+                            // Clicked Milo! Bad!
+                            spawnParticles(t.x, t.y, 20, '#ff4444');
+                            t.alive = false;
+                            shakeAmount = 15;
+                            loseLife();
+                            comboCount = 0;
+                            comboTimer = 0;
+                        } else {
+                            // Destroyed a girlfriend!
+                            t.alive = false;
+                            t.escaped = false;
+                            waveTargetsDestroyed++;
+                            comboCount++;
+                            comboTimer = 1.2;
+                            if (comboCount > maxCombo) maxCombo = comboCount;
+                            const comboBonus = Math.min(comboCount - 1, 8) * 5;
+                            const points = 10 + comboBonus;
+                            score += points;
+                            spawnParticles(t.x, t.y, 18, '#ffcc00');
+                            spawnParticles(t.x, t.y, 10, '#ff6b8a');
+                            sfxHit();
+                            shakeAmount = Math.max(shakeAmount, 3 + Math.min(comboCount, 6));
+                            if (waveTargetsDestroyed >= waveTargetsRequired && !waveQuotaMet) {
+                                endWave();
+                            }
+                        }
+                        break;
+                    }
+                }
+                if (!hitSomething && gameState === STATE.PLAYING) {
+                    // Missed click
+                    comboCount = 0;
+                    comboTimer = 0;
+                    spawnParticles(px, py, 5, '#ffffff');
+                    playSound(300, 'sine', 0.04, 0.08);
+                }
+                // Clean up dead targets
+                targets = targets.filter(t => t.alive);
+                activeTargets = targets.filter(t => t.alive);
+            }
+
+            function update(dt) {
+                // Clamp dt
+                if (dt > 0.1) dt = 0.1;
+
+                // Update shake
+                if (shakeAmount > 0) {
+                    shakeX = (Math.random() - 0.5) * shakeAmount * 2;
+                    shakeY = (Math.random() - 0.5) * shakeAmount * 2;
+                    shakeAmount *= Math.pow(0.05, dt);
+                    if (shakeAmount < 0.3) shakeAmount = 0;
+                } else {
+                    shakeX = 0;
+                    shakeY = 0;
+                }
+
+                // Update combo timer
+                if (comboTimer > 0) {
+                    comboTimer -= dt;
+                    if (comboTimer <= 0) {
+                        comboCount = 0;
+                        comboTimer = 0;
+                    }
+                }
+
+                // Update floating hearts
+                for (const fh of floatingHearts) fh.update(dt);
+
+                // Update particles
+                for (const p of particles) p.update(dt);
+                particles = particles.filter(p => p.alive);
+
+                // State-specific updates
+                if (gameState === STATE.WAVE_TRANSITION) {
+                    waveTransitionTimer -= dt;
+                    if (waveTransitionTimer <= 0) {
+                        currentWave++;
+                        if (currentWave >= 5) {
+                            gameState = STATE.VICTORY;
+                            sfxVictory();
+                            spawnVictoryParticles();
+                        } else {
+                            startWave(currentWave);
+                        }
+                    }
+                }
+
+                if (gameState === STATE.PLAYING) {
+                    const wd = waveDefs[currentWave];
+                    // Spawn timer
+                    spawnTimer -= dt;
+                    if (spawnTimer <= 0 && !waveQuotaMet && totalTargetsSpawnedThisWave < wd.required + 5) {
+                        spawnTarget();
+                        spawnTimer = wd.spawnInterval * (0.7 + Math.random() * 0.6);
+                    }
+
+                    // Update targets
+                    for (const t of targets) {
+                        if (t.alive) t.update(dt);
+                    }
+
+                    // Check for escaped targets
+                    for (const t of targets) {
+                        if (!t.alive && t.escaped) {
+                            t.escaped = false;
+                            spawnParticles(t.x, t.y, 10, '#ff8888');
+                            loseLife();
+                            if (gameState === STATE.GAME_OVER) break;
+                        }
+                    }
+
+                    // Clean up
+                    targets = targets.filter(t => t.alive);
+                    activeTargets = targets.filter(t => t.alive);
+
+                    // Check if we need more spawns (all targets destroyed but quota not met)
+                    if (activeTargets.length === 0 && !waveQuotaMet && totalTargetsSpawnedThisWave < wd.required + 8 &&
+                        gameState === STATE.PLAYING) {
+                        spawnTimer = Math.min(spawnTimer, 0.3);
+                    }
+
+                    // If all targets gone and quota met, end wave (should already be handled)
+                    if (waveTargetsDestroyed >= waveTargetsRequired && !waveQuotaMet && gameState === STATE.PLAYING) {
+                        endWave();
+                    }
+                }
+
+                if (gameState === STATE.VICTORY || gameState === STATE.GAME_OVER) {
+                    // Update remaining particles
+                    for (const p of particles) p.update(dt);
+                    particles = particles.filter(p => p.alive);
+                }
+            }
+
+            function drawBackground() {
+                // Gradient background
+                const bgGrad = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.8);
+                bgGrad.addColorStop(0, '#1a0a2e');
+                bgGrad.addColorStop(0.5, '#0d0520');
+                bgGrad.addColorStop(1, '#050010');
+                ctx.fillStyle = bgGrad;
+                ctx.fillRect(0, 0, W, H);
+
+                // Subtle grid
+                ctx.strokeStyle = 'rgba(255,255,255,0.015)';
+                ctx.lineWidth = 1;
+                const gridSize = 60;
+                for (let x = gridSize; x < W; x += gridSize) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, 0);
+                    ctx.lineTo(x, H);
+                    ctx.stroke();
+                }
+                for (let y = gridSize; y < H; y += gridSize) {
+                    ctx.beginPath();
+                    ctx.moveTo(0, y);
+                    ctx.lineTo(W, y);
+                    ctx.stroke();
+                }
+            }
+
+            function drawCrosshair() {
+                if (gameState !== STATE.PLAYING && gameState !== STATE.WAVE_TRANSITION) return;
+                const cx = mouseX;
+                const cy = mouseY;
+                const size = 18;
+                ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+                ctx.lineWidth = 2;
+                ctx.lineCap = 'round';
+                // Outer circle
+                ctx.beginPath();
+                ctx.arc(cx, cy, size, 0, Math.PI * 2);
+                ctx.stroke();
+                // Inner dot
+                ctx.fillStyle = 'rgba(255,80,80,0.9)';
+                ctx.beginPath();
+                ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+                ctx.fill();
+                // Cross lines
+                ctx.beginPath();
+                ctx.moveTo(cx - size - 6, cy);
+                ctx.lineTo(cx - size + 6, cy);
+                ctx.moveTo(cx + size - 6, cy);
+                ctx.lineTo(cx + size + 6, cy);
+                ctx.moveTo(cx, cy - size - 6);
+                ctx.lineTo(cx, cy - size + 6);
+                ctx.moveTo(cx, cy + size - 6);
+                ctx.lineTo(cx, cy + size + 6);
+                ctx.stroke();
+            }
+
+            function drawUI() {
+                // Score
+                ctx.fillStyle = '#ffffff';
+                ctx.font = `bold ${Math.max(16, W*0.022)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.textAlign = 'left';
+                ctx.fillText(`Score: ${score}`, 20, 35);
+
+                // Combo
+                if (comboCount > 1 && gameState === STATE.PLAYING) {
+                    const comboAlpha = Math.min(1, comboTimer / 0.3);
+                    ctx.fillStyle = `rgba(255,200,50,${comboAlpha})`;
+                    ctx.font = `bold ${Math.max(18, W*0.028)}px 'Segoe UI', Arial, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`🔥 ${comboCount}x COMBO!`, W / 2, 55);
+                }
+
+                // Lives
+                ctx.textAlign = 'right';
+                const heartSize = Math.max(16, W * 0.025);
+                for (let i = 0; i < 3; i++) {
+                    const hx = W - 30 - i * (heartSize + 10);
+                    const hy = 28;
+                    if (i < lives) {
+                        ctx.fillStyle = '#ff2d55';
+                    } else {
+                        ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                    }
+                    drawHeartShape(ctx, hx, hy, heartSize);
+                }
+
+                // Wave info
+                if (gameState === STATE.PLAYING) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                    ctx.font = `${Math.max(13, W*0.016)}px 'Segoe UI', Arial, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`Wave ${currentWave+1}/5 — Destroyed: ${waveTargetsDestroyed}/${waveTargetsRequired}`, W / 2,
+                        H - 20);
+                }
+
+                // Wave transition
+                if (gameState === STATE.WAVE_TRANSITION) {
+                    const alpha = Math.min(1, waveTransitionTimer / 0.5);
+                    const nextWave = currentWave + 2;
+                    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+                    ctx.font = `bold ${Math.max(36, W*0.07)}px 'Segoe UI', Arial, sans-serif`;
+                    ctx.textAlign = 'center';
+                    if (nextWave <= 5) {
+                        ctx.fillText(`WAVE ${nextWave}`, W / 2, H / 2 - 20);
+                        ctx.font = `${Math.max(16, W*0.025)}px 'Segoe UI', Arial, sans-serif`;
+                        ctx.fillText('Get Ready!', W / 2, H / 2 + 40);
+                    }
+                }
+            }
+
+            function drawHeartShape(ctx, x, y, size) {
+                const s = size * 0.5;
+                ctx.beginPath();
+                ctx.moveTo(x, y + s * 0.3);
+                ctx.bezierCurveTo(x, y - s * 0.35, x - s * 0.9, y - s * 0.35, x - s * 0.9, y + s * 0.3);
+                ctx.bezierCurveTo(x - s * 0.9, y + s * 0.75, x, y + s * 1.1, x, y + s * 1.1);
+                ctx.bezierCurveTo(x, y + s * 1.1, x + s * 0.9, y + s * 0.75, x + s * 0.9, y + s * 0.3);
+                ctx.bezierCurveTo(x + s * 0.9, y - s * 0.35, x, y - s * 0.35, x, y + s * 0.3);
+                ctx.fill();
+            }
+
+            function drawStartScreen() {
+                // Title
+                const titleY = H * 0.3;
+                ctx.fillStyle = '#ff4081';
+                ctx.font = `bold ${Math.max(28, W*0.055)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText('💔 DESTROY ALL 💔', W / 2, titleY - 30);
+                ctx.fillStyle = '#ff6b8a';
+                ctx.font = `bold ${Math.max(22, W*0.04)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.fillText("MILO'S GIRLFRIENDS 5", W / 2, titleY + 20);
+
+                // Subtitle
+                ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                ctx.font = `${Math.max(14, W*0.02)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.fillText('Click the girlfriends! Avoid Milo!', W / 2, titleY + 60);
+                ctx.fillText('5 Waves of increasing chaos', W / 2, titleY + 85);
+
+                // Start prompt
+                const pulse = 0.7 + 0.3 * Math.sin(Date.now() / 800);
+                ctx.fillStyle = `rgba(255,255,255,${pulse})`;
+                ctx.font = `bold ${Math.max(18, W*0.03)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.fillText('TAP OR CLICK TO START', W / 2, H * 0.62);
+
+                // Draw some example targets
+                const demoY = H * 0.75;
+                const demoTarget = new Target(W * 0.35, demoY, false, waveDefs[0]);
+                demoTarget.radius = Math.min(55, Math.max(35, W * 0.06));
+                demoTarget.scale = 1;
+                demoTarget.wobble = Date.now() / 600;
+                demoTarget.draw(ctx);
+
+                const demoMilo = new Target(W * 0.65, demoY, true, waveDefs[0]);
+                demoMilo.radius = Math.min(55, Math.max(35, W * 0.06));
+                demoMilo.scale = 1;
+                demoMilo.wobble = Date.now() / 500 + 1;
+                demoMilo.draw(ctx);
+
+                ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                ctx.font = `${Math.max(11, W*0.015)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText('👍 CLICK', W * 0.35, demoY + 60);
+                ctx.fillText('👎 AVOID', W * 0.65, demoY + 60);
+            }
+
+            function drawGameOverScreen() {
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, W, H);
+
+                ctx.fillStyle = '#ff4444';
+                ctx.font = `bold ${Math.max(32, W*0.06)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER', W / 2, H * 0.35);
+
+                ctx.fillStyle = '#ffffff';
+                ctx.font = `${Math.max(18, W*0.03)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.fillText(`Final Score: ${score}`, W / 2, H * 0.45);
+                ctx.fillText(`Wave Reached: ${currentWave+1}/5`, W / 2, H * 0.5);
+                ctx.fillText(`Max Combo: ${maxCombo}x`, W / 2, H * 0.55);
+
+                const pulse = 0.7 + 0.3 * Math.sin(Date.now() / 800);
+                ctx.fillStyle = `rgba(255,255,255,${pulse})`;
+                ctx.font = `bold ${Math.max(16, W*0.025)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.fillText('TAP TO RESTART', W / 2, H * 0.68);
+            }
+
+            function drawVictoryScreen() {
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(0, 0, W, H);
+
+                const glowGrad = ctx.createRadialGradient(W / 2, H * 0.35, 0, W / 2, H * 0.35, W * 0.5);
+                glowGrad.addColorStop(0, 'rgba(255,200,50,0.4)');
+                glowGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = glowGrad;
+                ctx.fillRect(0, 0, W, H);
+
+                ctx.fillStyle = '#ffcc00';
+                ctx.font = `bold ${Math.max(30, W*0.055)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText('🏆 VICTORY! 🏆', W / 2, H * 0.3);
+
+                ctx.fillStyle = '#ffffff';
+                ctx.font = `${Math.max(18, W*0.028)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.fillText("All of Milo's girlfriends", W / 2, H * 0.4);
+                ctx.fillText('have been destroyed!', W / 2, H * 0.45);
+                ctx.fillText(`Final Score: ${score}`, W / 2, H * 0.53);
+                ctx.fillText(`Max Combo: ${maxCombo}x`, W / 2, H * 0.58);
+
+                const pulse = 0.7 + 0.3 * Math.sin(Date.now() / 800);
+                ctx.fillStyle = `rgba(255,255,255,${pulse})`;
+                ctx.font = `bold ${Math.max(16, W*0.025)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.fillText('TAP TO PLAY AGAIN', W / 2, H * 0.7);
+            }
+
+            function gameLoop(timestamp) {
+                const dt = lastTimestamp ? Math.min((timestamp - lastTimestamp) / 1000, 0.1) : 0.016;
+                lastTimestamp = timestamp;
+
+                update(dt);
+
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                drawBackground();
+
+                // Draw floating hearts
+                for (const fh of floatingHearts) fh.draw(ctx);
+
+                // Draw targets
+                for (const t of targets) {
+                    if (t.alive) t.draw(ctx);
+                }
+
+                // Draw particles
+                for (const p of particles) p.draw(ctx);
+
+                // Draw UI
+                drawUI();
+                drawCrosshair();
+
+                ctx.restore();
+
+                // Draw overlays (not affected by shake)
+                if (gameState === STATE.START) drawStartScreen();
+                if (gameState === STATE.GAME_OVER) drawGameOverScreen();
+                if (gameState === STATE.VICTORY) drawVictoryScreen();
+
+                requestAnimationFrame(gameLoop);
+            }
+
+            // --- INITIALIZATION ---
+            let lastTimestamp = null;
+
+            function init() {
+                resizeCanvas();
+                // Create floating hearts
+                floatingHearts = [];
+                for (let i = 0; i < 25; i++) {
+                    const fh = new FloatingHeart();
+                    fh.y = Math.random() * H;
+                    floatingHearts.push(fh);
+                }
+                gameState = STATE.START;
+                score = 0;
+                lives = 3;
+                currentWave = -1;
+                targets = [];
+                activeTargets = [];
+                particles = [];
+                comboCount = 0;
+                comboTimer = 0;
+                maxCombo = 0;
+                shakeAmount = 0;
+                shakeX = 0;
+                shakeY = 0;
+                waveQuotaMet = false;
+            }
+
+            // --- EVENT HANDLERS ---
+            canvas.addEventListener('mousemove', (e) => {
+                mouseX = e.clientX;
+                mouseY = e.clientY;
+            });
+
+            canvas.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                initAudio();
+                mouseX = e.clientX;
+                mouseY = e.clientY;
+                handleClick(mouseX, mouseY);
+            });
+
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                initAudio();
+                const touch = e.touches[0];
+                mouseX = touch.clientX;
+                mouseY = touch.clientY;
+                handleClick(mouseX, mouseY);
+            }, { passive: false });
+
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                const touch = e.touches[0];
+                mouseX = touch.clientX;
+                mouseY = touch.clientY;
+            }, { passive: false });
+
+            canvas.addEventListener('touchend', (e) => {
+                e.preventDefault();
+            }, { passive: false });
+
+            window.addEventListener('resize', () => {
+                resizeCanvas();
+            });
+
+            // Prevent context menu on long press
+            canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+            // --- START ---
+            init();
+            requestAnimationFrame(gameLoop);
+
+            console.log('💔 Destroy All Milos Girlfriends 5 — Ready!');
+            console.log('👆 Click/Tap to start the game');
+            console.log('🎯 Destroy pink girlfriend targets');
+            console.log('🚫 Avoid blue Milo targets');
+            console.log('💖 3 Lives — 5 Waves — Good luck!');
+        })();
+    </script>
+</body>
+</html>
