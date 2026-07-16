@@ -394,5 +394,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T05:19:10.372Z",
     "updatedAt": "2026-07-16T05:19:10.372Z"
+  },
+  {
+    "slug": "aura-energy-collector",
+    "title": "AURA - Energy Collector",
+    "description": "huwehiuewfhuwehuiewfihuewf08282837237 this needs aura",
+    "creator": "burger778",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T05:19:52.879Z",
+    "updatedAt": "2026-07-16T05:19:52.879Z"
   }
 ]
