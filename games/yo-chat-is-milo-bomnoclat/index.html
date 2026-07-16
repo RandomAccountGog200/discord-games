@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>yo chat is milo bomnoclat</title>
+    <style>
+        :root {
+            --bg: #0a0a14;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: 'Segoe UI', 'Arial', sans-serif;
+            overflow: hidden;
+            touch-action: manipulation;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .game-wrapper {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+        }
+
+        canvas {
+            display: block;
+            border-radius: 16px;
+            box-shadow: 0 0 40px rgba(255, 100, 40, 0.35), 0 0 80px rgba(255, 60, 20, 0.2), 0 8px 32px rgba(0, 0, 0, 0.6);
+            max-width: 95vw;
+            max-height: 75vh;
+            image-rendering: auto;
+        }
+
+        .controls {
+            display: flex;
+            gap: 18px;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .ctrl-btn {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            border: 3px solid rgba(255, 255, 255, 0.5);
+            background: rgba(255, 255, 255, 0.08);
+            color: #fff;
+            font-size: 26px;
+            cursor: pointer;
+            transition: all 0.1s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+        }
+
+        .ctrl-btn:active,
+        .ctrl-btn.pressed {
+            background: rgba(255, 255, 255, 0.3);
+            border-color: #fff;
+            transform: scale(0.9);
+            box-shadow: 0 0 25px rgba(255, 180, 60, 0.7);
+        }
+
+        .ctrl-btn.jump-btn {
+            width: 75px;
+            height: 75px;
+            border-color: rgba(255, 200, 60, 0.7);
+            background: rgba(255, 150, 30, 0.2);
+            font-size: 30px;
+            box-shadow: 0 0 20px rgba(255, 150, 30, 0.35);
+        }
+
+        .ctrl-btn.jump-btn:active,
+        .ctrl-btn.jump-btn.pressed {
+            background: rgba(255, 180, 60, 0.45);
+            border-color: #ffcc00;
+            box-shadow: 0 0 35px rgba(255, 200, 50, 0.9);
+        }
+
+        @media (min-width: 768px) {
+            .controls {
+                gap: 24px;
+            }
+            .ctrl-btn {
+                width: 55px;
+                height: 55px;
+                font-size: 24px;
+            }
+            .ctrl-btn.jump-btn {
+                width: 68px;
+                height: 68px;
+                font-size: 28px;
+            }
+        }
+
+        @media (max-width: 400px) {
+            .ctrl-btn {
+                width: 48px;
+                height: 48px;
+                font-size: 22px;
+                border-width: 2px;
+            }
+            .ctrl-btn.jump-btn {
+                width: 58px;
+                height: 58px;
+                font-size: 24px;
+            }
+            .controls {
+                gap: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="game-wrapper">
+        <canvas id="gameCanvas"></canvas>
+        <div class="controls" id="touchControls">
+            <button class="ctrl-btn" id="btnLeft" aria-label="Move Left">◀</button>
+            <button class="ctrl-btn jump-btn" id="btnJump" aria-label="Jump">▲</button>
+            <button class="ctrl-btn" id="btnRight" aria-label="Move Right">▶</button>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            const INTERNAL_WIDTH = 750;
+            const INTERNAL_HEIGHT = 500;
+            canvas.width = INTERNAL_WIDTH;
+            canvas.height = INTERNAL_HEIGHT;
+
+            const GROUND_Y = 420;
+            const GROUND_HEIGHT = 80;
+            const CHAT_WIDTH = 170;
+            const CHAT_X = INTERNAL_WIDTH - CHAT_WIDTH - 10;
+
+            let scale = 1;
+            let gameState = 'title';
+            let score = 0;
+            let lives = 3;
+            let comboCount = 0;
+            let comboTimer = 0;
+            let maxCombo = 0;
+            let gameTime = 0;
+            let difficultyLevel = 1;
+            let bombSpawnTimer = 0;
+            let bombSpawnInterval = 90;
+            let shakeAmount = 0;
+            let titlePulse = 0;
+
+            let player = null;
+            let bombs = [];
+            let particles = [];
+            let collectibles = [];
+            let chatMessages = [];
+            let floatingTexts = [];
+
+            let keys = {};
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    try {
+                        audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                    } catch (e) {
+                        audioCtx = null;
+                    }
+                }
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            }
+
+            function playSound(freq, type, duration, vol = 0.15, glideTo = null) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (glideTo) {
+                        osc.frequency.linearRampToValueAtTime(glideTo, t + duration);
+                    }
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) {}
+            }
+
+            function sfxJump() { playSound(200, 'square', 0.15, 0.08, 500);
+                playSound(300, 'triangle', 0.12, 0.1, 600); }
+
+            function sfxExplosion() { playSound(40, 'sawtooth', 0.35, 0.06, 18);
+                playSound(55, 'square', 0.25, 0.2, 20); }
+
+            function sfxCollect() { playSound(800, 'sine', 0.1, 0.06, 1200);
+                playSound(1000, 'triangle', 0.08, 0.08, 1400); }
+
+            function sfxHurt() { playSound(150, 'sawtooth', 0.2, 0.25, 60);
+                playSound(80, 'square', 0.15, 0.3, 30); }
+
+            function sfxGameOver() { playSound(200, 'sawtooth', 0.2, 0.15, 80);
+                playSound(150, 'triangle', 0.18, 0.2, 50);
+                playSound(100, 'square', 0.15, 0.35, 30); }
+
+            function sfxCombo() { playSound(600, 'sine', 0.1, 0.05, 900);
+                playSound(700, 'triangle', 0.08, 0.06, 1100); }
+
+            class Player {
+                constructor() {
+                    this.x = INTERNAL_WIDTH / 2;
+                    this.y = GROUND_Y;
+                    this.width = 34;
+                    this.height = 54;
+                    this.vx = 0;
+                    this.vy = 0;
+                    this.speed = 5.5;
+                    this.jumpForce = -13;
+                    this.gravity = 0.7;
+                    this.onGround = true;
+                    this.facingRight = true;
+                    this.invincible = 0;
+                    this.animTimer = 0;
+                    this.runFrame = 0;
+                }
+
+                update() {
+                    if (this.invincible > 0) this.invincible--;
+
+                    if (keys['ArrowLeft'] || keys['KeyA'] || keys['left']) {
+                        this.vx = -this.speed;
+                        this.facingRight = false;
+                    } else if (keys['ArrowRight'] || keys['KeyD'] || keys['right']) {
+                        this.vx = this.speed;
+                        this.facingRight = true;
+                    } else {
+                        this.vx *= 0.7;
+                        if (Math.abs(this.vx) < 0.3) this.vx = 0;
+                    }
+
+                    if ((keys['ArrowUp'] || keys['KeyW'] || keys['Space'] || keys['jump']) && this.onGround) {
+                        this.vy = this.jumpForce;
+                        this.onGround = false;
+                        sfxJump();
+                        keys['jump'] = false;
+                    }
+
+                    this.vy += this.gravity;
+                    this.x += this.vx;
+                    this.y += this.vy;
+
+                    if (this.y >= GROUND_Y) {
+                        this.y = GROUND_Y;
+                        this.vy = 0;
+                        this.onGround = true;
+                    }
+
+                    this.x = Math.max(this.width / 2, Math.min(INTERNAL_WIDTH - CHAT_WIDTH - 20 - this.width / 2, this.x));
+
+                    if (Math.abs(this.vx) > 0.5 && this.onGround) {
+                        this.animTimer++;
+                        if (this.animTimer > 6) { this.animTimer = 0;
+                            this.runFrame = (this.runFrame + 1) % 4; }
+                    } else if (this.onGround) {
+                        this.runFrame = 0;
+                        this.animTimer = 0;
+                    }
+                }
+
+                draw(ctx) {
+                    if (this.invincible > 0 && Math.floor(this.invincible / 4) % 2 === 0) return;
+
+                    ctx.save();
+                    ctx.translate(this.x, this.y);
+
+                    const bobOffset = this.onGround ? Math.sin(this.runFrame * Math.PI / 2) * 3 : 0;
+
+                    // Shadow
+                    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+                    ctx.beginPath();
+                    ctx.ellipse(0, 8 + bobOffset, 16, 6, 0, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Body (hoodie)
+                    const bodyGrad = ctx.createLinearGradient(0, -20, 0, 10);
+                    bodyGrad.addColorStop(0, '#e8453c');
+                    bodyGrad.addColorStop(0.5, '#c0392b');
+                    bodyGrad.addColorStop(1, '#8b1a1a');
+                    ctx.fillStyle = bodyGrad;
+                    ctx.beginPath();
+                    ctx.roundRect(-11, -12 + bobOffset, 22, 28, 7);
+                    ctx.fill();
+                    ctx.strokeStyle = '#5a0a0a';
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+
+                    // Hoodie hood (behind head)
+                    ctx.fillStyle = '#d94038';
+                    ctx.beginPath();
+                    ctx.arc(0, -18 + bobOffset, 15, Math.PI * 0.15, Math.PI * 0.85);
+                    ctx.fill();
+
+                    // Head
+                    const headGrad = ctx.createRadialGradient(-2, -22 + bobOffset, 3, 0, -18 + bobOffset, 13);
+                    headGrad.addColorStop(0, '#fddcb5');
+                    headGrad.addColorStop(1, '#e8b88a');
+                    ctx.fillStyle = headGrad;
+                    ctx.beginPath();
+                    ctx.arc(0, -18 + bobOffset, 13, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#c4956b';
+                    ctx.lineWidth = 1.2;
+                    ctx.stroke();
+
+                    // Hair
+                    ctx.fillStyle = '#2c1810';
+                    ctx.beginPath();
+                    ctx.arc(0, -24 + bobOffset, 13, Math.PI, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillRect(-13, -24 + bobOffset, 26, 8);
+
+                    // Sunglasses
+                    ctx.fillStyle = '#1a1a1a';
+                    ctx.beginPath();
+                    ctx.roundRect(-9, -23 + bobOffset, 8, 7, 3);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.roundRect(1, -23 + bobOffset, 8, 7, 3);
+                    ctx.fill();
+                    ctx.fillStyle = '#333';
+                    ctx.fillRect(-7, -23 + bobOffset, 4, 5);
+                    ctx.fillRect(3, -23 + bobOffset, 4, 5);
+                    // Bridge
+                    ctx.strokeStyle = '#1a1a1a';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(-1, -20 + bobOffset);
+                    ctx.lineTo(1, -20 + bobOffset);
+                    ctx.stroke();
+                    // Shine
+                    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                    ctx.beginPath();
+                    ctx.arc(-5, -22 + bobOffset, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(5, -22 + bobOffset, 2, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Mouth (smirk)
+                    ctx.strokeStyle = '#8b5e3c';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.arc(2, -12 + bobOffset, 4, -0.3, Math.PI * 0.7);
+                    ctx.stroke();
+
+                    // Legs
+                    ctx.fillStyle = '#2c2c3a';
+                    const legSpread = this.onGround ? Math.sin(this.runFrame * Math.PI / 2) * 6 : 0;
+                    ctx.fillRect(-6, 10 + bobOffset, 8, 14 + (this.onGround ? 0 : -4));
+                    ctx.fillRect(2, 10 + bobOffset + legSpread * 0.6, 8, 14 + (this.onGround ? 0 : -4) - legSpread * 0.3);
+
+                    // Shoes
+                    ctx.fillStyle = '#1a1a1a';
+                    ctx.beginPath();
+                    ctx.roundRect(-8, 22 + bobOffset, 11, 6, 3);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.roundRect(0, 22 + bobOffset + legSpread * 0.5, 11, 6, 3);
+                    ctx.fill();
+
+                    ctx.restore();
+                }
+
+                getHitbox() {
+                    return {
+                        x: this.x - 14,
+                        y: this.y - 30,
+                        w: 28,
+                        h: 50
+                    };
+                }
+            }
+
+            class Bomb {
+                constructor(x, y, vy) {
+                    this.x = x;
+                    this.y = y;
+                    this.vy = vy || (2 + Math.random() * 3 + difficultyLevel * 0.6);
+                    this.radius = 16;
+                    this.fuseAngle = Math.random() * Math.PI * 2;
+                    this.sparkTimer = 0;
+                    this.exploded = false;
+                    this.isGolden = Math.random() < 0.08;
+                    if (this.isGolden) {
+                        this.vy *= 0.7;
+                        this.radius = 18;
+                    }
+                }
+
+                update() {
+                    if (this.exploded) return;
+                    this.y += this.vy;
+                    this.sparkTimer++;
+                    this.fuseAngle += 0.3;
+                    if (this.y >= GROUND_Y - this.radius) {
+                        this.explode();
+                    }
+                }
+
+                explode() {
+                    if (this.exploded) return;
+                    this.exploded = true;
+                    const exRadius = this.isGolden ? 90 : 65;
+                    sfxExplosion();
+                    shakeAmount = Math.max(shakeAmount, this.isGolden ? 8 : 5);
+
+                    const count = this.isGolden ? 35 : 20;
+                    for (let i = 0; i < count; i++) {
+                        const angle = Math.random() * Math.PI * 2;
+                        const speed = 2 + Math.random() * 7;
+                        const color = this.isGolden ?
+                            ['#ffd700', '#ffaa00', '#fff4a0', '#ff8c00'][Math.floor(Math.random() * 4)] :
+                            ['#ff4400', '#ff6600', '#ffaa00', '#ff2200', '#ffcc00'][Math.floor(Math.random() * 5)];
+                        particles.push(new Particle(this.x, Math.min(this.y, GROUND_Y), Math.cos(angle) * speed, Math.sin(
+                            angle) * speed - 2, color, 25 + Math.random() * 20));
+                    }
+                    // smoke
+                    for (let i = 0; i < 12; i++) {
+                        const angle = Math.random() * Math.PI * 2;
+                        const speed = 1 + Math.random() * 3;
+                        particles.push(new Particle(this.x, Math.min(this.y, GROUND_Y), Math.cos(angle) * speed, Math.sin(
+                            angle) * speed - 1, 'rgba(180,180,180,0.7)', 30 + Math.random() * 25, true));
+                    }
+
+                    if (this.isGolden && player) {
+                        const dx = player.x - this.x;
+                        const dy = player.y - this.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist < exRadius) {
+                            score += 300;
+                            floatingTexts.push(new FloatingText(player.x, player.y - 30, '+300 GOLDEN', '#ffd700', 40));
+                            sfxCombo();
+                            addChatMessage('bomnoclat_king', 'GOLDEN BOMNOCLAT!! 💰💰', '#ffd700');
+                        }
+                    }
+                }
+
+                draw(ctx) {
+                    if (this.exploded) return;
+                    ctx.save();
+                    ctx.translate(this.x, this.y);
+
+                    // Shadow
+                    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                    ctx.beginPath();
+                    ctx.arc(2, 3, this.radius, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Bomb body
+                    const bodyGrad = ctx.createRadialGradient(-4, -4, this.radius * 0.2, 0, 0, this.radius);
+                    if (this.isGolden) {
+                        bodyGrad.addColorStop(0, '#fff9c4');
+                        bodyGrad.addColorStop(0.4, '#ffd700');
+                        bodyGrad.addColorStop(1, '#b8860b');
+                    } else {
+                        bodyGrad.addColorStop(0, '#555');
+                        bodyGrad.addColorStop(0.3, '#2a2a2a');
+                        bodyGrad.addColorStop(1, '#0a0a0a');
+                    }
+                    ctx.fillStyle = bodyGrad;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = this.isGolden ? '#c8a000' : '#444';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    // Highlight
+                    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+                    ctx.beginPath();
+                    ctx.arc(-this.radius * 0.3, -this.radius * 0.35, this.radius * 0.35, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Fuse
+                    ctx.strokeStyle = '#8b7355';
+                    ctx.lineWidth = 2.5;
+                    ctx.beginPath();
+                    ctx.moveTo(0, -this.radius);
+                    ctx.quadraticCurveTo(5, -this.radius - 10, 2, -this.radius - 14);
+                    ctx.stroke();
+
+                    // Spark
+                    const sparkSize = 3 + Math.sin(this.sparkTimer * 0.8) * 2;
+                    const sparkGrad = ctx.createRadialGradient(2, -this.radius - 14, 0, 2, -this.radius - 14, sparkSize + 3);
+                    sparkGrad.addColorStop(0, '#fff');
+                    sparkGrad.addColorStop(0.3, '#ffdd00');
+                    sparkGrad.addColorStop(0.7, '#ff6600');
+                    sparkGrad.addColorStop(1, 'rgba(255,0,0,0)');
+                    ctx.fillStyle = sparkGrad;
+                    ctx.beginPath();
+                    ctx.arc(2, -this.radius - 14, sparkSize + 3, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.restore();
+                }
+
+                getHitbox() {
+                    return {
+                        x: this.x - this.radius,
+                        y: this.y - this.radius,
+                        r: this.radius
+                    };
+                }
+            }
+
+            class Particle {
+                constructor(x, y, vx, vy, color, life, isSmoke = false) {
+                    this.x = x;
+                    this.y = y;
+                    this.vx = vx;
+                    this.vy = vy;
+                    this.color = color;
+                    this.life = life;
+                    this.maxLife = life;
+                    this.isSmoke = isSmoke;
+                    this.size = 2 + Math.random() * 4;
+                }
+
+                update() {
+                    this.x += this.vx;
+                    this.y += this.vy;
+                    this.vy += 0.15;
+                    this.life--;
+                    if (this.isSmoke) {
+                        this.size += 0.2;
+                        this.vx *= 0.98;
+                        this.vy *= 0.98;
+                    }
+                }
+
+                draw(ctx) {
+                    const alpha = this.life / this.maxLife;
+                    if (this.isSmoke) {
+                        ctx.fillStyle = this.color.replace('0.7', String(alpha * 0.5));
+                    } else {
+                        ctx.fillStyle = this.color;
+                    }
+                    ctx.globalAlpha = alpha;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+                }
+
+                get dead() { return this.life <= 0; }
+            }
+
+            class Collectible {
+                constructor(x, y) {
+                    this.x = x;
+                    this.y = y;
+                    this.vy = 1.5 + Math.random() * 1.5;
+                    this.radius = 10;
+                    this.rotation = Math.random() * Math.PI * 2;
+                    this.rotSpeed = (Math.random() - 0.5) * 0.08;
+                    this.glowTimer = Math.random() * Math.PI * 2;
+                }
+
+                update() {
+                    this.y += this.vy;
+                    this.rotation += this.rotSpeed;
+                    this.glowTimer += 0.06;
+                    if (this.y > GROUND_Y + 20) return true;
+                    return false;
+                }
+
+                draw(ctx) {
+                    ctx.save();
+                    ctx.translate(this.x, this.y);
+                    ctx.rotate(this.rotation);
+
+                    const glow = Math.sin(this.glowTimer) * 0.3 + 0.7;
+                    const glowGrad = ctx.createRadialGradient(0, 0, this.radius * 0.3, 0, 0, this.radius * 1.6);
+                    glowGrad.addColorStop(0, 'rgba(255,255,200,0.9)');
+                    glowGrad.addColorStop(0.5, 'rgba(255,200,50,0.5)');
+                    glowGrad.addColorStop(1, 'rgba(255,150,0,0)');
+                    ctx.fillStyle = glowGrad;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, this.radius * 1.6, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Diamond shape
+                    const grad = ctx.createLinearGradient(0, -this.radius, 0, this.radius);
+                    grad.addColorStop(0, '#fffef0');
+                    grad.addColorStop(0.4, '#ffe066');
+                    grad.addColorStop(1, '#e6a800');
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.moveTo(0, -this.radius);
+                    ctx.lineTo(this.radius * 0.7, 0);
+                    ctx.lineTo(0, this.radius * 0.8);
+                    ctx.lineTo(-this.radius * 0.7, 0);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.strokeStyle = '#c88a00';
+                    ctx.lineWidth = 1.2;
+                    ctx.stroke();
+
+                    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                    ctx.beginPath();
+                    ctx.arc(-2, -2, this.radius * 0.25, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.restore();
+                }
+
+                getHitbox() {
+                    return {
+                        x: this.x - this.radius,
+                        y: this.y - this.radius,
+                        r: this.radius
+                    };
+                }
+            }
+
+            class FloatingText {
+                constructor(x, y, text, color, life) {
+                    this.x = x;
+                    this.y = y;
+                    this.text = text;
+                    this.color = color;
+                    this.life = life;
+                    this.maxLife = life;
+                    this.vy = -2.5;
+                }
+
+                update() {
+                    this.y += this.vy;
+                    this.vy *= 0.96;
+                    this.life--;
+                }
+
+                draw(ctx) {
+                    const alpha = Math.min(1, this.life / (this.maxLife * 0.3));
+                    ctx.fillStyle = this.color;
+                    ctx.globalAlpha = alpha;
+                    ctx.font = 'bold 16px "Segoe UI", Arial, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(this.text, this.x, this.y);
+                    ctx.globalAlpha = 1;
+                }
+
+                get dead() { return this.life <= 0; }
+            }
+
+            class ChatMessage {
+                constructor(username, text, color) {
+                    this.username = username;
+                    this.text = text;
+                    this.color = color || '#fff';
+                    this.life = 180;
+                    this.maxLife = 180;
+                    this.y = 0;
+                }
+
+                update() { this.life--; }
+                get dead() { return this.life <= 0; }
+                get alpha() { return Math.min(1, this.life / 40); }
+            }
+
+            function addChatMessage(username, text, color) {
+                chatMessages.unshift(new ChatMessage(username, text, color));
+                if (chatMessages.length > 15) chatMessages.length = 15;
+            }
+
+            const chatUsernames = [
+                'viewer42', 'pogchamp_77', 'milo_fan', 'bomnoclat_king', 'chat_warrior',
+                'lurker99', 'hypebeast_x', 'dodgemaster', 'explosion_lover', 'gem_collector',
+                'nightbot', 'streamelements', 'vibes_only', 'clutch_god', 'respectful_viewer',
+                'yo_mama_bot', 'certified_gamer', 'big_boom_energy', 'milo_stan', 'real_one'
+            ];
+
+            const chatTemplates = [
+                { text: 'yo chat 👋', color: '#a0ffa0' },
+                { text: 'BOMNOCLAT!! 💣', color: '#ff5555' },
+                { text: 'milo is cracked!', color: '#ffaa00' },
+                { text: 'watch out!!', color: '#ff4444' },
+                { text: 'POGGERS', color: '#ff77ff' },
+                { text: 'L + ratio', color: '#aaa' },
+                { text: 'nice dodge!', color: '#55ff55' },
+                { text: '💀💀💀', color: '#fff' },
+                { text: 'let him cook', color: '#ffcc44' },
+                { text: 'SHEESH', color: '#ff8844' },
+                { text: 'bomnoclat incoming', color: '#ff6644' },
+                { text: 'milo the goat 🐐', color: '#ffdd88' },
+                { text: 'THIS IS CINEMA', color: '#ffaa55' },
+                { text: 'no shot', color: '#ccc' },
+                { text: 'W take', color: '#88ff88' },
+                { text: 'hold the line', color: '#88ccff' },
+                { text: '💣💣💣', color: '#ff3333' },
+                { text: 'clean movement', color: '#aaddff' },
+                { text: 'yo that was close', color: '#ff9966' },
+                { text: 'bomnoclat diff', color: '#ff5555' },
+            ];
+
+            function spawnRandomChat() {
+                const template = chatTemplates[Math.floor(Math.random() * chatTemplates.length)];
+                const username = chatUsernames[Math.floor(Math.random() * chatUsernames.length)];
+                addChatMessage(username, template.text, template.color);
+            }
+
+            function resetGame() {
+                player = new Player();
+                bombs = [];
+                particles = [];
+                collectibles = [];
+                chatMessages = [];
+                floatingTexts = [];
+                score = 0;
+                lives = 3;
+                comboCount = 0;
+                comboTimer = 0;
+                maxCombo = 0;
+                gameTime = 0;
+                difficultyLevel = 1;
+                bombSpawnTimer = 0;
+                bombSpawnInterval = 90;
+                shakeAmount = 0;
+                keys = {};
+                addChatMessage('system', 'yo chat is milo bomnoclat 🎮', '#ffcc00');
+                addChatMessage('system', 'dodge the bombs! collect gems!', '#aaddff');
+                spawnRandomChat();
+            }
+
+            function hurtPlayer() {
+                if (player.invincible > 0) return;
+                lives--;
+                player.invincible = 45;
+                comboCount = 0;
+                comboTimer = 0;
+                sfxHurt();
+                shakeAmount = Math.max(shakeAmount, 10);
+                floatingTexts.push(new FloatingText(player.x, player.y - 30, '💥', '#ff3333', 35));
+                addChatMessage('system', 'milo got hit! 😱', '#ff4444');
+                spawnRandomChat();
+                if (lives <= 0) {
+                    gameState = 'gameover';
+                    sfxGameOver();
+                    addChatMessage('system', 'GAME OVER - milo bomnoclat rip 💀', '#ff0000');
+                    if (maxCombo >= 5) {
+                        addChatMessage('bomnoclat_king', `max combo: ${maxCombo} 👑`, '#ffd700');
+                    }
+                }
+            }
+
+            function spawnBomb() {
+                const x = 30 + Math.random() * (INTERNAL_WIDTH - CHAT_WIDTH - 60);
+                const vy = 2 + Math.random() * 3 + difficultyLevel * 0.6;
+                bombs.push(new Bomb(x, -20, vy));
+            }
+
+            function spawnCollectible() {
+                const x = 30 + Math.random() * (INTERNAL_WIDTH - CHAT_WIDTH - 60);
+                collectibles.push(new Collectible(x, -15));
+            }
+
+            function update() {
+                if (gameState !== 'playing') return;
+
+                gameTime++;
+                if (gameTime % 60 === 0 && gameTime > 0) {
+                    difficultyLevel = Math.floor(gameTime / 600) + 1;
+                    bombSpawnInterval = Math.max(25, 90 - difficultyLevel * 8);
+                }
+
+                if (comboTimer > 0) {
+                    comboTimer--;
+                    if (comboTimer <= 0) comboCount = 0;
+                }
+
+                player.update();
+
+                // Spawn bombs
+                bombSpawnTimer++;
+                if (bombSpawnTimer >= bombSpawnInterval) {
+                    bombSpawnTimer = 0;
+                    spawnBomb();
+                    if (difficultyLevel >= 3 && Math.random() < 0.35) spawnBomb();
+                    if (difficultyLevel >= 5 && Math.random() < 0.25) spawnBomb();
+                }
+
+                // Spawn collectibles
+                if (gameTime % 120 === 0 || (gameTime % 70 === 0 && Math.random() < 0.5)) {
+                    spawnCollectible();
+                }
+
+                // Random chat
+                if (gameTime % 100 === 0 && Math.random() < 0.6) {
+                    spawnRandomChat();
+                }
+
+                // Update bombs
+                for (let bomb of bombs) {
+                    if (!bomb.exploded) bomb.update();
+                }
+
+                // Check bomb explosions against player
+                for (let bomb of bombs) {
+                    if (bomb.exploded) {
+                        const exRadius = bomb.isGolden ? 90 : 65;
+                        const dx = player.x - bomb.x;
+                        const dy = player.y - bomb.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist < exRadius && player.invincible <= 0 && bomb._hurtChecked !== true) {
+                            bomb._hurtChecked = true;
+                            if (!bomb.isGolden) {
+                                hurtPlayer();
+                            }
+                        }
+                        if (dist < exRadius + 30 && bomb._dodged !== true && !bomb.isGolden && player.invincible <= 0 &&
+                            dist > exRadius - 10) {
+                            bomb._dodged = true;
+                            comboCount++;
+                            comboTimer = 90;
+                            if (comboCount > maxCombo) maxCombo = comboCount;
+                            score += comboCount * 10;
+                            if (comboCount >= 5 && comboCount % 5 === 0) {
+                                sfxCombo();
+                                floatingTexts.push(new FloatingText(player.x, player.y - 40, `COMBO x${comboCount}!`,
+                                    '#ffcc00', 40));
+                                addChatMessage('chat_warrior', `COMBO x${comboCount}!! 🔥`, '#ffcc00');
+                            }
+                        }
+                    }
+                }
+
+                // Update collectibles and check collection
+                for (let i = collectibles.length - 1; i >= 0; i--) {
+                    const c = collectibles[i];
+                    if (c.update()) {
+                        collectibles.splice(i, 1);
+                        continue;
+                    }
+                    const dx = player.x - c.x;
+                    const dy = (player.y - 25) - c.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < c.radius + 18) {
+                        sfxCollect();
+                        score += 100;
+                        floatingTexts.push(new FloatingText(c.x, c.y, '+100', '#ffe066', 30));
+                        collectibles.splice(i, 1);
+                        if (Math.random() < 0.3) spawnRandomChat();
+                    }
+                }
+
+                // Update particles
+                for (let p of particles) p.update();
+                particles = particles.filter(p => !p.dead);
+
+                // Update floating texts
+                for (let ft of floatingTexts) ft.update();
+                floatingTexts = floatingTexts.filter(ft => !ft.dead);
+
+                // Update chat messages
+                for (let cm of chatMessages) cm.update();
+                chatMessages = chatMessages.filter(cm => !cm.dead);
+
+                // Clean up exploded bombs
+                bombs = bombs.filter(b => !b.exploded || b._hurtChecked === true && b._dodged === true && particles.filter(
+                    p => p.life > 15).length > 0 || !b.exploded);
+                // Actually keep exploded bombs for a bit for visual cleanup
+                if (bombs.filter(b => b.exploded).length > 30) {
+                    bombs = bombs.filter(b => !b.exploded || Math.random() > 0.3);
+                }
+                bombs = bombs.filter(b => !b.exploded || b.y < GROUND_Y + 100);
+
+                // Shake decay
+                if (shakeAmount > 0) shakeAmount *= 0.85;
+                if (shakeAmount < 0.1) shakeAmount = 0;
+            }
+
+            function drawBackground(ctx) {
+                // Sky gradient
+                const skyGrad = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+                skyGrad.addColorStop(0, '#0a0a2e');
+                skyGrad.addColorStop(0.4, '#1a1a40');
+                skyGrad.addColorStop(0.8, '#2a2040');
+                skyGrad.addColorStop(1, '#3a2040');
+                ctx.fillStyle = skyGrad;
+                ctx.fillRect(0, 0, INTERNAL_WIDTH, GROUND_Y);
+
+                // Stars
+                ctx.fillStyle = '#ffffff';
+                const starSeed = 42;
+                for (let i = 0; i < 60; i++) {
+                    const sx = ((i * 137 + starSeed) % INTERNAL_WIDTH);
+                    const sy = ((i * 251 + starSeed * 3) % (GROUND_Y - 30));
+                    const twinkle = Math.sin(gameTime * 0.03 + i) * 0.4 + 0.6;
+                    ctx.globalAlpha = twinkle * 0.8;
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, 0.8 + (i % 3) * 0.6, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+
+                // Distant buildings
+                ctx.fillStyle = '#111122';
+                for (let i = 0; i < 12; i++) {
+                    const bx = i * 65 - 10;
+                    const bh = 40 + Math.sin(i * 1.7) * 25;
+                    ctx.fillRect(bx, GROUND_Y - bh, 50, bh);
+                }
+
+                // Ground
+                const groundGrad = ctx.createLinearGradient(0, GROUND_Y, 0, INTERNAL_HEIGHT);
+                groundGrad.addColorStop(0, '#2a2a38');
+                groundGrad.addColorStop(0.15, '#1e1e2c');
+                groundGrad.addColorStop(1, '#111118');
+                ctx.fillStyle = groundGrad;
+                ctx.fillRect(0, GROUND_Y, INTERNAL_WIDTH, GROUND_HEIGHT);
+
+                // Ground line
+                ctx.strokeStyle = '#44445a';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, GROUND_Y);
+                ctx.lineTo(INTERNAL_WIDTH, GROUND_Y);
+                ctx.stroke();
+
+                // Ground texture
+                ctx.strokeStyle = '#333348';
+                ctx.lineWidth = 1;
+                for (let i = 0; i < INTERNAL_WIDTH; i += 30) {
+                    ctx.beginPath();
+                    ctx.moveTo(i, GROUND_Y + 5);
+                    ctx.lineTo(i + 15, GROUND_Y + 5);
+                    ctx.stroke();
+                }
+            }
+
+            function drawChatPanel(ctx) {
+                // Chat panel background
+                const chatGrad = ctx.createLinearGradient(CHAT_X - 5, 0, INTERNAL_WIDTH, 0);
+                chatGrad.addColorStop(0, 'rgba(10,10,20,0.0)');
+                chatGrad.addColorStop(0.3, 'rgba(10,10,20,0.7)');
+                chatGrad.addColorStop(1, 'rgba(10,10,20,0.85)');
+                ctx.fillStyle = chatGrad;
+                ctx.fillRect(CHAT_X - 5, 0, CHAT_WIDTH + 15, INTERNAL_HEIGHT);
+
+                // Chat header
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 11px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText('💬 CHAT', CHAT_X + 5, 18);
+
+                ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(CHAT_X, 24);
+                ctx.lineTo(INTERNAL_WIDTH - 10, 24);
+                ctx.stroke();
+
+                // Messages
+                const startY = 38;
+                const lineHeight = 20;
+                for (let i = 0; i < chatMessages.length; i++) {
+                    const msg = chatMessages[i];
+                    const y = startY + i * lineHeight;
+                    if (y > INTERNAL_HEIGHT - 20) break;
+                    const alpha = msg.alpha;
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = msg.color;
+                    ctx.font = '10px "Segoe UI", Arial, sans-serif';
+                    ctx.textAlign = 'left';
+                    const displayText = `${msg.username}: ${msg.text}`;
+                    const maxLen = 22;
+                    const truncated = displayText.length > maxLen ? displayText.substring(0, maxLen) + '…' : displayText;
+                    ctx.fillText(truncated, CHAT_X + 5, y);
+                }
+                ctx.globalAlpha = 1;
+            }
+
+            function drawHUD(ctx) {
+                // Score
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 18px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText(`⭐ ${score}`, 15, 28);
+
+                // Lives
+                ctx.textAlign = 'left';
+                for (let i = 0; i < lives; i++) {
+                    ctx.fillText('❤️', 15 + i * 28, 52);
+                }
+                for (let i = lives; i < 3; i++) {
+                    ctx.globalAlpha = 0.3;
+                    ctx.fillText('🖤', 15 + i * 28, 52);
+                    ctx.globalAlpha = 1;
+                }
+
+                // Combo
+                if (comboCount >= 3) {
+                    ctx.fillStyle = '#ffcc00';
+                    ctx.font = 'bold 14px "Segoe UI", Arial, sans-serif';
+                    ctx.textAlign = 'left';
+                    const comboAlpha = Math.min(1, comboTimer / 30);
+                    ctx.globalAlpha = comboAlpha;
+                    ctx.fillText(`🔥 x${comboCount}`, 15, 74);
+                    ctx.globalAlpha = 1;
+                }
+
+                // Difficulty
+                ctx.fillStyle = '#aaa';
+                ctx.font = '10px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'right';
+                ctx.fillText(`Level ${difficultyLevel}`, INTERNAL_WIDTH - CHAT_WIDTH - 20, 22);
+
+                // Title
+                ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                ctx.font = 'italic 11px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('yo chat is milo bomnoclat', INTERNAL_WIDTH / 2 - CHAT_WIDTH / 2, 16);
+            }
+
+            function drawTitleScreen(ctx) {
+                drawBackground(ctx);
+                titlePulse += 0.04;
+
+                // Overlay
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(0, 0, INTERNAL_WIDTH, INTERNAL_HEIGHT);
+
+                // Title
+                const pulse = Math.sin(titlePulse) * 0.15 + 1;
+                ctx.save();
+                ctx.translate(INTERNAL_WIDTH / 2 - CHAT_WIDTH / 2, 140);
+                ctx.scale(pulse, pulse);
+
+                ctx.fillStyle = '#ff4444';
+                ctx.font = 'bold 42px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = '#ff0000';
+                ctx.shadowBlur = 25;
+                ctx.fillText('yo chat is', 0, 0);
+                ctx.fillStyle = '#ffaa00';
+                ctx.shadowColor = '#ff8800';
+                ctx.fillText('milo bomnoclat', 0, 50);
+                ctx.shadowBlur = 0;
+                ctx.restore();
+
+                // Subtitle
+                ctx.fillStyle = '#ddd';
+                ctx.font = '16px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Dodge the bombs • Collect gems • Survive', INTERNAL_WIDTH / 2 - CHAT_WIDTH / 2, 230);
+
+                // Start prompt
+                const blink = Math.sin(titlePulse * 1.5) > 0;
+                if (blink) {
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 20px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText('Press SPACE or tap to start', INTERNAL_WIDTH / 2 - CHAT_WIDTH / 2, 290);
+                }
+
+                // Draw a little Milo
+                const demoMilo = new Player();
+                demoMilo.x = INTERNAL_WIDTH / 2 - CHAT_WIDTH / 2;
+                demoMilo.y = GROUND_Y;
+                demoMilo.runFrame = Math.floor(titlePulse * 2) % 4;
+                demoMilo.animTimer = 1;
+                demoMilo.draw(ctx);
+
+                // Draw some demo bombs
+                const demoBombs = [
+                    { x: 200, y: 100, vy: 2 },
+                    { x: 400, y: 180, vy: 2.5 },
+                    { x: 300, y: 250, vy: 3 },
+                ];
+                for (let db of demoBombs) {
+                    const b = new Bomb(db.x, db.y, db.vy);
+                    b.sparkTimer = Math.floor(titlePulse * 10);
+                    b.draw(ctx);
+                }
+            }
+
+            function drawGameOverScreen(ctx) {
+                drawBackground(ctx);
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, INTERNAL_WIDTH, INTERNAL_HEIGHT);
+
+                ctx.fillStyle = '#ff3333';
+                ctx.font = 'bold 40px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = '#ff0000';
+                ctx.shadowBlur = 20;
+                ctx.fillText('GAME OVER', INTERNAL_WIDTH / 2 - CHAT_WIDTH / 2, 150);
+                ctx.shadowBlur = 0;
+
+                ctx.fillStyle = '#fff';
+                ctx.font = '22px "Segoe UI", Arial, sans-serif';
+                ctx.fillText(`Score: ${score}`, INTERNAL_WIDTH / 2 - CHAT_WIDTH / 2, 200);
+
+                if (maxCombo >= 5) {
+                    ctx.fillStyle = '#ffcc00';
+                    ctx.font = '18px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText(`Best Combo: x${maxCombo} 🔥`, INTERNAL_WIDTH / 2 - CHAT_WIDTH / 2, 230);
+                }
+
+                ctx.fillStyle = '#ffaa00';
+                ctx.font = '16px "Segoe UI", Arial, sans-serif';
+                ctx.fillText(`Level Reached: ${difficultyLevel}`, INTERNAL_WIDTH / 2 - CHAT_WIDTH / 2, 258);
+
+                const blink = Math.sin(titlePulse * 1.5) > 0;
+                if (blink) {
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 18px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText('Press SPACE or tap to restart', INTERNAL_WIDTH / 2 - CHAT_WIDTH / 2, 310);
+                }
+
+                // Draw chat panel
+                drawChatPanel(ctx);
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, INTERNAL_WIDTH, INTERNAL_HEIGHT);
+
+                const shakeX = shakeAmount * (Math.random() - 0.5) * 2;
+                const shakeY = shakeAmount * (Math.random() - 0.5) * 2;
+
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                if (gameState === 'title') {
+                    drawTitleScreen(ctx);
+                } else if (gameState === 'gameover') {
+                    drawGameOverScreen(ctx);
+                } else {
+                    drawBackground(ctx);
+
+                    // Draw collectibles
+                    for (let c of collectibles) c.draw(ctx);
+
+                    // Draw bombs
+                    for (let bomb of bombs) bomb.draw(ctx);
+
+                    // Draw player
+                    player.draw(ctx);
+
+                    // Draw particles
+                    for (let p of particles) p.draw(ctx);
+
+                    // Draw floating texts
+                    for (let ft of floatingTexts) ft.draw(ctx);
+
+                    // Draw chat panel
+                    drawChatPanel(ctx);
+
+                    // Draw HUD
+                    drawHUD(ctx);
+                }
+
+                ctx.restore();
+            }
+
+            function gameLoop() {
+                update();
+                render();
+                requestAnimationFrame(gameLoop);
+            }
+
+            function handleStart() {
+                initAudio();
+                if (gameState === 'title' || gameState === 'gameover') {
+                    resetGame();
+                    gameState = 'playing';
+                }
+            }
+
+            // Keyboard events
+            window.addEventListener('keydown', (e) => {
+                keys[e.code] = true;
+                keys[e.key] = true;
+                if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
+                    keys['jump'] = true;
+                    e.preventDefault();
+                }
+                if (e.code === 'Space') {
+                    handleStart();
+                    e.preventDefault();
+                }
+                if (e.code === 'ArrowLeft' || e.code === 'ArrowRight' || e.code === 'ArrowUp' || e.code ===
+                    'ArrowDown') {
+                    e.preventDefault();
+                }
+            });
+
+            window.addEventListener('keyup', (e) => {
+                keys[e.code] = false;
+                keys[e.key] = false;
+                if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
+                    keys['jump'] = false;
+                }
+            });
+
+            // Touch control buttons
+            const btnLeft = document.getElementById('btnLeft');
+            const btnRight = document.getElementById('btnRight');
+            const btnJump = document.getElementById('btnJump');
+
+            function setupButton(btn, keyName) {
+                btn.addEventListener('pointerdown', (e) => {
+                    e.preventDefault();
+                    initAudio();
+                    keys[keyName] = true;
+                    btn.classList.add('pressed');
+                    if (gameState === 'title' || gameState === 'gameover') {
+                        handleStart();
+                    }
+                });
+                btn.addEventListener('pointerup', (e) => {
+                    e.preventDefault();
+                    keys[keyName] = false;
+                    btn.classList.remove('pressed');
+                });
+                btn.addEventListener('pointerleave', (e) => {
+                    keys[keyName] = false;
+                    btn.classList.remove('pressed');
+                });
+                btn.addEventListener('pointercancel', (e) => {
+                    keys[keyName] = false;
+                    btn.classList.remove('pressed');
+                });
+                btn.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                });
+                btn.addEventListener('touchend', (e) => {
+                    e.preventDefault();
+                });
+            }
+
+            setupButton(btnLeft, 'left');
+            setupButton(btnRight, 'right');
+            setupButton(btnJump, 'jump');
+
+            // Canvas click to start
+            canvas.addEventListener('click', (e) => {
+                initAudio();
+                if (gameState === 'title' || gameState === 'gameover') {
+                    handleStart();
+                }
+            });
+            canvas.addEventListener('touchstart', (e) => {
+                initAudio();
+                if (gameState === 'title' || gameState === 'gameover') {
+                    handleStart();
+                    e.preventDefault();
+                }
+            });
+
+            // Resize handling
+            function resizeCanvas() {
+                const maxWidth = Math.min(window.innerWidth * 0.95, 750);
+                const maxHeight = Math.min(window.innerHeight * 0.7, 500);
+                const aspectRatio = INTERNAL_WIDTH / INTERNAL_HEIGHT;
+                let displayWidth, displayHeight;
+                if (maxWidth / maxHeight > aspectRatio) {
+                    displayHeight = maxHeight;
+                    displayWidth = displayHeight * aspectRatio;
+                } else {
+                    displayWidth = maxWidth;
+                    displayHeight = displayWidth / aspectRatio;
+                }
+                canvas.style.width = displayWidth + 'px';
+                canvas.style.height = displayHeight + 'px';
+                scale = displayWidth / INTERNAL_WIDTH;
+            }
+
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+
+            // Initialize
+            resetGame();
+            gameState = 'title';
+            addChatMessage('system', 'yo chat is milo bomnoclat 🎮', '#ffcc00');
+            addChatMessage('system', 'dodge bombs • collect gems', '#aaddff');
+            addChatMessage('bomnoclat_king', 'bomnoclat incoming!! 💣', '#ff5555');
+            gameLoop();
+
+            console.log('🎮 yo chat is milo bomnoclat - ready!');
+            console.log('Controls: Arrow Keys / WASD to move, Space/Up to jump');
+            console.log('Mobile: Use on-screen buttons');
+            console.log('Dodge the bombs, collect gems, build combos!');
+        })();
+    </script>
+</body>
+</html>
