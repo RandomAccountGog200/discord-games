@@ -439,5 +439,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T05:25:45.818Z",
     "updatedAt": "2026-07-16T05:25:45.818Z"
+  },
+  {
+    "slug": "pickle-chomp",
+    "title": "Pickle Chomp!",
+    "description": "pickles from into your mouth",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T05:31:29.500Z",
+    "updatedAt": "2026-07-16T05:31:29.500Z"
   }
 ]
