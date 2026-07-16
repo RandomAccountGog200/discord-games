@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TRUMP TO DUMP 🚽</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'Segoe UI', 'Arial', sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+        canvas {
+            max-width: 100vw;
+            max-height: 100vh;
+            border-radius: 12px;
+            box-shadow: 0 0 60px rgba(255, 180, 40, 0.3), 0 0 120px rgba(255, 140, 20, 0.15);
+            cursor: pointer;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            const INTERNAL_W = 800;
+            const INTERNAL_H = 500;
+            canvas.width = INTERNAL_W;
+            canvas.height = INTERNAL_H;
+
+            function resizeCanvas() {
+                const scale = Math.min(window.innerWidth / INTERNAL_W, window.innerHeight / INTERNAL_H, 1.0);
+                canvas.style.width = (INTERNAL_W * scale) + 'px';
+                canvas.style.height = (INTERNAL_H * scale) + 'px';
+            }
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+
+            // Audio system
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playSound(freq, type, duration, vol = 0.15, glideTo = null) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (glideTo) osc.frequency.linearRampToValueAtTime(glideTo, t + duration);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) {}
+            }
+
+            function sfxJump() { playSound(280, 'square', 0.18, 0.12, 700); }
+
+            function sfxHit() { playSound(55, 'sawtooth', 0.35, 0.2, 30);
+                playSound(40, 'triangle', 0.4, 0.25, 25); }
+
+            function sfxWin() {
+                playSound(523, 'square', 0.2, 0.18, 660);
+                setTimeout(() => playSound(659, 'square', 0.2, 0.18, 880), 180);
+                setTimeout(() => playSound(784, 'square', 0.35, 0.25, 1047), 360);
+            }
+
+            function sfxSparkle() { playSound(1200, 'sine', 0.08, 0.04, 1800); }
+
+            // Game constants
+            const GROUND_Y = 390;
+            const TRUMP_SCREEN_X = 140;
+            const GOAL_DISTANCE = 5000;
+            const SCROLL_SPEED_BASE = 280;
+            const GRAVITY = 1550;
+            const JUMP_VELOCITY = -590;
+            const COYOTE_TIME = 0.1;
+
+            // Game state
+            let gameState = 'intro'; // intro | playing | gameover | win
+            let worldOffset = 0;
+            let scrollSpeed = SCROLL_SPEED_BASE;
+            let distance = 0;
+            let trumpY = GROUND_Y;
+            let trumpVy = 0;
+            let trumpOnGround = true;
+            let lastGroundedTime = -999;
+            let trumpAnimFrame = 0;
+            let trumpAnimTimer = 0;
+            let obstacles = [];
+            let nextObstacleDist = 450;
+            let particles = [];
+            let shakeAmount = 0;
+            let shakeDuration = 0;
+            let time = 0;
+            let lastTime = performance.now();
+            let toiletSparkleTimer = 0;
+            let winCelebrationTimer = 0;
+            let inputBuffer = 0;
+
+            function resetGame() {
+                worldOffset = 0;
+                scrollSpeed = SCROLL_SPEED_BASE;
+                distance = 0;
+                trumpY = GROUND_Y;
+                trumpVy = 0;
+                trumpOnGround = true;
+                lastGroundedTime = time;
+                trumpAnimFrame = 0;
+                trumpAnimTimer = 0;
+                obstacles = [];
+                nextObstacleDist = 400 + Math.random() * 250;
+                particles = [];
+                shakeAmount = 0;
+                shakeDuration = 0;
+                toiletSparkleTimer = 0;
+                winCelebrationTimer = 0;
+                inputBuffer = 0;
+            }
+
+            function spawnObstacle(worldX) {
+                const difficultyFactor = Math.min(distance / GOAL_DISTANCE, 1.0);
+                const minH = 35;
+                const maxH = 45 + difficultyFactor * 75;
+                const height = minH + Math.random() * (maxH - minH);
+                const width = 32 + Math.random() * 28;
+                obstacles.push({
+                    worldX: worldX,
+                    width: width,
+                    height: height,
+                    color: `hsl(${18 + Math.random()*12}, ${50+Math.random()*30}%, ${28+Math.random()*20}%)`,
+                    passed: false,
+                });
+            }
+
+            function createParticles(x, y, count, colorBase, spread, lifeRange, sizeRange) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = (Math.random() * spread);
+                    const life = lifeRange[0] + Math.random() * (lifeRange[1] - lifeRange[0]);
+                    const size = sizeRange[0] + Math.random() * (sizeRange[1] - sizeRange[0]);
+                    const hue = typeof colorBase === 'number' ? colorBase + (Math.random() - 0.5) * 30 : 35;
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - Math.random() * 200,
+                        life: life,
+                        maxLife: life,
+                        size: size,
+                        color: `hsl(${hue}, 80%, ${50+Math.random()*35}%)`,
+                    });
+                }
+            }
+
+            function handleJump() {
+                initAudio();
+                if (gameState === 'intro') {
+                    gameState = 'playing';
+                    resetGame();
+                    lastTime = performance.now();
+                    time = 0;
+                    lastGroundedTime = time;
+                    return;
+                }
+                if (gameState === 'gameover' || gameState === 'win') {
+                    gameState = 'playing';
+                    resetGame();
+                    lastTime = performance.now();
+                    time = 0;
+                    lastGroundedTime = time;
+                    return;
+                }
+                if (gameState === 'playing') {
+                    if (trumpOnGround || (time - lastGroundedTime < COYOTE_TIME)) {
+                        trumpVy = JUMP_VELOCITY;
+                        trumpOnGround = false;
+                        lastGroundedTime = -999;
+                        createParticles(TRUMP_SCREEN_X, GROUND_Y, 12, 35, 180, [0.25, 0.6], [2, 6]);
+                        sfxJump();
+                    } else if (inputBuffer <= 0 && trumpVy > 0 && trumpY < GROUND_Y - 20) {
+                        inputBuffer = 0.08;
+                    }
+                }
+            }
+
+            // Input handling
+            window.addEventListener('keydown', (e) => {
+                if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
+                    e.preventDefault();
+                    handleJump();
+                }
+            });
+            canvas.addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                handleJump();
+            });
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                handleJump();
+            }, { passive: false });
+
+            function update(dt) {
+                if (gameState !== 'playing') return;
+
+                const realDt = Math.min(dt, 0.1);
+                time += realDt;
+
+                if (inputBuffer > 0) {
+                    inputBuffer -= realDt;
+                    if (trumpOnGround && inputBuffer > 0) {
+                        trumpVy = JUMP_VELOCITY;
+                        trumpOnGround = false;
+                        lastGroundedTime = -999;
+                        createParticles(TRUMP_SCREEN_X, GROUND_Y, 10, 35, 160, [0.2, 0.5], [2, 5]);
+                        sfxJump();
+                        inputBuffer = 0;
+                    }
+                }
+
+                const diffFactor = Math.min(distance / GOAL_DISTANCE, 1.0);
+                scrollSpeed = SCROLL_SPEED_BASE + diffFactor * 120;
+                worldOffset += scrollSpeed * realDt;
+                distance = worldOffset;
+
+                // Trump physics
+                if (!trumpOnGround) {
+                    trumpVy += GRAVITY * realDt;
+                    trumpY += trumpVy * realDt;
+                    if (trumpY >= GROUND_Y) {
+                        trumpY = GROUND_Y;
+                        trumpVy = 0;
+                        if (!trumpOnGround) {
+                            createParticles(TRUMP_SCREEN_X, GROUND_Y, 8, 40, 120, [0.2, 0.45], [3, 7]);
+                        }
+                        trumpOnGround = true;
+                        lastGroundedTime = time;
+                    }
+                }
+
+                // Animation
+                trumpAnimTimer += realDt;
+                if (trumpOnGround && trumpAnimTimer > 0.07) {
+                    trumpAnimTimer = 0;
+                    trumpAnimFrame = (trumpAnimFrame + 1) % 4;
+                }
+
+                // Obstacle spawning
+                if (distance + 700 > nextObstacleDist) {
+                    spawnObstacle(nextObstacleDist);
+                    const gap = 280 + Math.random() * 350 - diffFactor * 120;
+                    nextObstacleDist = nextObstacleDist + Math.max(gap, 200);
+                }
+
+                // Update obstacles & collisions
+                for (let i = obstacles.length - 1; i >= 0; i--) {
+                    const obs = obstacles[i];
+                    const screenX = obs.worldX - worldOffset;
+                    if (screenX < -120) {
+                        obstacles.splice(i, 1);
+                        continue;
+                    }
+                    if (screenX > INTERNAL_W + 60) continue;
+
+                    // Collision check
+                    const trumpLeft = TRUMP_SCREEN_X - 22;
+                    const trumpRight = TRUMP_SCREEN_X + 22;
+                    const trumpBottom = trumpY;
+                    const trumpTop = trumpY - 60;
+                    const obsLeft = screenX - obs.width / 2;
+                    const obsRight = screenX + obs.width / 2;
+                    const obsTop = GROUND_Y - obs.height;
+                    const obsBottom = GROUND_Y;
+
+                    if (trumpRight > obsLeft + 4 && trumpLeft < obsRight - 4) {
+                        if (trumpBottom > obsTop + 8) {
+                            // Collision!
+                            createParticles(TRUMP_SCREEN_X, trumpY - 30, 30, 15, 350, [0.3, 0.9], [3, 10]);
+                            createParticles(screenX, obsTop, 20, 20, 250, [0.25, 0.7], [2, 8]);
+                            shakeAmount = 14;
+                            shakeDuration = 0.35;
+                            sfxHit();
+                            gameState = 'gameover';
+                            return;
+                        }
+                    }
+
+                    // Mark as passed for score
+                    if (!obs.passed && screenX < TRUMP_SCREEN_X - 25) {
+                        obs.passed = true;
+                        createParticles(screenX, GROUND_Y - obs.height / 2, 5, 55, 80, [0.3, 0.55], [2, 5]);
+                        sfxSparkle();
+                    }
+                }
+
+                // Win check
+                if (distance >= GOAL_DISTANCE - 30) {
+                    gameState = 'win';
+                    winCelebrationTimer = 0;
+                    createParticles(TRUMP_SCREEN_X, GROUND_Y - 40, 60, 48, 500, [0.5, 2.0], [3, 12]);
+                    sfxWin();
+                    return;
+                }
+
+                // Shake decay
+                if (shakeDuration > 0) {
+                    shakeDuration -= realDt;
+                    if (shakeDuration <= 0) shakeAmount = 0;
+                    else shakeAmount *= Math.pow(0.02, realDt);
+                }
+
+                // Update particles
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx * realDt;
+                    p.y += p.vy * realDt;
+                    p.vy += 300 * realDt;
+                    p.life -= realDt;
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+
+                toiletSparkleTimer += realDt;
+            }
+
+            function drawSky() {
+                const grad = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+                grad.addColorStop(0, '#7ec8e3');
+                grad.addColorStop(0.55, '#b8dff0');
+                grad.addColorStop(1, '#dceef8');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, INTERNAL_W, GROUND_Y);
+
+                // Clouds
+                ctx.fillStyle = 'rgba(255,255,255,0.75)';
+                const cloudPositions = [
+                    { x: 80, y: 50, s: 1.1 },
+                    { x: 280, y: 85, s: 0.85 },
+                    { x: 500, y: 35, s: 1.3 },
+                    { x: 650, y: 95, s: 0.7 },
+                    { x: 180, y: 120, s: 0.6 },
+                    { x: 720, y: 55, s: 0.95 },
+                ];
+                cloudPositions.forEach(c => {
+                    const cx = ((c.x - worldOffset * 0.08) % (INTERNAL_W + 200)) - 100;
+                    const cy = c.y;
+                    const s = c.s;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 28 * s, 0, Math.PI * 2);
+                    ctx.arc(cx + 22 * s, cy - 8 * s, 20 * s, 0, Math.PI * 2);
+                    ctx.arc(cx + 42 * s, cy + 2 * s, 22 * s, 0, Math.PI * 2);
+                    ctx.arc(cx + 10 * s, cy + 6 * s, 18 * s, 0, Math.PI * 2);
+                    ctx.arc(cx + 30 * s, cy - 2 * s, 19 * s, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+            }
+
+            function drawGround() {
+                // Grass
+                const grassGrad = ctx.createLinearGradient(0, GROUND_Y, 0, GROUND_Y + 30);
+                grassGrad.addColorStop(0, '#5a9e3f');
+                grassGrad.addColorStop(0.5, '#4a8c35');
+                grassGrad.addColorStop(1, '#3d7030');
+                ctx.fillStyle = grassGrad;
+                ctx.fillRect(0, GROUND_Y, INTERNAL_W, 30);
+
+                // Dirt
+                const dirtGrad = ctx.createLinearGradient(0, GROUND_Y + 30, 0, INTERNAL_H);
+                dirtGrad.addColorStop(0, '#9b7a4a');
+                dirtGrad.addColorStop(0.4, '#8b6b3d');
+                dirtGrad.addColorStop(1, '#5c4028');
+                ctx.fillStyle = dirtGrad;
+                ctx.fillRect(0, GROUND_Y + 30, INTERNAL_W, INTERNAL_H - GROUND_Y - 30);
+
+                // Grass blades
+                ctx.strokeStyle = '#6db84d';
+                ctx.lineWidth = 1.5;
+                const bladeOffset = (worldOffset * 0.6) % 30;
+                for (let x = -30 + bladeOffset; x < INTERNAL_W + 30; x += 14) {
+                    const h = 6 + Math.sin(x * 0.4 + worldOffset * 0.03) * 4;
+                    ctx.beginPath();
+                    ctx.moveTo(x, GROUND_Y);
+                    ctx.lineTo(x + 2 + Math.sin(x * 0.3) * 3, GROUND_Y - h);
+                    ctx.stroke();
+                }
+
+                // Ground line
+                ctx.strokeStyle = '#7ab858';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, GROUND_Y);
+                ctx.lineTo(INTERNAL_W, GROUND_Y);
+                ctx.stroke();
+            }
+
+            function drawTrump(screenX, y) {
+                const sx = screenX;
+                const sy = y;
+                const runBob = trumpOnGround ? Math.sin(time * 14) * 3 : 0;
+                const drawY = sy + runBob;
+
+                ctx.save();
+                ctx.translate(sx, drawY);
+
+                // Shadow
+                if (trumpOnGround) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+                    ctx.beginPath();
+                    ctx.ellipse(0, 8, 20, 5, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Legs
+                const legSpread = trumpOnGround ? (trumpAnimFrame % 2 === 0 ? 6 : -6) : 3;
+                ctx.fillStyle = '#1a1a2e';
+                ctx.fillRect(-6, -5, 6, 14);
+                ctx.fillRect(2, -5, 6, 14);
+
+                // Shoes
+                ctx.fillStyle = '#2a1a0a';
+                ctx.fillRect(-8, 6, 9, 6);
+                ctx.fillRect(0, 6, 9, 6);
+
+                // Body (suit)
+                const bodyGrad = ctx.createLinearGradient(0, -48, 0, -10);
+                bodyGrad.addColorStop(0, '#1e2040');
+                bodyGrad.addColorStop(1, '#15172e');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.roundRect(-11, -48, 22, 38, 4);
+                ctx.fill();
+
+                // White shirt
+                ctx.fillStyle = '#f8f8f8';
+                ctx.beginPath();
+                ctx.moveTo(-2, -46);
+                ctx.lineTo(2, -46);
+                ctx.lineTo(5, -30);
+                ctx.lineTo(-5, -30);
+                ctx.fill();
+
+                // Red tie
+                ctx.fillStyle = '#d42020';
+                ctx.beginPath();
+                ctx.moveTo(0, -46);
+                ctx.lineTo(-3, -36);
+                ctx.lineTo(0, -20);
+                ctx.lineTo(3, -36);
+                ctx.closePath();
+                ctx.fill();
+
+                // Arms
+                ctx.fillStyle = '#1e2040';
+                const armSwing = trumpOnGround ? (trumpAnimFrame % 2 === 0 ? -5 : 5) : -2;
+                ctx.save();
+                ctx.translate(-12, -40);
+                ctx.rotate((armSwing - 5) * 0.04);
+                ctx.fillRect(-3, 0, 7, 22);
+                ctx.fillStyle = '#ff9f6b';
+                ctx.fillRect(-2, 20, 6, 6);
+                ctx.restore();
+                ctx.save();
+                ctx.translate(12, -40);
+                ctx.rotate((-armSwing - 5) * 0.04);
+                ctx.fillRect(-4, 0, 7, 22);
+                ctx.fillStyle = '#ff9f6b';
+                ctx.fillRect(-3, 20, 6, 6);
+                ctx.restore();
+
+                // Head
+                const headY = -55;
+                ctx.fillStyle = '#ff9d5c';
+                ctx.beginPath();
+                ctx.arc(0, headY, 19, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Highlight on face
+                const faceGrad = ctx.createRadialGradient(-4, headY - 6, 3, 0, headY, 19);
+                faceGrad.addColorStop(0, '#ffb880');
+                faceGrad.addColorStop(1, '#e87840');
+                ctx.fillStyle = faceGrad;
+                ctx.beginPath();
+                ctx.arc(0, headY, 19, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Hair - the iconic swoop
+                ctx.fillStyle = '#e8c050';
+                ctx.beginPath();
+                ctx.moveTo(-16, headY - 8);
+                ctx.quadraticCurveTo(-18, headY - 24, -4, headY - 22);
+                ctx.quadraticCurveTo(8, headY - 28, 16, headY - 18);
+                ctx.quadraticCurveTo(22, headY - 22, 24, headY - 10);
+                ctx.quadraticCurveTo(20, headY - 4, 14, headY + 2);
+                ctx.quadraticCurveTo(6, headY - 6, -2, headY - 2);
+                ctx.quadraticCurveTo(-10, headY - 4, -14, headY - 6);
+                ctx.quadraticCurveTo(-17, headY - 10, -16, headY - 8);
+                ctx.fill();
+
+                // Hair top volume
+                ctx.fillStyle = '#f0d068';
+                ctx.beginPath();
+                ctx.arc(6, headY - 20, 10, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#dab840';
+                ctx.beginPath();
+                ctx.arc(-2, headY - 16, 7, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Side hair
+                ctx.fillStyle = '#e0b848';
+                ctx.beginPath();
+                ctx.ellipse(16, headY - 6, 8, 12, -0.3, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Eyes
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(-5, headY - 4, 5.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.arc(7, headY - 4, 5.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#111';
+                ctx.beginPath();
+                ctx.arc(-4, headY - 3, 2.8, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.arc(8, headY - 3, 2.8, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(-3, headY - 4, 1.1, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.arc(9, headY - 4, 1.1, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Eyebrows
+                ctx.strokeStyle = '#d4a050';
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                ctx.moveTo(-9, headY - 11);
+                ctx.quadraticCurveTo(-5, headY - 13, -1, headY - 10);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(3, headY - 10);
+                ctx.quadraticCurveTo(7, headY - 13, 12, headY - 10);
+                ctx.stroke();
+
+                // Mouth
+                ctx.strokeStyle = '#c06040';
+                ctx.lineWidth = 1.8;
+                ctx.beginPath();
+                ctx.arc(1, headY + 5, 4, 0.15, Math.PI - 0.15);
+                ctx.stroke();
+
+                ctx.restore();
+            }
+
+            function drawGoldenToilet(screenX) {
+                const sx = screenX;
+                const sy = GROUND_Y;
+
+                // Glow
+                const glowGrad = ctx.createRadialGradient(sx, sy - 30, 10, sx, sy - 20, 70);
+                glowGrad.addColorStop(0, 'rgba(255,215,0,0.5)');
+                glowGrad.addColorStop(1, 'rgba(255,215,0,0)');
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(sx, sy - 25, 70, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Tank
+                const tankGrad = ctx.createLinearGradient(sx - 18, 0, sx + 5, 0);
+                tankGrad.addColorStop(0, '#e8c030');
+                tankGrad.addColorStop(0.3, '#ffd950');
+                tankGrad.addColorStop(0.6, '#ffdf60');
+                tankGrad.addColorStop(1, '#c89a20');
+                ctx.fillStyle = tankGrad;
+                ctx.beginPath();
+                ctx.roundRect(sx - 16, sy - 55, 22, 30, 5);
+                ctx.fill();
+                ctx.strokeStyle = '#b8860b';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Tank lid
+                ctx.fillStyle = '#ffe880';
+                ctx.beginPath();
+                ctx.roundRect(sx - 17, sy - 58, 24, 8, 4);
+                ctx.fill();
+                ctx.strokeStyle = '#b8860b';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                // Bowl base
+                const bowlGrad = ctx.createLinearGradient(0, sy - 30, 0, sy);
+                bowlGrad.addColorStop(0, '#ffd950');
+                bowlGrad.addColorStop(0.5, '#ffdf60');
+                bowlGrad.addColorStop(1, '#b89020');
+                ctx.fillStyle = bowlGrad;
+                ctx.beginPath();
+                ctx.ellipse(sx + 8, sy - 12, 22, 16, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#b8860b';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Bowl inner
+                ctx.fillStyle = '#c89528';
+                ctx.beginPath();
+                ctx.ellipse(sx + 8, sy - 14, 16, 10, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Seat
+                ctx.fillStyle = '#ffecc0';
+                ctx.beginPath();
+                ctx.ellipse(sx + 8, sy - 20, 18, 7, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#d4a030';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                // Seat hole
+                ctx.fillStyle = '#7a5a20';
+                ctx.beginPath();
+                ctx.ellipse(sx + 8, sy - 21, 12, 4, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Sparkle particles from toilet
+                if (toiletSparkleTimer > 0.08) {
+                    toiletSparkleTimer = 0;
+                    const sx2 = sx + (Math.random() - 0.5) * 40;
+                    const sy2 = sy - 25 + (Math.random() - 0.5) * 35;
+                    particles.push({
+                        x: sx2,
+                        y: sy2,
+                        vx: (Math.random() - 0.5) * 60,
+                        vy: -Math.random() * 120 - 40,
+                        life: 0.5 + Math.random() * 0.8,
+                        maxLife: 1.3,
+                        size: 1.5 + Math.random() * 3.5,
+                        color: `hsl(${48+Math.random()*20}, 90%, ${60+Math.random()*35}%)`,
+                    });
+                }
+            }
+
+            function drawObstacle(obs, screenX) {
+                const sx = screenX;
+                const sy = GROUND_Y;
+                const h = obs.height;
+                const w = obs.width;
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.beginPath();
+                ctx.ellipse(sx, sy + 2, w / 2 + 2, 4, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Brick body
+                const brickGrad = ctx.createLinearGradient(0, sy - h, 0, sy);
+                brickGrad.addColorStop(0, obs.color);
+                brickGrad.addColorStop(1, '#4a2510');
+                ctx.fillStyle = brickGrad;
+                ctx.beginPath();
+                ctx.roundRect(sx - w / 2, sy - h, w, h, 4);
+                ctx.fill();
+                ctx.strokeStyle = '#3a1a08';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Brick lines
+                ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+                ctx.lineWidth = 1;
+                const rowH = h / 4;
+                for (let r = 1; r < 4; r++) {
+                    const ry = sy - h + r * rowH;
+                    ctx.beginPath();
+                    ctx.moveTo(sx - w / 2 + 1, ry);
+                    ctx.lineTo(sx + w / 2 - 1, ry);
+                    ctx.stroke();
+                }
+                // Vertical brick lines
+                for (let r = 0; r < 4; r++) {
+                    const ry = sy - h + r * rowH;
+                    const offset = r % 2 === 0 ? 0 : w / 4;
+                    for (let cx = sx - w / 2 + offset; cx < sx + w / 2; cx += w / 2) {
+                        if (cx > sx - w / 2 + 2 && cx < sx + w / 2 - 2) {
+                            ctx.beginPath();
+                            ctx.moveTo(cx, ry);
+                            ctx.lineTo(cx, ry + rowH);
+                            ctx.stroke();
+                        }
+                    }
+                }
+
+                // Top edge highlight
+                ctx.fillStyle = 'rgba(255,255,255,0.15)';
+                ctx.fillRect(sx - w / 2 + 2, sy - h, w - 4, 3);
+            }
+
+            function drawParticles() {
+                particles.forEach(p => {
+                    const alpha = Math.max(0, p.life / p.maxLife);
+                    ctx.fillStyle = p.color.replace(')', `, ${alpha})`).replace('hsl', 'hsla');
+                    if (p.color.includes('hsl(')) {
+                        const parts = p.color.match(/hsl\(([^)]+)\)/);
+                        if (parts) {
+                            const vals = parts[1].split(',');
+                            ctx.fillStyle = `hsla(${vals[0]},${vals[1]},${vals[2]},${alpha})`;
+                        }
+                    }
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Glow for sparkles
+                    if (p.size < 4 && alpha > 0.5) {
+                        ctx.fillStyle =
+                        `rgba(255,240,200,${alpha*0.5})`;
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, p.size * 2.5, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                });
+            }
+
+            function drawUI() {
+                // Distance bar
+                const barX = 20;
+                const barY = 20;
+                const barW = INTERNAL_W - 40;
+                const barH = 18;
+                const progress = Math.min(distance / GOAL_DISTANCE, 1.0);
+
+                // Bar background
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.beginPath();
+                ctx.roundRect(barX, barY, barW, barH, 9);
+                ctx.fill();
+
+                // Progress fill
+                const progGrad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+                progGrad.addColorStop(0, '#ff6b35');
+                progGrad.addColorStop(0.5, '#ff9500');
+                progGrad.addColorStop(1, '#ffd700');
+                ctx.fillStyle = progGrad;
+                ctx.beginPath();
+                ctx.roundRect(barX + 2, barY + 2, Math.max(4, (barW - 4) * progress), barH - 4, 7);
+                ctx.fill();
+
+                // Bar label
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 11px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(`${Math.floor(distance)} / ${GOAL_DISTANCE}`, barX + barW / 2, barY + barH - 4);
+
+                // Dump icon on bar
+                const dumpIconX = barX + (barW - 4) * (GOAL_DISTANCE / GOAL_DISTANCE) - 14;
+                ctx.fillText('🚽', barX + barW - 20, barY + barH - 3);
+
+                // Score text
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 15px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText(`Distance: ${Math.floor(distance)}`, 20, 58);
+
+                // Instruction
+                if (gameState === 'playing' && distance < 150 && time < 5) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+                    ctx.font = 'bold 16px "Segoe UI", Arial, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('TAP or SPACE to JUMP!', INTERNAL_W / 2, 95);
+                    ctx.fillText('Reach the Golden Toilet! 🚽', INTERNAL_W / 2, 118);
+                }
+            }
+
+            function drawIntroScreen() {
+                // Dim overlay
+                ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                ctx.fillRect(0, 0, INTERNAL_W, INTERNAL_H);
+
+                // Title card
+                const cardX = INTERNAL_W / 2 - 200;
+                const cardY = 80;
+                ctx.fillStyle = 'rgba(20,20,40,0.9)';
+                ctx.beginPath();
+                ctx.roundRect(cardX, cardY, 400, 300, 20);
+                ctx.fill();
+                ctx.strokeStyle = '#ffd700';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+
+                // Title
+                ctx.fillStyle = '#ffd700';
+                ctx.font = 'bold 40px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('TRUMP', INTERNAL_W / 2, cardY + 60);
+                ctx.fillText('TO DUMP', INTERNAL_W / 2, cardY + 105);
+
+                // Emoji
+                ctx.font = '50px sans-serif';
+                ctx.fillText('🏃💨🚽', INTERNAL_W / 2, cardY + 165);
+
+                // Subtitle
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 16px "Segoe UI", Arial, sans-serif';
+                ctx.fillText('Help Trump reach the Golden Toilet!', INTERNAL_W / 2, cardY + 200);
+
+                // Instructions
+                ctx.fillStyle = '#ddd';
+                ctx.font = '15px "Segoe UI", Arial, sans-serif';
+                ctx.fillText('🖱️ Tap/Click or press SPACE to jump', INTERNAL_W / 2, cardY + 235);
+                ctx.fillText('🏗️ Avoid the brick walls!', INTERNAL_W / 2, cardY + 258);
+                ctx.fillText('🏆 Reach 5000 distance to win!', INTERNAL_W / 2, cardY + 278);
+
+                // Start prompt with pulse
+                const pulse = Math.sin(time * 3) * 0.4 + 0.6;
+                ctx.fillStyle = `rgba(255,215,0,${0.7+pulse*0.3})`;
+                ctx.font = 'bold 20px "Segoe UI", Arial, sans-serif';
+                ctx.fillText('TAP TO START!', INTERNAL_W / 2, cardY + 310);
+            }
+
+            function drawGameOverScreen() {
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(0, 0, INTERNAL_W, INTERNAL_H);
+
+                const cardX = INTERNAL_W / 2 - 180;
+                const cardY = 130;
+                ctx.fillStyle = 'rgba(30,10,10,0.9)';
+                ctx.beginPath();
+                ctx.roundRect(cardX, cardY, 360, 220, 18);
+                ctx.fill();
+                ctx.strokeStyle = '#ff4444';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+
+                ctx.fillStyle = '#ff4444';
+                ctx.font = 'bold 36px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER!', INTERNAL_W / 2, cardY + 55);
+
+                ctx.fillStyle = '#fff';
+                ctx.font = '20px "Segoe UI", Arial, sans-serif';
+                ctx.fillText(`Distance: ${Math.floor(distance)} / ${GOAL_DISTANCE}`, INTERNAL_W / 2, cardY + 95);
+                ctx.fillText(`You were ${Math.floor(GOAL_DISTANCE - distance)} away from the dump!`, INTERNAL_W / 2, cardY +
+                    125);
+
+                const pulse = Math.sin(time * 3) * 0.4 + 0.6;
+                ctx.fillStyle = `rgba(255,200,100,${0.7+pulse*0.3})`;
+                ctx.font = 'bold 19px "Segoe UI", Arial, sans-serif';
+                ctx.fillText('TAP TO RETRY', INTERNAL_W / 2, cardY + 175);
+            }
+
+            function drawWinScreen() {
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.fillRect(0, 0, INTERNAL_W, INTERNAL_H);
+
+                const cardX = INTERNAL_W / 2 - 190;
+                const cardY = 100;
+                ctx.fillStyle = 'rgba(20,20,10,0.9)';
+                ctx.beginPath();
+                ctx.roundRect(cardX, cardY, 380, 260, 20);
+                ctx.fill();
+                ctx.strokeStyle = '#ffd700';
+                ctx.lineWidth = 4;
+                ctx.stroke();
+
+                // Gold glow border
+                ctx.strokeStyle = 'rgba(255,215,0,0.4)';
+                ctx.lineWidth = 10;
+                ctx.beginPath();
+                ctx.roundRect(cardX - 3, cardY - 3, 386, 266, 22);
+                ctx.stroke();
+
+                ctx.fillStyle = '#ffd700';
+                ctx.font = 'bold 34px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('🏆 DUMP REACHED! 🏆', INTERNAL_W / 2, cardY + 55);
+
+                ctx.fillStyle = '#fff';
+                ctx.font = '20px "Segoe UI", Arial, sans-serif';
+                ctx.fillText('Trump made it to the', INTERNAL_W / 2, cardY + 90);
+                ctx.fillText('Golden Toilet! 🚽✨', INTERNAL_W / 2, cardY + 118);
+
+                ctx.fillStyle = '#ffd700';
+                ctx.font = 'bold 22px "Segoe UI", Arial, sans-serif';
+                ctx.fillText(`Final Distance: ${Math.floor(distance)}`, INTERNAL_W / 2, cardY + 158);
+
+                const pulse = Math.sin(time * 4) * 0.4 + 0.6;
+                ctx.fillStyle = `rgba(255,215,0,${0.7+pulse*0.3})`;
+                ctx.font = 'bold 19px "Segoe UI", Arial, sans-serif';
+                ctx.fillText('TAP TO PLAY AGAIN', INTERNAL_W / 2, cardY + 210);
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, INTERNAL_W, INTERNAL_H);
+
+                // Apply screen shake
+                let shakeX = 0;
+                let shakeY = 0;
+                if (shakeAmount > 0.5) {
+                    shakeX = (Math.random() - 0.5) * shakeAmount * 2;
+                    shakeY = (Math.random() - 0.5) * shakeAmount * 2;
+                }
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                drawSky();
+                drawGround();
+
+                // Draw obstacles
+                obstacles.forEach(obs => {
+                    const screenX = obs.worldX - worldOffset;
+                    if (screenX > -60 && screenX < INTERNAL_W + 60) {
+                        drawObstacle(obs, screenX);
+                    }
+                });
+
+                // Draw golden toilet
+                const toiletScreenX = GOAL_DISTANCE - worldOffset;
+                if (toiletScreenX > -80 && toiletScreenX < INTERNAL_W + 80) {
+                    drawGoldenToilet(toiletScreenX);
+                } else if (gameState === 'playing' && toiletScreenX <= -80 && distance < GOAL_DISTANCE - 200) {
+                    // Toilet is behind us but we haven't won - edge case
+                }
+
+                // Draw Trump
+                drawTrump(TRUMP_SCREEN_X, trumpY);
+
+                // Draw particles
+                drawParticles();
+
+                ctx.restore();
+
+                // UI (not affected by shake)
+                drawUI();
+
+                // Overlay screens
+                if (gameState === 'intro') drawIntroScreen();
+                if (gameState === 'gameover') drawGameOverScreen();
+                if (gameState === 'win') drawWinScreen();
+
+                // Win celebration particles
+                if (gameState === 'win') {
+                    winCelebrationTimer += 0.016;
+                    if (winCelebrationTimer < 3 && Math.random() < 0.7) {
+                        const cx = INTERNAL_W / 2 + (Math.random() - 0.5) * 400;
+                        const cy = INTERNAL_H / 2 + (Math.random() - 0.5) * 300;
+                        particles.push({
+                            x: cx,
+                            y: cy,
+                            vx: (Math.random() - 0.5) * 300,
+                            vy: -Math.random() * 400 - 100,
+                            life: 1 + Math.random() * 2,
+                            maxLife: 3,
+                            size: 3 + Math.random() * 8,
+                            color: `hsl(${40+Math.random()*30}, 90%, ${55+Math.random()*40}%)`,
+                        });
+                    }
+                    // Update win particles
+                    const pdt = 0.016;
+                    for (let i = particles.length - 1; i >= 0; i--) {
+                        const p = particles[i];
+                        p.x += p.vx * pdt;
+                        p.y += p.vy * pdt;
+                        p.vy += 250 * pdt;
+                        p.life -= pdt;
+                        if (p.life <= 0 && particles[i] === p) {
+                            particles.splice(i, 1);
+                        }
+                    }
+                }
+            }
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.2) dt = 0.2;
+                lastTime = timestamp;
+
+                if (gameState === 'intro') {
+                    time += dt;
+                    // Gentle animation
+                }
+
+                update(dt);
+
+                // Update particles even in non-playing states for visual effects
+                if (gameState === 'gameover' || gameState === 'win') {
+                    time += dt;
+                    const pdt = Math.min(dt, 0.05);
+                    for (let i = particles.length - 1; i >= 0; i--) {
+                        const p = particles[i];
+                        p.x += p.vx * pdt;
+                        p.y += p.vy * pdt;
+                        p.vy += 350 * pdt;
+                        p.life -= pdt;
+                        if (p.life <= 0) particles.splice(i, 1);
+                    }
+                    if (shakeDuration > 0 && gameState === 'gameover') {
+                        shakeDuration -= dt;
+                        if (shakeDuration <= 0) shakeAmount = 0;
+                        else shakeAmount *= Math.pow(0.015, dt);
+                    }
+                }
+
+                render();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // Initialize
+            resetGame();
+            lastTime = performance.now();
+            time = 0;
+            lastGroundedTime = time;
+            gameState = 'intro';
+            requestAnimationFrame(gameLoop);
+
+            // Handle roundRect polyfill for older browsers
+            if (!ctx.roundRect) {
+                ctx.roundRect = function(x, y, w, h, r) {
+                    if (typeof r === 'number') r = { tl: r, tr: r, br: r, bl: r };
+                    ctx.beginPath();
+                    ctx.moveTo(x + r.tl, y);
+                    ctx.lineTo(x + w - r.tr, y);
+                    ctx.quadraticCurveTo(x + w, y, x + w, y + r.tr);
+                    ctx.lineTo(x + w, y + h - r.br);
+                    ctx.quadraticCurveTo(x + w, y + h, x + w - r.br, y + h);
+                    ctx.lineTo(x + r.bl, y + h);
+                    ctx.quadraticCurveTo(x, y + h, x, y + h - r.bl);
+                    ctx.lineTo(x, y + r.tl);
+                    ctx.quadraticCurveTo(x, y, x + r.tl, y);
+                    ctx.closePath();
+                };
+            }
+
+            console.log('🏃 TRUMP TO DUMP ready! 🚽');
+            console.log('Tap/Click or press SPACE to jump.');
+            console.log('Reach 5000 distance to win!');
+        })();
+    </script>
+</body>
+</html>
