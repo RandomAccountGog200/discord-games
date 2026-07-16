@@ -1,0 +1,1360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Penalty Tycoon - Goalie Edition</title>
+    <style>
+        :root {
+            --bg: #1a1a2e;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        #game-container {
+            position: relative;
+            max-width: 460px;
+            max-height: 95vh;
+            width: 100%;
+            aspect-ratio: 420 / 750;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            border-radius: 16px;
+            box-shadow: 0 0 40px rgba(255, 180, 50, 0.25), 0 0 80px rgba(255, 140, 30, 0.15);
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="game"></canvas>
+    </div>
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+
+            // Virtual resolution
+            const VW = 420;
+            const VH = 750;
+            canvas.width = VW;
+            canvas.height = VH;
+
+            // Audio
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playBeep(freq, dur, type = 'square', vol = 0.08) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    osc.frequency.exponentialRampToValueAtTime(freq * 0.3, t + dur);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + dur);
+                } catch (e) {}
+            }
+
+            function playSave() {
+                playBeep(600, 0.12, 'square', 0.1);
+                setTimeout(() => playBeep(900, 0.15, 'square', 0.1), 100);
+                setTimeout(() => playBeep(1200, 0.2, 'triangle', 0.12), 180);
+            }
+
+            function playGoal() {
+                playBeep(80, 0.4, 'sawtooth', 0.12);
+                setTimeout(() => playBeep(50, 0.5, 'sawtooth', 0.08), 200);
+            }
+
+            function playWhistle() {
+                playBeep(1800, 0.25, 'sine', 0.06);
+                setTimeout(() => playBeep(2000, 0.2, 'sine', 0.05), 200);
+            }
+
+            function playCash() {
+                playBeep(1400, 0.08, 'triangle', 0.07);
+                setTimeout(() => playBeep(1800, 0.08, 'triangle', 0.07), 70);
+            }
+
+            function playClick() {
+                playBeep(500, 0.05, 'sine', 0.04);
+            }
+
+            // Game State
+            const STATE = { MENU: 'menu', PLAYING: 'playing', TELL: 'tell', SHOT: 'shot', RESULT: 'result', SHOP: 'shop',
+                GAMEOVER: 'gameover' };
+            let gameState = STATE.MENU;
+            let stateTimer = 0;
+            let roundShots = 0;
+            let maxShotsPerRound = 5;
+            let roundNumber = 1;
+            let money = 50;
+            let hearts = 3;
+            let maxHearts = 3;
+            let comboCount = 0;
+            let bestCombo = 0;
+            let totalSaves = 0;
+            let totalGoals = 0;
+            let difficultyLevel = 1;
+
+            // Goalie
+            let goalieX = VW / 2;
+            let goalieY = 280;
+            let goalieTargetX = VW / 2;
+            let goalieDiving = false;
+            let goalieDiveDir = 0;
+            let goalieBob = 0;
+
+            // Ball
+            let ballX = VW / 2;
+            let ballY = 620;
+            let ballTargetX = VW / 2;
+            let ballTargetY = 300;
+            let ballTargetZone = 2;
+            let ballFlying = false;
+            let ballSpeed = 0;
+            let ballProgress = 0;
+
+            // Striker tell
+            let strikerLean = 0;
+            let tellActive = false;
+            let tellDuration = 550;
+            let tellTimer = 0;
+            let shotDelay = 0;
+
+            // Zones (0-4 mapped to goal positions)
+            const zonePositions = [VW * 0.18, VW * 0.33, VW * 0.5, VW * 0.67, VW * 0.82];
+
+            // Upgrades
+            let upgrades = {
+                diveReach: { level: 0, max: 5, name: 'Dive Reach', baseCost: 30, icon: '↔' },
+                gloveSize: { level: 0, max: 5, name: 'Glove Size', baseCost: 25, icon: '🧤' },
+                reflexes: { level: 0, max: 5, name: 'Reflexes', baseCost: 40, icon: '⚡' },
+                diveSpeed: { level: 0, max: 5, name: 'Dive Speed', baseCost: 35, icon: '💨' },
+                extraHeart: { level: 0, max: 3, name: 'Extra Heart', baseCost: 120, icon: '❤️' },
+            };
+
+            function getUpgradeCost(upgrade) {
+                return Math.floor(upgrade.baseCost * Math.pow(1.6, upgrade.level));
+            }
+
+            function getCoverageRadius() {
+                return 1.5 + upgrades.diveReach.level * 0.45 + upgrades.gloveSize.level * 0.3;
+            }
+
+            function getTellDuration() {
+                return Math.max(180, 550 + upgrades.reflexes.level * 100 - (difficultyLevel - 1) * 25);
+            }
+
+            function getDiveSpeed() {
+                return 6 + upgrades.diveSpeed.level * 2.5;
+            }
+
+            // Particles
+            let particles = [];
+            let screenShake = 0;
+
+            function spawnParticles(x, y, count, color, spread = 3) {
+                for (let i = 0; i < count; i++) {
+                    particles.push({
+                        x,
+                        y,
+                        vx: (Math.random() - 0.5) * spread * 2,
+                        vy: (Math.random() - 1) * spread * 2,
+                        life: 0.5 + Math.random() * 0.8,
+                        maxLife: 0.5 + Math.random() * 0.8,
+                        color,
+                        size: 2 + Math.random() * 4,
+                    });
+                }
+            }
+
+            function updateParticles(dt) {
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx * 60 * dt;
+                    p.y += p.vy * 60 * dt;
+                    p.vy += 3 * dt;
+                    p.life -= dt;
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+                if (screenShake > 0) screenShake = Math.max(0, screenShake - dt * 8);
+            }
+
+            function drawParticles(ctx) {
+                for (const p of particles) {
+                    const alpha = p.life / p.maxLife;
+                    const size = p.size * alpha;
+                    ctx.fillStyle = p.color.replace('1)', `${alpha})`).replace('rgb',
+                        'rgba');
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Glow
+                    ctx.fillStyle = p.color.replace('1)', `${alpha * 0.4})`).replace('rgb', 'rgba');
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, size * 2.5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            // Input
+            let inputLeft = false;
+            let inputRight = false;
+            let inputCenter = false;
+            let inputActive = false;
+
+            function handleInput(dir) {
+                if (gameState === STATE.TELL || gameState === STATE.PLAYING) {
+                    initAudio();
+                    goalieTargetX = dir === 'left' ? zonePositions[0] - 15 : dir === 'right' ? zonePositions[4] + 15 :
+                        zonePositions[2];
+                    goalieDiving = true;
+                    goalieDiveDir = dir === 'left' ? -1 : dir === 'right' ? 1 : 0;
+                    inputActive = true;
+                }
+                if (gameState === STATE.MENU) {
+                    initAudio();
+                    startGame();
+                }
+                if (gameState === STATE.GAMEOVER && stateTimer > 1.5) {
+                    initAudio();
+                    restartGame();
+                }
+                if (gameState === STATE.SHOP) {
+                    // Shop handled via specific buttons
+                }
+            }
+
+            canvas.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
+                    e.preventDefault();
+                    handleInput('left');
+                } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
+                    e.preventDefault();
+                    handleInput('right');
+                } else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S' || e.key === ' ') {
+                    e.preventDefault();
+                    handleInput('center');
+                } else if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    if (gameState === STATE.MENU) handleInput('center');
+                    if (gameState === STATE.GAMEOVER && stateTimer > 1.5) handleInput('center');
+                }
+            });
+
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                initAudio();
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = VW / rect.width;
+                const scaleY = VH / rect.height;
+                const tx = (e.touches[0].clientX - rect.left) * scaleX;
+                const ty = (e.touches[0].clientY - rect.top) * scaleY;
+
+                if (gameState === STATE.SHOP) {
+                    handleShopTouch(tx, ty);
+                    return;
+                }
+                if (gameState === STATE.GAMEOVER && stateTimer > 1.5) {
+                    restartGame();
+                    return;
+                }
+                if (gameState === STATE.MENU) {
+                    startGame();
+                    return;
+                }
+
+                const third = VW / 3;
+                if (tx < third) handleInput('left');
+                else if (tx > third * 2) handleInput('right');
+                else handleInput('center');
+            });
+
+            canvas.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                initAudio();
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = VW / rect.width;
+                const scaleY = VH / rect.height;
+                const mx = (e.clientX - rect.left) * scaleX;
+                const my = (e.clientY - rect.top) * scaleY;
+
+                if (gameState === STATE.SHOP) {
+                    handleShopTouch(mx, my);
+                    return;
+                }
+                if (gameState === STATE.GAMEOVER && stateTimer > 1.5) {
+                    restartGame();
+                    return;
+                }
+                if (gameState === STATE.MENU) {
+                    startGame();
+                    return;
+                }
+
+                const third = VW / 3;
+                if (mx < third) handleInput('left');
+                else if (mx > third * 2) handleInput('right');
+                else handleInput('center');
+            });
+
+            function handleShopTouch(tx, ty) {
+                // Shop buttons are drawn at specific Y positions
+                const upgradeKeys = Object.keys(upgrades);
+                for (let i = 0; i < upgradeKeys.length; i++) {
+                    const btnY = 200 + i * 85;
+                    const btnX = VW / 2;
+                    const btnW = 340;
+                    const btnH = 70;
+                    if (tx > btnX - btnW / 2 && tx < btnX + btnW / 2 && ty > btnY - btnH / 2 && ty < btnY + btnH / 2) {
+                        buyUpgrade(upgradeKeys[i]);
+                        return;
+                    }
+                }
+                // Continue button
+                const contY = 200 + upgradeKeys.length * 85 + 40;
+                if (tx > VW / 2 - 120 && tx < VW / 2 + 120 && ty > contY - 30 && ty < contY + 30) {
+                    continueToNextRound();
+                }
+            }
+
+            function buyUpgrade(key) {
+                const upg = upgrades[key];
+                if (upg.level >= upg.max) return;
+                const cost = getUpgradeCost(upg);
+                if (money >= cost) {
+                    money -= cost;
+                    upg.level++;
+                    playCash();
+                    if (key === 'extraHeart') {
+                        maxHearts = 3 + upg.level;
+                        hearts = Math.min(hearts + 1, maxHearts);
+                    }
+                } else {
+                    playBeep(200, 0.2, 'sawtooth', 0.05);
+                }
+            }
+
+            function continueToNextRound() {
+                playClick();
+                roundNumber++;
+                difficultyLevel = Math.floor((roundNumber - 1) / 3) + 1;
+                roundShots = 0;
+                hearts = Math.min(hearts + 1, maxHearts);
+                comboCount = 0;
+                gameState = STATE.PLAYING;
+                stateTimer = 0;
+                startShotCycle();
+            }
+
+            function startGame() {
+                money = 50;
+                hearts = 3;
+                maxHearts = 3;
+                roundNumber = 1;
+                difficultyLevel = 1;
+                roundShots = 0;
+                comboCount = 0;
+                bestCombo = 0;
+                totalSaves = 0;
+                totalGoals = 0;
+                for (const key in upgrades) upgrades[key].level = 0;
+                particles = [];
+                screenShake = 0;
+                goalieX = VW / 2;
+                goalieTargetX = VW / 2;
+                goalieDiving = false;
+                ballFlying = false;
+                gameState = STATE.PLAYING;
+                stateTimer = 0;
+                startShotCycle();
+            }
+
+            function restartGame() {
+                startGame();
+            }
+
+            function startShotCycle() {
+                goalieX = VW / 2;
+                goalieTargetX = VW / 2;
+                goalieDiving = false;
+                goalieDiveDir = 0;
+                inputActive = false;
+                ballFlying = false;
+                ballX = VW / 2;
+                ballY = 590;
+                strikerLean = 0;
+                tellActive = false;
+                shotDelay = 1.2 + Math.random() * 0.5;
+                tellTimer = 0;
+                ballTargetZone = Math.floor(Math.random() * 5);
+                // Weight corners more at higher difficulty
+                if (difficultyLevel >= 3 && Math.random() < 0.35) {
+                    ballTargetZone = Math.random() < 0.5 ? 0 : 4;
+                } else if (difficultyLevel >= 2 && Math.random() < 0.25) {
+                    ballTargetZone = Math.random() < 0.5 ? 0 : 4;
+                }
+                ballTargetX = zonePositions[ballTargetZone];
+                ballTargetY = 270 + Math.random() * 50;
+                tellDuration = getTellDuration();
+                gameState = STATE.PLAYING;
+                stateTimer = 0;
+            }
+
+            function triggerTell() {
+                tellActive = true;
+                tellTimer = tellDuration;
+                strikerLean = ballTargetZone <= 1 ? -1 : ballTargetZone >= 3 ? 1 : 0;
+                gameState = STATE.TELL;
+                stateTimer = 0;
+            }
+
+            function triggerShot() {
+                tellActive = false;
+                ballFlying = true;
+                ballProgress = 0;
+                const dist = Math.hypot(ballTargetX - ballX, ballTargetY - ballY);
+                ballSpeed = dist / (0.28 - difficultyLevel * 0.015);
+                ballSpeed = Math.max(ballSpeed, dist / 0.4);
+                gameState = STATE.SHOT;
+                stateTimer = 0;
+                playBeep(300, 0.06, 'square', 0.04);
+            }
+
+            function evaluateResult() {
+                ballFlying = false;
+                const coverageRadius = getCoverageRadius();
+                let goalieZonePosition;
+                if (goalieDiveDir === -1) goalieZonePosition = -1;
+                else if (goalieDiveDir === 1) goalieZonePosition = 1;
+                else goalieZonePosition = 0;
+
+                const ballNormPos = ballTargetZone - 2; // -2 to +2
+                const dist = Math.abs(ballNormPos - goalieZonePosition);
+                const saved = dist <= coverageRadius;
+
+                if (saved) {
+                    // Save!
+                    comboCount++;
+                    if (comboCount > bestCombo) bestCombo = comboCount;
+                    totalSaves++;
+                    const baseEarn = 15;
+                    const comboBonus = Math.min(comboCount - 1, 5) * 10;
+                    const earned = baseEarn + comboBonus;
+                    money += earned;
+                    spawnParticles(ballTargetX, ballTargetY, 25, 'rgb(255, 215, 0)', 5);
+                    spawnParticles(ballTargetX, ballTargetY, 15, 'rgb(255, 255, 200)', 3);
+                    playSave();
+                    if (comboCount >= 3) playCash();
+                } else {
+                    // Goal conceded
+                    comboCount = 0;
+                    totalGoals++;
+                    hearts--;
+                    screenShake = 1.5;
+                    spawnParticles(ballTargetX, ballTargetY, 30, 'rgb(255, 60, 40)', 6);
+                    playGoal();
+                }
+
+                gameState = STATE.RESULT;
+                stateTimer = 0;
+                roundShots++;
+            }
+
+            function endRoundCheck() {
+                if (hearts <= 0) {
+                    gameState = STATE.GAMEOVER;
+                    stateTimer = 0;
+                    playBeep(60, 0.8, 'sawtooth', 0.1);
+                    return;
+                }
+                if (roundShots >= maxShotsPerRound) {
+                    gameState = STATE.SHOP;
+                    stateTimer = 0;
+                    playWhistle();
+                    return;
+                }
+                startShotCycle();
+            }
+
+            // Main update
+            function update(dt) {
+                if (dt > 0.1) dt = 0.1;
+                stateTimer += dt;
+                updateParticles(dt);
+
+                // Update goalie position
+                if (goalieDiving) {
+                    const dx = goalieTargetX - goalieX;
+                    const speed = getDiveSpeed() * 60;
+                    if (Math.abs(dx) < speed * dt) {
+                        goalieX = goalieTargetX;
+                        if (gameState === STATE.RESULT || gameState === STATE.SHOT && ballProgress > 0.7) {
+                            // Hold position
+                        }
+                    } else {
+                        goalieX += Math.sign(dx) * speed * dt;
+                    }
+                } else if (!ballFlying && gameState === STATE.PLAYING) {
+                    // Return to center
+                    const dx = VW / 2 - goalieX;
+                    const returnSpeed = 180;
+                    if (Math.abs(dx) < returnSpeed * dt) goalieX = VW / 2;
+                    else goalieX += Math.sign(dx) * returnSpeed * dt;
+                    goalieTargetX = VW / 2;
+                    goalieDiveDir = 0;
+                }
+
+                // Bob animation
+                goalieBob += dt * 4;
+                if (!goalieDiving && gameState === STATE.PLAYING) goalieBob += dt * 2;
+
+                // State machine
+                if (gameState === STATE.PLAYING) {
+                    if (stateTimer >= shotDelay && !tellActive && !ballFlying) {
+                        triggerTell();
+                    }
+                }
+
+                if (gameState === STATE.TELL) {
+                    if (stateTimer * 1000 >= tellDuration) {
+                        triggerShot();
+                    }
+                }
+
+                if (gameState === STATE.SHOT) {
+                    ballProgress += ballSpeed * dt / Math.hypot(ballTargetX - VW / 2, ballTargetY - 590);
+                    if (ballProgress >= 1) {
+                        ballProgress = 1;
+                        ballX = ballTargetX;
+                        ballY = ballTargetY;
+                        evaluateResult();
+                    } else {
+                        const sx = VW / 2 + (strikerLean * 25);
+                        const sy = 590;
+                        ballX = sx + (ballTargetX - sx) * ballProgress;
+                        ballY = sy + (ballTargetY - sy) * ballProgress;
+                        // Slight curve
+                        const curveOffset = Math.sin(ballProgress * Math.PI) * (strikerLean * 30 + (ballTargetZone - 2) * 18);
+                        ballX += curveOffset * (1 - Math.abs(ballProgress - 0.5) * 2);
+                    }
+                }
+
+                if (gameState === STATE.RESULT) {
+                    if (stateTimer > 1.2) {
+                        endRoundCheck();
+                    }
+                    // Return goalie slowly
+                    if (stateTimer > 0.4 && goalieDiving) {
+                        goalieTargetX = VW / 2;
+                        goalieDiveDir = 0;
+                    }
+                }
+
+                if (gameState === STATE.GAMEOVER) {
+                    if (stateTimer > 0.3 && goalieDiving) {
+                        goalieTargetX = VW / 2;
+                        goalieDiveDir = 0;
+                    }
+                }
+
+                if (gameState === STATE.SHOP) {
+                    if (goalieDiving) {
+                        goalieTargetX = VW / 2;
+                        goalieDiveDir = 0;
+                    }
+                }
+            }
+
+            // Rendering
+            function drawSky() {
+                const grad = ctx.createLinearGradient(0, 0, 0, VH);
+                grad.addColorStop(0, '#1a3a5c');
+                grad.addColorStop(0.5, '#2c5f8a');
+                grad.addColorStop(0.75, '#4a8ab5');
+                grad.addColorStop(1, '#7ab8d4');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, VW, VH);
+            }
+
+            function drawStadium() {
+                // Crowd silhouettes
+                ctx.fillStyle = '#1a1a2e';
+                ctx.fillRect(0, 0, VW, 40);
+                for (let i = 0; i < 40; i++) {
+                    const cx = i * 11 + Math.sin(i * 1.7 + stateTimer) * 4;
+                    const cy = 10 + Math.abs(Math.cos(i * 2.1 + stateTimer)) * 8;
+                    ctx.fillStyle = '#2a2a3e';
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 7, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#333355';
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 4.5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function drawGrass() {
+                const grassGrad = ctx.createLinearGradient(0, 350, 0, VH);
+                grassGrad.addColorStop(0, '#4a8c3f');
+                grassGrad.addColorStop(0.5, '#3d7235');
+                grassGrad.addColorStop(1, '#2d5a28');
+                ctx.fillStyle = grassGrad;
+                ctx.fillRect(0, 340, VW, VH - 340);
+
+                // Grass texture lines
+                ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+                ctx.lineWidth = 1;
+                for (let i = 0; i < 30; i++) {
+                    const gx = i * 15 + Math.sin(i * 3.7) * 8;
+                    ctx.beginPath();
+                    ctx.moveTo(gx, 350);
+                    ctx.lineTo(gx + Math.cos(i * 2.3) * 5, VH);
+                    ctx.stroke();
+                }
+
+                // Penalty area markings
+                ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([8, 4]);
+                ctx.beginPath();
+                ctx.arc(VW / 2, 500, 80, 0, Math.PI, false);
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // Penalty spot
+                ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                ctx.beginPath();
+                ctx.arc(VW / 2, 590, 4, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            function drawGoalPosts() {
+                const goalLeft = VW * 0.1;
+                const goalRight = VW * 0.9;
+                const goalTop = 120;
+                const goalBottom = 340;
+
+                // Net
+                ctx.fillStyle = 'rgba(200,200,210,0.2)';
+                ctx.fillRect(goalLeft, goalTop, goalRight - goalLeft, goalBottom - goalTop);
+
+                // Net grid
+                ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+                ctx.lineWidth = 0.8;
+                for (let y = goalTop; y <= goalBottom; y += 16) {
+                    ctx.beginPath();
+                    ctx.moveTo(goalLeft, y);
+                    ctx.lineTo(goalRight, y);
+                    ctx.stroke();
+                }
+                for (let x = goalLeft; x <= goalRight; x += 18) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, goalTop);
+                    ctx.lineTo(x, goalBottom);
+                    ctx.stroke();
+                }
+
+                // Posts
+                const postWidth = 6;
+                ctx.fillStyle = '#f8f8f8';
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.shadowBlur = 8;
+                ctx.fillRect(goalLeft - postWidth / 2, goalTop - 8, postWidth, goalBottom - goalTop + 16);
+                ctx.fillRect(goalRight - postWidth / 2, goalTop - 8, postWidth, goalBottom - goalTop + 16);
+                ctx.fillRect(goalLeft - postWidth / 2, goalTop - 8, goalRight - goalLeft + postWidth, postWidth);
+                ctx.shadowBlur = 0;
+
+                // Post highlights
+                ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                ctx.fillRect(goalLeft - 1, goalTop - 5, 2, goalBottom - goalTop + 10);
+                ctx.fillRect(goalRight - 1, goalTop - 5, 2, goalBottom - goalTop + 10);
+            }
+
+            function drawGoalie() {
+                const gx = goalieX;
+                const gy = goalieY + Math.sin(goalieBob) * 3;
+                const diveOffset = goalieDiving ? (goalieTargetX - VW / 2) * 0.7 : 0;
+
+                ctx.save();
+                ctx.translate(gx, gy);
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.35)';
+                ctx.beginPath();
+                ctx.ellipse(0, 38, 22, 6, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body (jersey)
+                const bodyLean = goalieDiving ? goalieDiveDir * 0.4 : 0;
+                ctx.save();
+                ctx.rotate(bodyLean);
+                const jerseyGrad = ctx.createLinearGradient(0, -20, 0, 30);
+                jerseyGrad.addColorStop(0, '#ff6b35');
+                jerseyGrad.addColorStop(0.5, '#ff8c42');
+                jerseyGrad.addColorStop(1, '#e85520');
+                ctx.fillStyle = jerseyGrad;
+                ctx.beginPath();
+                ctx.roundRect(-14, -18, 28, 38, 6);
+                ctx.fill();
+
+                // Jersey stripe
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(-3, -16, 6, 34);
+
+                // Arms
+                ctx.fillStyle = '#ff7b45';
+                ctx.beginPath();
+                ctx.roundRect(-20, -12, 10, 22, 4);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.roundRect(10, -12, 10, 22, 4);
+                ctx.fill();
+
+                // Gloves (bigger with upgrade)
+                const gloveSize = 8 + upgrades.gloveSize.level * 2.5;
+                ctx.fillStyle = '#222';
+                ctx.beginPath();
+                ctx.arc(-15, -2, gloveSize, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#333';
+                ctx.beginPath();
+                ctx.arc(-15, -2, gloveSize * 0.7, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#222';
+                ctx.beginPath();
+                ctx.arc(15, -2, gloveSize, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#333';
+                ctx.beginPath();
+                ctx.arc(15, -2, gloveSize * 0.7, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Shorts
+                ctx.fillStyle = '#1a1a3a';
+                ctx.beginPath();
+                ctx.roundRect(-12, 16, 24, 14, 3);
+                ctx.fill();
+
+                // Legs
+                ctx.fillStyle = '#f5d5b8';
+                ctx.fillRect(-7, 28, 6, 16);
+                ctx.fillRect(1, 28, 6, 16);
+
+                // Socks
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(-7, 36, 6, 10);
+                ctx.fillRect(1, 36, 6, 10);
+
+                // Boots
+                ctx.fillStyle = '#111';
+                ctx.beginPath();
+                ctx.roundRect(-9, 42, 10, 6, 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.roundRect(-1, 42, 10, 6, 2);
+                ctx.fill();
+
+                // Head
+                ctx.fillStyle = '#f5d5b8';
+                ctx.beginPath();
+                ctx.arc(0, -24, 11, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Hair
+                ctx.fillStyle = '#2a1a0a';
+                ctx.beginPath();
+                ctx.arc(0, -26, 11.5, Math.PI, Math.PI * 2);
+                ctx.fill();
+
+                // Cap
+                ctx.fillStyle = '#ff4444';
+                ctx.beginPath();
+                ctx.arc(0, -28, 12, Math.PI * 1.1, Math.PI * 1.9);
+                ctx.fill();
+                ctx.fillRect(-12, -30, 24, 5);
+
+                // Eyes
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(-4, -25, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.arc(4, -25, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#111';
+                ctx.beginPath();
+                ctx.arc(-4, -25, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.arc(4, -25, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.restore();
+                ctx.restore();
+            }
+
+            function drawStriker() {
+                const sx = VW / 2 + strikerLean * 20;
+                const sy = 570;
+                const leanAngle = strikerLean * 0.25;
+
+                ctx.save();
+                ctx.translate(sx, sy);
+                ctx.rotate(leanAngle);
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.beginPath();
+                ctx.ellipse(0, 30, 16, 4, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body
+                const bodyGrad = ctx.createLinearGradient(0, -15, 0, 20);
+                bodyGrad.addColorStop(0, '#2255cc');
+                bodyGrad.addColorStop(1, '#1a3d99');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.roundRect(-11, -12, 22, 30, 4);
+                ctx.fill();
+
+                // Number
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 10px system-ui';
+                ctx.textAlign = 'center';
+                ctx.fillText('9', 0, 3);
+
+                // Arms
+                ctx.fillStyle = '#2255cc';
+                ctx.beginPath();
+                ctx.roundRect(-17, -8, 8, 18, 3);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.roundRect(9, -8, 8, 18, 3);
+                ctx.fill();
+
+                // Shorts
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.roundRect(-10, 14, 20, 12, 2);
+                ctx.fill();
+
+                // Legs
+                ctx.fillStyle = '#f5d5b8';
+                ctx.fillRect(-5, 22, 5, 14);
+                ctx.fillRect(1, 22, 5, 14);
+
+                // Boots
+                ctx.fillStyle = '#222';
+                ctx.beginPath();
+                ctx.roundRect(-7, 32, 9, 5, 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.roundRect(-1, 32, 9, 5, 2);
+                ctx.fill();
+
+                // Head
+                ctx.fillStyle = '#f5d5b8';
+                ctx.beginPath();
+                ctx.arc(0, -18, 9, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Hair
+                ctx.fillStyle = '#1a0a00';
+                ctx.beginPath();
+                ctx.arc(0, -19, 9.5, Math.PI, Math.PI * 2);
+                ctx.fill();
+
+                // Eyes (looking toward target)
+                const eyeLookX = strikerLean * 3;
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(-3 + eyeLookX, -19, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.arc(3 + eyeLookX, -19, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#111';
+                ctx.beginPath();
+                ctx.arc(-3 + eyeLookX * 1.3, -19, 1.2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.arc(3 + eyeLookX * 1.3, -19, 1.2, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.restore();
+
+                // Ball at feet
+                if (!ballFlying && gameState !== STATE.SHOT && gameState !== STATE.RESULT) {
+                    drawBall(VW / 2 + strikerLean * 8, sy + 26);
+                }
+            }
+
+            function drawBall(bx, by) {
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.35)';
+                ctx.beginPath();
+                ctx.ellipse(bx, by + 3, 8, 3, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Ball
+                const ballGrad = ctx.createRadialGradient(bx - 2, by - 2, 1, bx, by, 9);
+                ballGrad.addColorStop(0, '#fff');
+                ballGrad.addColorStop(0.6, '#eee');
+                ballGrad.addColorStop(1, '#bbb');
+                ctx.fillStyle = ballGrad;
+                ctx.beginPath();
+                ctx.arc(bx, by, 8, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Pentagon pattern
+                ctx.fillStyle = '#1a1a1a';
+                ctx.beginPath();
+                const sides = 5;
+                for (let i = 0; i < sides; i++) {
+                    const angle = (i / sides) * Math.PI * 2 - Math.PI / 2;
+                    const px = bx + Math.cos(angle) * 4;
+                    const py = by + Math.sin(angle) * 4;
+                    if (i === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                }
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            function drawFlyingBall() {
+                if (ballFlying || gameState === STATE.RESULT) {
+                    drawBall(ballX, ballY);
+                    // Trail
+                    if (ballFlying) {
+                        ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                        for (let t = 0; t < 5; t++) {
+                            const trailX = ballX - (ballX - (VW / 2 + strikerLean * 25)) * t * 0.06;
+                            const trailY = ballY - (ballY - 590) * t * 0.06;
+                            ctx.beginPath();
+                            ctx.arc(trailX, trailY, 3 - t * 0.5, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                    }
+                }
+            }
+
+            function drawTellIndicator() {
+                if (tellActive && gameState === STATE.TELL) {
+                    const alpha = Math.min(1, stateTimer * 1000 / 150);
+                    const pulse = 0.6 + Math.sin(stateTimer * 20) * 0.4;
+                    const tx = zonePositions[ballTargetZone];
+                    const ty = 310;
+
+                    // Subtle glow on target zone
+                    const glowGrad = ctx.createRadialGradient(tx, ty, 5, tx, ty, 45);
+                    glowGrad.addColorStop(0, `rgba(255,200,100,${0.5 * alpha * pulse})`);
+                    glowGrad.addColorStop(1, 'rgba(255,200,100,0)');
+                    ctx.fillStyle = glowGrad;
+                    ctx.beginPath();
+                    ctx.arc(tx, ty, 45, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Small dot
+                    ctx.fillStyle = `rgba(255,220,150,${0.8 * alpha * pulse})`;
+                    ctx.beginPath();
+                    ctx.arc(tx, ty, 5 + pulse * 3, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function drawTopBar() {
+                // Background panel
+                const panelGrad = ctx.createLinearGradient(0, 0, 0, 70);
+                panelGrad.addColorStop(0, 'rgba(0,0,0,0.8)');
+                panelGrad.addColorStop(1, 'rgba(0,0,0,0.3)');
+                ctx.fillStyle = panelGrad;
+                ctx.fillRect(0, 0, VW, 65);
+
+                // Money
+                ctx.fillStyle = '#ffd700';
+                ctx.font = 'bold 18px system-ui';
+                ctx.textAlign = 'left';
+                ctx.fillText(`💰 $${money}`, 15, 30);
+
+                // Hearts
+                ctx.textAlign = 'center';
+                let heartStr = '';
+                for (let i = 0; i < maxHearts; i++) {
+                    heartStr += i < hearts ? '❤️' : '🖤';
+                }
+                ctx.fillText(heartStr, VW / 2, 30);
+
+                // Round
+                ctx.textAlign = 'right';
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 14px system-ui';
+                ctx.fillText(`Round ${roundNumber} | ${roundShots}/${maxShotsPerRound}`, VW - 15, 30);
+
+                // Combo
+                if (comboCount >= 2) {
+                    ctx.fillStyle = '#ff8c00';
+                    ctx.font = 'bold 12px system-ui';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`🔥 ${comboCount}x COMBO!`, VW / 2, 50);
+                }
+            }
+
+            function drawInputHints() {
+                if (gameState === STATE.TELL || gameState === STATE.PLAYING && stateTimer > 0.3) {
+                    const alpha = 0.35 + Math.sin(stateTimer * 3) * 0.15;
+                    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+                    ctx.font = '13px system-ui';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('← DIVE LEFT', VW * 0.2, VH - 40);
+                    ctx.fillText('STAY CENTER', VW * 0.5, VH - 40);
+                    ctx.fillText('DIVE RIGHT →', VW * 0.8, VH - 40);
+
+                    // Subtle zone lines
+                    ctx.strokeStyle = `rgba(255,255,255,${alpha * 0.5})`;
+                    ctx.setLineDash([4, 8]);
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(VW * 0.35, VH - 60);
+                    ctx.lineTo(VW * 0.35, VH - 20);
+                    ctx.moveTo(VW * 0.65, VH - 60);
+                    ctx.lineTo(VW * 0.65, VH - 20);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+            }
+
+            function drawShop() {
+                // Overlay
+                ctx.fillStyle = 'rgba(0,0,0,0.75)';
+                ctx.fillRect(0, 0, VW, VH);
+
+                // Title
+                ctx.fillStyle = '#ffd700';
+                ctx.font = 'bold 28px system-ui';
+                ctx.textAlign = 'center';
+                ctx.fillText('🛒 UPGRADE SHOP', VW / 2, 80);
+
+                ctx.fillStyle = '#fff';
+                ctx.font = '16px system-ui';
+                ctx.fillText(`Money: $${money} | Round ${roundNumber} Complete!`, VW / 2, 115);
+
+                const upgradeKeys = Object.keys(upgrades);
+                for (let i = 0; i < upgradeKeys.length; i++) {
+                    const key = upgradeKeys[i];
+                    const upg = upgrades[key];
+                    const btnY = 200 + i * 85;
+                    const btnX = VW / 2;
+                    const btnW = 340;
+                    const btnH = 70;
+                    const cost = getUpgradeCost(upg);
+                    const maxed = upg.level >= upg.max;
+                    const canAfford = money >= cost && !maxed;
+
+                    // Button background
+                    const btnGrad = ctx.createLinearGradient(btnX - btnW / 2, btnY, btnX + btnW / 2, btnY);
+                    if (maxed) {
+                        btnGrad.addColorStop(0, '#333');
+                        btnGrad.addColorStop(1, '#444');
+                    } else if (canAfford) {
+                        btnGrad.addColorStop(0, '#2a6e3f');
+                        btnGrad.addColorStop(1, '#1d5a2e');
+                    } else {
+                        btnGrad.addColorStop(0, '#553333');
+                        btnGrad.addColorStop(1, '#3a2222');
+                    }
+                    ctx.fillStyle = btnGrad;
+                    ctx.beginPath();
+                    ctx.roundRect(btnX - btnW / 2, btnY - btnH / 2, btnW, btnH, 12);
+                    ctx.fill();
+
+                    // Border
+                    ctx.strokeStyle = canAfford ? '#ffd700' : '#666';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.roundRect(btnX - btnW / 2, btnY - btnH / 2, btnW, btnH, 12);
+                    ctx.stroke();
+
+                    // Info
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 16px system-ui';
+                    ctx.textAlign = 'left';
+                    ctx.fillText(`${upg.icon} ${upg.name}`, btnX - btnW / 2 + 20, btnY - 8);
+
+                    const levelDots = '●'.repeat(upg.level) + '○'.repeat(upg.max - upg.level);
+                    ctx.fillText(levelDots, btnX - btnW / 2 + 20, btnY + 18);
+
+                    ctx.textAlign = 'right';
+                    if (maxed) {
+                        ctx.fillStyle = '#aaa';
+                        ctx.fillText('MAXED', btnX + btnW / 2 - 20, btnY + 5);
+                    } else {
+                        ctx.fillStyle = canAfford ? '#ffd700' : '#ff6666';
+                        ctx.fillText(`$${cost}`, btnX + btnW / 2 - 20, btnY + 5);
+                    }
+                }
+
+                // Continue button
+                const contY = 200 + upgradeKeys.length * 85 + 40;
+                const contGrad = ctx.createLinearGradient(VW / 2 - 120, contY, VW / 2 + 120, contY);
+                contGrad.addColorStop(0, '#ff8c00');
+                contGrad.addColorStop(1, '#ff6600');
+                ctx.fillStyle = contGrad;
+                ctx.beginPath();
+                ctx.roundRect(VW / 2 - 120, contY - 30, 240, 60, 16);
+                ctx.fill();
+                ctx.strokeStyle = '#ffd700';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.roundRect(VW / 2 - 120, contY - 30, 240, 60, 16);
+                ctx.stroke();
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 20px system-ui';
+                ctx.textAlign = 'center';
+                ctx.fillText('CONTINUE ▶', VW / 2, contY + 8);
+
+                // Tip
+                ctx.fillStyle = '#aaa';
+                ctx.font = '12px system-ui';
+                ctx.fillText('Tap upgrades to buy, then Continue', VW / 2, contY + 50);
+            }
+
+            function drawMenu() {
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, VW, VH);
+
+                const titleY = 200;
+                ctx.fillStyle = '#ffd700';
+                ctx.font = 'bold 36px system-ui';
+                ctx.textAlign = 'center';
+                ctx.fillText('⚽ PENALTY', VW / 2, titleY);
+                ctx.fillText('TYCOON', VW / 2, titleY + 45);
+
+                ctx.fillStyle = '#fff';
+                ctx.font = '18px system-ui';
+                ctx.fillText('YOU are the Goalie!', VW / 2, titleY + 75);
+
+                // Animated goalie preview
+                const previewY = 340;
+                const tempGoalieX = VW / 2;
+                const tempGoalieY = previewY;
+                ctx.save();
+                ctx.translate(tempGoalieX, tempGoalieY);
+                const jerseyGrad = ctx.createLinearGradient(0, -20, 0, 30);
+                jerseyGrad.addColorStop(0, '#ff6b35');
+                jerseyGrad.addColorStop(1, '#e85520');
+                ctx.fillStyle = jerseyGrad;
+                ctx.beginPath();
+                ctx.roundRect(-14, -18, 28, 38, 6);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(-3, -16, 6, 34);
+                ctx.fillStyle = '#222';
+                ctx.beginPath();
+                ctx.arc(-15, -2, 8, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(15, -2, 8, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#f5d5b8';
+                ctx.beginPath();
+                ctx.arc(0, -24, 11, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#ff4444';
+                ctx.beginPath();
+                ctx.arc(0, -28, 12, Math.PI * 1.1, Math.PI * 1.9);
+                ctx.fill();
+                ctx.restore();
+
+                // Instruction
+                const pulseAlpha = 0.6 + Math.sin(Date.now() / 800) * 0.4;
+                ctx.fillStyle = `rgba(255,255,255,${pulseAlpha})`;
+                ctx.font = 'bold 20px system-ui';
+                ctx.textAlign = 'center';
+                ctx.fillText('TAP TO START', VW / 2, 440);
+
+                ctx.fillStyle = '#ccc';
+                ctx.font = '14px system-ui';
+                ctx.fillText('Read the striker & dive to save!', VW / 2, 475);
+                ctx.fillText('🖱 Click/Tap | ⌨ Arrow Keys', VW / 2, 500);
+            }
+
+            function drawGameOver() {
+                ctx.fillStyle = 'rgba(0,0,0,0.75)';
+                ctx.fillRect(0, 0, VW, VH);
+
+                const goY = 200;
+                ctx.fillStyle = '#ff4444';
+                ctx.font = 'bold 36px system-ui';
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER', VW / 2, goY);
+
+                ctx.fillStyle = '#fff';
+                ctx.font = '18px system-ui';
+                ctx.fillText(`Reached Round ${roundNumber}`, VW / 2, goY + 45);
+                ctx.fillText(`Total Saves: ${totalSaves} | Goals: ${totalGoals}`, VW / 2, goY + 75);
+                ctx.fillText(`Best Combo: ${bestCombo}x | Money: $${money}`, VW / 2, goY + 105);
+
+                if (stateTimer > 1.5) {
+                    const pulseAlpha = 0.5 + Math.sin(Date.now() / 700) * 0.5;
+                    ctx.fillStyle = `rgba(255,215,0,${pulseAlpha})`;
+                    ctx.font = 'bold 22px system-ui';
+                    ctx.fillText('TAP TO RETRY', VW / 2, goY + 160);
+                }
+            }
+
+            function drawResultText() {
+                if (gameState === STATE.RESULT && stateTimer < 1.2) {
+                    const alpha = Math.min(1, stateTimer * 3);
+                    const yOffset = -stateTimer * 40;
+                    const saved = hearts >= 0 && (ballTargetZone === 2 || Math.abs(ballTargetZone - 2) <=
+                        getCoverageRadius());
+                    // Check if it was actually saved based on combo
+                    const wasSaved = comboCount > 0 || (stateTimer < 0.1 && comboCount === 0 && roundShots > 0 &&
+                        totalSaves > (roundNumber - 1) * maxShotsPerRound - totalGoals);
+
+                    // Simpler: check if particles are gold
+                    const hasGoldParticles = particles.some(p => p.color.includes('255, 215, 0') || p.color.includes(
+                        '255, 255, 200'));
+
+                    if (hasGoldParticles || (gameState === STATE.RESULT && stateTimer < 0.05 && comboCount > 0) ||
+                        (comboCount > 0 && stateTimer < 1)) {
+                        ctx.fillStyle = `rgba(255,215,0,${alpha})`;
+                        ctx.font = 'bold 32px system-ui';
+                        ctx.textAlign = 'center';
+                        const text = comboCount >= 3 ? '🔥 SAVED!' : 'SAVED!';
+                        ctx.fillText(text, VW / 2, 200 + yOffset);
+                        if (comboCount >= 2) {
+                            ctx.fillStyle = `rgba(255,180,50,${alpha * 0.8})`;
+                            ctx.font = 'bold 16px system-ui';
+                            ctx.fillText(`${comboCount}x COMBO!`, VW / 2, 230 + yOffset);
+                        }
+                    } else if (stateTimer > 0.05) {
+                        ctx.fillStyle = `rgba(255,60,40,${alpha})`;
+                        ctx.font = 'bold 32px system-ui';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('GOAL!', VW / 2, 200 + yOffset);
+                    }
+                }
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, VW, VH);
+
+                // Screen shake
+                let shakeX = 0;
+                let shakeY = 0;
+                if (screenShake > 0) {
+                    shakeX = (Math.random() - 0.5) * screenShake * 12;
+                    shakeY = (Math.random() - 0.5) * screenShake * 10;
+                }
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                drawSky();
+                drawStadium();
+                drawGrass();
+                drawGoalPosts();
+                drawTellIndicator();
+                drawGoalie();
+                drawStriker();
+                drawFlyingBall();
+                drawParticles(ctx);
+                drawTopBar();
+                drawInputHints();
+                drawResultText();
+
+                ctx.restore();
+
+                // Overlays (not affected by shake)
+                if (gameState === STATE.MENU) drawMenu();
+                if (gameState === STATE.SHOP) drawShop();
+                if (gameState === STATE.GAMEOVER) drawGameOver();
+            }
+
+            // Game loop
+            let lastTime = performance.now();
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.15) dt = 0.15;
+                lastTime = timestamp;
+
+                update(dt);
+                render();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // Handle resize
+            function resize() {
+                const container = document.getElementById('game-container');
+                const maxW = 460;
+                const maxH = window.innerHeight * 0.95;
+                const aspect = VW / VH;
+                let w, h;
+                if (maxW / maxH > aspect) {
+                    h = maxH;
+                    w = h * aspect;
+                } else {
+                    w = maxW;
+                    h = w / aspect;
+                }
+                container.style.width = w + 'px';
+                container.style.height = h + 'px';
+            }
+
+            window.addEventListener('resize', resize);
+            resize();
+
+            // Initialize
+            gameState = STATE.MENU;
+            stateTimer = 0;
+            goalieX = VW / 2;
+            goalieTargetX = VW / 2;
+
+            // Prevent scrolling on mobile
+            document.addEventListener('touchmove', function(e) {
+                if (e.target.closest('canvas')) e.preventDefault();
+            }, { passive: false });
+
+            // Start
+            requestAnimationFrame(gameLoop);
+            console.log('⚽ Penalty Tycoon - Goalie Edition ready!');
+            console.log('📱 Tap or use Arrow Keys to dive left/right/center');
+            console.log('💰 Save penalties to earn money for upgrades!');
+        })();
+    </script>
+</body>
+</html>
