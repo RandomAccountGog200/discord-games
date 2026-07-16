@@ -385,5 +385,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T05:18:13.582Z",
     "updatedAt": "2026-07-16T05:18:13.582Z"
+  },
+  {
+    "slug": "slop-blast",
+    "title": "Slop Blast",
+    "description": "slop",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T05:19:10.372Z",
+    "updatedAt": "2026-07-16T05:19:10.372Z"
   }
 ]
