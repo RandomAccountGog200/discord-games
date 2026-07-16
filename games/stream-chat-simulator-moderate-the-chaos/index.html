@@ -1,0 +1,1423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stream Chat Simulator - Moderate the Chaos!</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0a0f;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            cursor: default;
+        }
+        canvas {
+            border-radius: 12px;
+            box-shadow: 0 0 60px rgba(100, 60, 255, 0.3), 0 0 120px rgba(60, 100, 255, 0.15);
+            max-width: 100vw;
+            max-height: 100vh;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            const LOGICAL_WIDTH = 960;
+            const LOGICAL_HEIGHT = 540;
+            const CHAT_WIDTH = 330;
+            const STREAM_WIDTH = LOGICAL_WIDTH - CHAT_WIDTH;
+            const CHAT_PANEL_X = STREAM_WIDTH;
+            const CHAT_PADDING = 16;
+            const MESSAGE_WIDTH = CHAT_WIDTH - CHAT_PADDING * 2;
+            const MESSAGE_HEIGHT = 52;
+            const CHAT_HEADER_HEIGHT = 40;
+            const CHAT_TOP = CHAT_HEADER_HEIGHT + 8;
+            const CHAT_BOTTOM = LOGICAL_HEIGHT - 10;
+            const CHAT_VISIBLE_HEIGHT = CHAT_BOTTOM - CHAT_TOP;
+            const MESSAGE_SCROLL_SPEED = 28;
+            const GAME_DURATION = 90;
+
+            let canvasScale = 1;
+            let canvasOffsetX = 0;
+            let canvasOffsetY = 0;
+
+            function resizeCanvas() {
+                const windowW = window.innerWidth;
+                const windowH = window.innerHeight;
+                const aspect = LOGICAL_WIDTH / LOGICAL_HEIGHT;
+                let w, h;
+                if (windowW / windowH > aspect) {
+                    h = Math.min(windowH * 0.94, LOGICAL_HEIGHT);
+                    w = h * aspect;
+                } else {
+                    w = Math.min(windowW * 0.96, LOGICAL_WIDTH);
+                    h = w / aspect;
+                }
+                canvas.style.width = w + 'px';
+                canvas.style.height = h + 'px';
+                canvas.width = LOGICAL_WIDTH;
+                canvas.height = LOGICAL_HEIGHT;
+                canvasScale = LOGICAL_WIDTH / w;
+                const rect = canvas.getBoundingClientRect();
+                canvasOffsetX = rect.left;
+                canvasOffsetY = rect.top;
+            }
+
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+
+            // --- AUDIO ---
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    try {
+                        audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                    } catch (e) {
+                        audioCtx = null;
+                    }
+                }
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            }
+
+            function playSound(freq, duration, type = 'sine', vol = 0.2, glideTo = null) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (glideTo) osc.frequency.linearRampToValueAtTime(glideTo, t + duration);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) { /* silent */ }
+            }
+
+            function sfxModerate() { playSound(800, 0.12, 'sine', 0.25);
+                playSound(1200, 0.08, 'sine', 0.2, 1400); }
+
+            function sfxToxicRemoved() { playSound(200, 0.2, 'square', 0.3);
+                playSound(600, 0.1, 'sine', 0.25, 900); }
+
+            function sfxDonation() {
+                playSound(523, 0.15, 'sine', 0.3);
+                playSound(659, 0.15, 'sine', 0.3);
+                playSound(784, 0.2, 'sine', 0.35);
+            }
+
+            function sfxMiss() { playSound(80, 0.35, 'sawtooth', 0.25, 50);
+                playSound(60, 0.3, 'triangle', 0.2); }
+
+            function sfxCombo() { playSound(1000, 0.1, 'sine', 0.3);
+                playSound(1400, 0.12, 'sine', 0.35, 1600); }
+
+            function sfxQuestion() { playSound(440, 0.12, 'triangle', 0.25);
+                playSound(660, 0.15, 'sine', 0.3, 880); }
+
+            function sfxStart() {
+                playSound(300, 0.2, 'sine', 0.3);
+                playSound(500, 0.2, 'sine', 0.3);
+                playSound(700, 0.3, 'sine', 0.35);
+            }
+
+            // --- GAME STATE ---
+            const STATE = {
+                IDLE: 'idle',
+                PLAYING: 'playing',
+                OVER: 'over'
+            };
+
+            let gameState = STATE.IDLE;
+            let score = 0;
+            let comboCount = 0;
+            let maxCombo = 0;
+            let streamHealth = 100;
+            let timeRemaining = GAME_DURATION;
+            let messagesModerated = 0;
+            let toxicMissed = 0;
+            let spamMissed = 0;
+            let questionsAnswered = 0;
+            let donationsCollected = 0;
+            let viewerCount = 120;
+            let spawnTimer = 0;
+            let spawnInterval = 1.8;
+            let gameTimer = 0;
+            let lastTime = 0;
+            let particles = [];
+            let floatingTexts = [];
+            let shakeAmount = 0;
+            let streamEventTimer = 0;
+            let streamEventActive = false;
+            let streamEventType = '';
+
+            // --- MESSAGES ---
+            let messages = [];
+            let messageIdCounter = 0;
+
+            const USERNAMES = [
+                'PixelPanda', 'ShadowWolf', 'LunaStar', 'CosmicDrift', 'NeonKnight',
+                'BlazeFury', 'AquaVibe', 'ThunderClaw', 'MysticOwl', 'FrostByte',
+                'EmberGlow', 'ZenMaster', 'TurboHawk', 'SilverFox', 'CrystalSky',
+                'DarkPhoenix', 'RainbowDash', 'StormChaser', 'GhostRider', 'IronHeart',
+                'xX_ProGamer_Xx', 'ChillVibes42', 'NightOwl99', 'SavageUnicorn',
+                'PixelWarrior', 'DreamWeaver', 'CosmicCat', 'BlazeRunner'
+            ];
+
+            const NORMAL_MSGS = [
+                'Great stream!', 'Love this game!', 'First time here, this is awesome!',
+                'GG!', 'Nice play!', 'Keep it up!', 'So entertaining!', 'W stream!',
+                'You\'re the best!', 'Can\'t stop watching!', 'Let\'s gooo!', 'Pog!',
+                'This is fire!', 'Amazing content!', 'Best streamer!', 'Hype!',
+                'Love the vibes!', 'So good!', 'Clutch!', 'Respect!'
+            ];
+
+            const TOXIC_MSGS = [
+                'You\'re trash', 'Worst stream ever', 'Uninstall the game',
+                'So boring...', 'My grandma plays better', 'L stream',
+                'Delete your channel', 'How are you this bad?', 'Cringe!',
+                'This is painful to watch', 'Zero skill', 'Quit streaming',
+                'Waste of time', 'Terrible gameplay', 'Yikes...'
+            ];
+
+            const SPAM_MSGS = [
+                'FREE FOLLOWERS CLICK HERE!', 'CHECK OUT MY CHANNEL!!!',
+                'BUY VIEWS NOW >>', '████ SALE ██████', '!!!!!CLICK MY PROFILE!!!!!',
+                '🚀🚀🚀 FREE SUBS 🚀🚀🚀', 'COPY THIS & SHARE!!!',
+                'BEST DEALS CLICK HERE', 'FOLLOW 4 FOLLOW??',
+                'CHEAP VIEWS AVAILABLE', '█████ SPAM █████'
+            ];
+
+            const QUESTION_MSGS = [
+                'What game is this?', 'How long have you been streaming?',
+                'What\'s your setup?', 'Can you play with viewers?',
+                'When\'s the next stream?', 'What rank are you?',
+                'Do you have a YouTube?', 'What mouse do you use?',
+                'How do you get so good?', 'Tips for beginners?'
+            ];
+
+            const DONATION_MSGS = [
+                'Donated $5! Keep it up! ❤️', 'Just subscribed for 6 months!',
+                'Here\'s 100 bits! 💎', 'Donated $10! Love the content!',
+                'Gifted 5 subs! 🎁', 'Cheers! Have a coffee ☕',
+                'Donated $25! You deserve it!', 'Tier 3 sub! Let\'s go! 🎉',
+                'Here\'s 500 bits! 💰', 'Just became a member! ⭐'
+            ];
+
+            function randomFrom(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+            function randomColor() {
+                const hues = [0, 30, 60, 120, 180, 210, 260, 300, 340];
+                const h = hues[Math.floor(Math.random() * hues.length)];
+                const s = 50 + Math.random() * 40;
+                const l = 40 + Math.random() * 30;
+                return `hsl(${h},${s}%,${l}%)`;
+            }
+
+            function spawnMessage() {
+                const roll = Math.random();
+                let type, text;
+                if (roll < 0.38) {
+                    type = 'normal';
+                    text = randomFrom(NORMAL_MSGS);
+                } else if (roll < 0.56) {
+                    type = 'toxic';
+                    text = randomFrom(TOXIC_MSGS);
+                } else if (roll < 0.72) {
+                    type = 'spam';
+                    text = randomFrom(SPAM_MSGS);
+                } else if (roll < 0.88) {
+                    type = 'question';
+                    text = randomFrom(QUESTION_MSGS);
+                } else {
+                    type = 'donation';
+                    text = randomFrom(DONATION_MSGS);
+                }
+
+                const msg = {
+                    id: messageIdCounter++,
+                    type: type,
+                    text: text,
+                    username: randomFrom(USERNAMES),
+                    avatarColor: randomColor(),
+                    y: CHAT_BOTTOM + 10,
+                    targetY: CHAT_BOTTOM - MESSAGE_HEIGHT / 2,
+                    active: true,
+                    pulsePhase: Math.random() * Math.PI * 2,
+                    opacity: 0,
+                };
+                messages.push(msg);
+            }
+
+            // --- PARTICLES ---
+            function spawnParticles(x, y, count, color, spread = 3) {
+                for (let i = 0; i < count; i++) {
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: (Math.random() - 0.5) * spread * 2,
+                        vy: (Math.random() - 1) * spread * 2,
+                        life: 0.5 + Math.random() * 0.7,
+                        maxLife: 0.5 + Math.random() * 0.7,
+                        color: color,
+                        size: 2 + Math.random() * 4,
+                    });
+                }
+            }
+
+            function spawnFloatingText(x, y, text, color) {
+                floatingTexts.push({
+                    x: x,
+                    y: y,
+                    text: text,
+                    color: color,
+                    life: 1.2,
+                    maxLife: 1.2,
+                });
+            }
+
+            // --- STREAM ANIMATION (background game) ---
+            let streamScrollX = 0;
+            let streamCharacter = {
+                x: 140,
+                y: 320,
+                vy: 0,
+                onGround: true,
+                animTimer: 0,
+                squish: 0,
+            };
+            let platforms = [];
+            let streamCoins = [];
+            let streamBgElements = [];
+
+            function initStreamWorld() {
+                platforms = [];
+                streamCoins = [];
+                streamBgElements = [];
+                let px = 0;
+                // Create initial platforms
+                for (let i = 0; i < 12; i++) {
+                    const w = 80 + Math.random() * 180;
+                    const gap = 40 + Math.random() * 100;
+                    platforms.push({
+                        x: px,
+                        width: w,
+                        y: 340 + Math.random() * 40 - 20,
+                        height: 18,
+                    });
+                    if (Math.random() < 0.4 && gap > 60) {
+                        streamCoins.push({
+                            x: px + w + gap / 2,
+                            y: platforms[platforms.length - 1].y - 40 - Math.random() * 30,
+                            collected: false,
+                            sparkle: 0,
+                        });
+                    }
+                    px += w + gap;
+                }
+                // Background hills
+                for (let i = 0; i < 8; i++) {
+                    streamBgElements.push({
+                        x: i * 180 + Math.random() * 60,
+                        size: 60 + Math.random() * 100,
+                        height: 100 + Math.random() * 150,
+                        color: `hsl(${140 + Math.random()*40},${30+Math.random()*30}%,${20+Math.random()*20}%)`,
+                    });
+                }
+                streamScrollX = 0;
+                streamCharacter.y = 320;
+                streamCharacter.vy = 0;
+                streamCharacter.onGround = true;
+            }
+
+            function updateStreamWorld(dt) {
+                const speed = 180;
+                streamScrollX += speed * dt;
+                streamCharacter.animTimer += dt;
+
+                // Move platforms
+                for (let p of platforms) {
+                    p.x -= speed * dt;
+                }
+                // Remove off-screen platforms and add new ones
+                while (platforms.length > 0 && platforms[0].x + platforms[0].width < -50) {
+                    platforms.shift();
+                }
+                while (platforms.length < 10) {
+                    const last = platforms[platforms.length - 1];
+                    const w = 80 + Math.random() * 180;
+                    const gap = 40 + Math.random() * 100;
+                    const nx = last.x + last.width + gap;
+                    platforms.push({
+                        x: nx,
+                        width: w,
+                        y: 330 + Math.random() * 40 - 20,
+                        height: 18,
+                    });
+                    if (Math.random() < 0.35 && gap > 60) {
+                        streamCoins.push({
+                            x: nx + w / 2,
+                            y: platforms[platforms.length - 1].y - 45 - Math.random() * 30,
+                            collected: false,
+                            sparkle: 0,
+                        });
+                    }
+                }
+                // Clean old coins
+                streamCoins = streamCoins.filter(c => c.x > -50 && !c.collected);
+                for (let c of streamCoins) {
+                    c.x -= speed * dt;
+                    c.sparkle += dt * 4;
+                }
+
+                // Character physics
+                const char = streamCharacter;
+                const charFeetX = char.x + 10;
+                const charWidth = 24;
+                const charHeight = 32;
+
+                // Find platform under character
+                let grounded = false;
+                let groundY = 400;
+                for (let p of platforms) {
+                    if (charFeetX > p.x - charWidth / 2 && charFeetX < p.x + p.width + charWidth / 2) {
+                        if (char.y + charHeight >= p.y && char.y + charHeight <= p.y + 20 && char.vy >= 0) {
+                            char.y = p.y - charHeight;
+                            char.vy = 0;
+                            grounded = true;
+                            groundY = p.y;
+                            break;
+                        }
+                    }
+                }
+                char.onGround = grounded;
+
+                if (!grounded) {
+                    char.vy += 900 * dt;
+                    char.y += char.vy * dt;
+                    if (char.y > 420) {
+                        char.y = 320;
+                        char.vy = -200;
+                        char.onGround = false;
+                    }
+                }
+
+                // Auto-jump when approaching gap
+                if (grounded && char.vy === 0) {
+                    let nearestGap = null;
+                    for (let i = 0; i < platforms.length - 1; i++) {
+                        const p = platforms[i];
+                        const nextP = platforms[i + 1];
+                        const gapStart = p.x + p.width;
+                        const gapEnd = nextP.x;
+                        if (gapEnd - gapStart > 30 && charFeetX > gapStart - 50 && charFeetX < gapStart + 20) {
+                            nearestGap = { start: gapStart, end: gapEnd, platformY: p.y };
+                            break;
+                        }
+                    }
+                    if (nearestGap && charFeetX > nearestGap.start - 30) {
+                        char.vy = -350 - Math.random() * 80;
+                        char.onGround = false;
+                        char.squish = 0.3;
+                    }
+                }
+
+                // Squish recovery
+                if (char.squish > 0) char.squish = Math.max(0, char.squish - dt * 3);
+
+                // Coin collection (auto)
+                for (let c of streamCoins) {
+                    if (!c.collected && Math.abs(c.x - charFeetX) < 20 && Math.abs(c.y - char.y) < 35) {
+                        c.collected = true;
+                        spawnParticles(c.x + STREAM_WIDTH * 0, c.y, 8, '#FFD700', 5);
+                    }
+                }
+
+                // Background elements
+                for (let bg of streamBgElements) {
+                    bg.x -= speed * 0.3 * dt;
+                    if (bg.x < -200) bg.x += 1600;
+                }
+
+                // Stream events
+                streamEventTimer -= dt;
+                if (streamEventTimer <= 0 && !streamEventActive) {
+                    streamEventActive = true;
+                    streamEventType = Math.random() < 0.5 ? 'boss' : 'clutch';
+                    streamEventTimer = 2 + Math.random() * 3;
+                    shakeAmount = Math.max(shakeAmount, 4);
+                }
+                if (streamEventActive) {
+                    streamEventTimer -= dt;
+                    if (streamEventTimer <= 0) {
+                        streamEventActive = false;
+                        streamEventTimer = 8 + Math.random() * 15;
+                    }
+                }
+            }
+
+            function renderStreamWorld() {
+                // Sky gradient
+                const skyGrad = ctx.createLinearGradient(0, 0, 0, LOGICAL_HEIGHT);
+                skyGrad.addColorStop(0, '#1a1a3e');
+                skyGrad.addColorStop(0.5, '#2d1b69');
+                skyGrad.addColorStop(1, '#1a0a2e');
+                ctx.fillStyle = skyGrad;
+                ctx.fillRect(0, 0, STREAM_WIDTH, LOGICAL_HEIGHT);
+
+                // Stars
+                ctx.fillStyle = '#ffffff';
+                const starSeed = 42;
+                for (let i = 0; i < 60; i++) {
+                    const sx = ((i * 137 + starSeed) % STREAM_WIDTH);
+                    const sy = ((i * 89 + starSeed * 3) % (LOGICAL_HEIGHT * 0.6));
+                    const twinkle = 0.4 + 0.6 * Math.sin(Date.now() / 1000 * (1 + i * 0.3) + i);
+                    ctx.globalAlpha = twinkle * 0.8;
+                    ctx.fillRect(sx, sy, 1.5, 1.5);
+                }
+                ctx.globalAlpha = 1;
+
+                // Background hills
+                for (let bg of streamBgElements) {
+                    ctx.fillStyle = bg.color;
+                    ctx.beginPath();
+                    ctx.arc(bg.x, LOGICAL_HEIGHT - bg.height / 2, bg.size, Math.PI, 0);
+                    ctx.fill();
+                }
+
+                // Moon
+                ctx.fillStyle = '#ffe8c0';
+                ctx.shadowColor = '#ffe8c0';
+                ctx.shadowBlur = 30;
+                ctx.beginPath();
+                ctx.arc(420, 70, 35, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                // Platforms
+                for (let p of platforms) {
+                    if (p.x + p.width < -10 || p.x > STREAM_WIDTH + 10) continue;
+                    const grad = ctx.createLinearGradient(0, p.y, 0, p.y + p.height);
+                    grad.addColorStop(0, '#5cbf6f');
+                    grad.addColorStop(0.5, '#3d8b40');
+                    grad.addColorStop(1, '#2e6b30');
+                    ctx.fillStyle = grad;
+                    ctx.fillRect(p.x, p.y, p.width, p.height);
+                    // Top edge highlight
+                    ctx.fillStyle = '#7de08a';
+                    ctx.fillRect(p.x, p.y, p.width, 3);
+                    // Shadow under platform
+                    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                    ctx.fillRect(p.x, p.y + p.height, p.width, 6);
+                }
+
+                // Coins
+                for (let c of streamCoins) {
+                    if (c.collected || c.x < -20 || c.x > STREAM_WIDTH + 20) continue;
+                    const glow = 0.6 + 0.4 * Math.sin(c.sparkle);
+                    ctx.fillStyle = '#FFD700';
+                    ctx.shadowColor = '#FFD700';
+                    ctx.shadowBlur = 10 * glow;
+                    ctx.beginPath();
+                    ctx.arc(c.x, c.y, 8, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                    ctx.strokeStyle = '#FFA000';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    // $ symbol
+                    ctx.fillStyle = '#B8860B';
+                    ctx.font = 'bold 10px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('$', c.x, c.y + 4);
+                    ctx.textAlign = 'start';
+                }
+
+                // Character
+                const char = streamCharacter;
+                const cx = char.x;
+                const cy = char.y;
+                const squishX = 1 + char.squish * 0.3;
+                const squishY = 1 - char.squish * 0.25;
+
+                ctx.save();
+                ctx.translate(cx + 12, cy + 16);
+                ctx.scale(squishX, squishY);
+                ctx.translate(-12, -16);
+
+                // Body
+                ctx.fillStyle = '#ff6b6b';
+                ctx.fillRect(2, 8, 20, 16);
+                // Head
+                ctx.fillStyle = '#ffa07a';
+                ctx.beginPath();
+                ctx.arc(12, 6, 8, 0, Math.PI * 2);
+                ctx.fill();
+                // Eyes
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(8, 3, 4, 5);
+                ctx.fillRect(14, 3, 4, 5);
+                ctx.fillStyle = '#111';
+                ctx.fillRect(10, 4, 2, 3);
+                ctx.fillRect(16, 4, 2, 3);
+                // Legs
+                ctx.fillStyle = '#4a4a6a';
+                const legOffset = char.onGround ? Math.sin(char.animTimer * 10) * 3 : 2;
+                ctx.fillRect(4, 24, 5, 8 + legOffset);
+                ctx.fillRect(15, 24, 5, 8 - legOffset);
+                // Arms
+                ctx.fillStyle = '#ffa07a';
+                const armSwing = Math.sin(char.animTimer * 8) * 4;
+                ctx.fillRect(-1, 10 + armSwing, 4, 10);
+                ctx.fillRect(21, 10 - armSwing, 4, 10);
+
+                ctx.restore();
+
+                // Stream event effects
+                if (streamEventActive) {
+                    if (streamEventType === 'boss') {
+                        ctx.fillStyle = '#ff4444';
+                        ctx.font = 'bold 22px sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('⚔️ BOSS FIGHT! ⚔️', STREAM_WIDTH / 2, 60);
+                        ctx.textAlign = 'start';
+                    } else {
+                        ctx.fillStyle = '#ffaa00';
+                        ctx.font = 'bold 22px sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('🔥 CLUTCH MOMENT! 🔥', STREAM_WIDTH / 2, 60);
+                        ctx.textAlign = 'start';
+                    }
+                }
+
+                // Stream overlay info
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.fillRect(8, 8, 180, 50);
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 13px sans-serif';
+                ctx.fillText('🔴 LIVE', 18, 30);
+                ctx.fillText('👁 ' + Math.floor(viewerCount), 18, 50);
+                ctx.fillText('🎮 Gaming', 100, 30);
+
+                // Vignette
+                const vignetteGrad = ctx.createRadialGradient(STREAM_WIDTH / 2, LOGICAL_HEIGHT / 2, STREAM_WIDTH * 0.4,
+                    STREAM_WIDTH / 2, LOGICAL_HEIGHT / 2, STREAM_WIDTH * 0.75);
+                vignetteGrad.addColorStop(0, 'rgba(0,0,0,0)');
+                vignetteGrad.addColorStop(1, 'rgba(0,0,0,0.5)');
+                ctx.fillStyle = vignetteGrad;
+                ctx.fillRect(0, 0, STREAM_WIDTH, LOGICAL_HEIGHT);
+            }
+
+            // --- RENDER CHAT ---
+            function renderChatPanel() {
+                // Chat background
+                const chatBgGrad = ctx.createLinearGradient(CHAT_PANEL_X, 0, CHAT_PANEL_X, LOGICAL_HEIGHT);
+                chatBgGrad.addColorStop(0, '#18181b');
+                chatBgGrad.addColorStop(1, '#0f0f12');
+                ctx.fillStyle = chatBgGrad;
+                ctx.fillRect(CHAT_PANEL_X, 0, CHAT_WIDTH, LOGICAL_HEIGHT);
+
+                // Chat border
+                ctx.strokeStyle = '#2d2d35';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(CHAT_PANEL_X, 0);
+                ctx.lineTo(CHAT_PANEL_X, LOGICAL_HEIGHT);
+                ctx.stroke();
+
+                // Chat header
+                ctx.fillStyle = '#1f1f24';
+                ctx.fillRect(CHAT_PANEL_X, 0, CHAT_WIDTH, CHAT_HEADER_HEIGHT);
+                ctx.fillStyle = '#e0e0e0';
+                ctx.font = 'bold 14px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('💬 LIVE CHAT', CHAT_PANEL_X + CHAT_WIDTH / 2, CHAT_HEADER_HEIGHT - 12);
+                ctx.textAlign = 'start';
+
+                // Separator line
+                ctx.strokeStyle = '#3a3a44';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(CHAT_PANEL_X, CHAT_HEADER_HEIGHT);
+                ctx.lineTo(LOGICAL_WIDTH, CHAT_HEADER_HEIGHT);
+                ctx.stroke();
+
+                // Clip chat area
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(CHAT_PANEL_X + 2, CHAT_TOP, CHAT_WIDTH - 4, CHAT_VISIBLE_HEIGHT);
+                ctx.clip();
+
+                // Render messages
+                for (let msg of messages) {
+                    if (!msg.active) continue;
+                    const mx = CHAT_PANEL_X + CHAT_PADDING;
+                    const my = msg.y;
+                    const mw = MESSAGE_WIDTH;
+                    const mh = MESSAGE_HEIGHT;
+
+                    // Fade in
+                    if (msg.opacity < 1) msg.opacity = Math.min(1, msg.opacity + 0.05);
+                    const alpha = msg.opacity;
+
+                    // Determine border color
+                    let borderColor, bgColor;
+                    switch (msg.type) {
+                        case 'normal':
+                            borderColor = '#4CAF50';
+                            bgColor = 'rgba(30,40,30,0.9)';
+                            break;
+                        case 'toxic':
+                            borderColor = '#F44336';
+                            bgColor = 'rgba(50,20,20,0.9)';
+                            break;
+                        case 'spam':
+                            borderColor = '#FF9800';
+                            bgColor = 'rgba(45,30,15,0.9)';
+                            break;
+                        case 'question':
+                            borderColor = '#42A5F5';
+                            bgColor = 'rgba(20,30,50,0.9)';
+                            break;
+                        case 'donation':
+                            borderColor = '#FFD700';
+                            bgColor = 'rgba(40,35,15,0.9)';
+                            break;
+                        default:
+                            borderColor = '#888';
+                            bgColor = 'rgba(30,30,35,0.9)';
+                    }
+
+                    // Toxic pulse
+                    let pulseGlow = 0;
+                    if (msg.type === 'toxic') {
+                        msg.pulsePhase += 0.04;
+                        pulseGlow = Math.sin(msg.pulsePhase) * 0.4 + 0.4;
+                    }
+                    if (msg.type === 'donation') {
+                        msg.pulsePhase += 0.06;
+                        pulseGlow = Math.sin(msg.pulsePhase) * 0.5 + 0.5;
+                    }
+
+                    // Message bubble
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = bgColor;
+                    ctx.strokeStyle = borderColor;
+                    ctx.lineWidth = 2;
+                    if (pulseGlow > 0.1 && (msg.type === 'toxic' || msg.type === 'donation')) {
+                        ctx.shadowColor = borderColor;
+                        ctx.shadowBlur = 8 * pulseGlow;
+                    }
+                    roundRect(mx, my, mw, mh, 8, true, true);
+
+                    // Left border accent
+                    ctx.fillStyle = borderColor;
+                    ctx.fillRect(mx, my + 4, 4, mh - 8);
+                    ctx.shadowBlur = 0;
+                    ctx.globalAlpha = alpha;
+
+                    // Avatar circle
+                    const avatarX = mx + 10;
+                    const avatarY = my + mh / 2;
+                    ctx.fillStyle = msg.avatarColor;
+                    ctx.beginPath();
+                    ctx.arc(avatarX, avatarY, 13, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                    // Initial letter
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 10px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(msg.username.charAt(0).toUpperCase(), avatarX, avatarY + 4);
+                    ctx.textAlign = 'start';
+
+                    // Username
+                    ctx.fillStyle = '#aaa';
+                    ctx.font = '10px sans-serif';
+                    ctx.fillText(msg.username, mx + 30, my + 14);
+
+                    // Message text
+                    ctx.fillStyle = '#eee';
+                    ctx.font = '11px sans-serif';
+                    const maxTextWidth = mw - 50;
+                    let displayText = msg.text;
+                    if (ctx.measureText(displayText).width > maxTextWidth) {
+                        while (displayText.length > 5 && ctx.measureText(displayText + '...').width > maxTextWidth) {
+                            displayText = displayText.slice(0, -1);
+                        }
+                        displayText += '...';
+                    }
+                    ctx.fillText(displayText, mx + 30, my + 32);
+
+                    // Type indicator icon
+                    ctx.font = '13px sans-serif';
+                    ctx.textAlign = 'right';
+                    let icon = '';
+                    switch (msg.type) {
+                        case 'normal':
+                            icon = '';
+                            break;
+                        case 'toxic':
+                            icon = '⚠️';
+                            break;
+                        case 'spam':
+                            icon = '🚫';
+                            break;
+                        case 'question':
+                            icon = '❓';
+                            break;
+                        case 'donation':
+                            icon = '💎';
+                            break;
+                    }
+                    if (icon) ctx.fillText(icon, mx + mw - 8, my + mh / 2 + 5);
+                    ctx.textAlign = 'start';
+                }
+
+                ctx.restore();
+
+                // Fade gradient at top of chat (messages fading out)
+                const fadeGrad = ctx.createLinearGradient(0, CHAT_TOP, 0, CHAT_TOP + 30);
+                fadeGrad.addColorStop(0, '#18181b');
+                fadeGrad.addColorStop(1, 'rgba(24,24,27,0)');
+                ctx.fillStyle = fadeGrad;
+                ctx.fillRect(CHAT_PANEL_X + 2, CHAT_TOP, CHAT_WIDTH - 4, 30);
+
+                // Fade at bottom
+                const fadeGrad2 = ctx.createLinearGradient(0, CHAT_BOTTOM - 20, 0, CHAT_BOTTOM);
+                fadeGrad2.addColorStop(0, 'rgba(15,15,18,0)');
+                fadeGrad2.addColorStop(1, '#0f0f12');
+                ctx.fillStyle = fadeGrad2;
+                ctx.fillRect(CHAT_PANEL_X + 2, CHAT_BOTTOM - 20, CHAT_WIDTH - 4, 20);
+            }
+
+            function roundRect(x, y, w, h, r, fill, stroke) {
+                ctx.beginPath();
+                ctx.moveTo(x + r, y);
+                ctx.lineTo(x + w - r, y);
+                ctx.arcTo(x + w, y, x + w, y + r, r);
+                ctx.lineTo(x + w, y + h - r);
+                ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+                ctx.lineTo(x + r, y + h);
+                ctx.arcTo(x, y + h, x, y + h - r, r);
+                ctx.lineTo(x, y + r);
+                ctx.arcTo(x, y, x + r, y, r);
+                ctx.closePath();
+                if (fill) ctx.fill();
+                if (stroke) ctx.stroke();
+            }
+
+            // --- RENDER UI ---
+            function renderUI() {
+                // Top bar
+                const topBarY = 0;
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, topBarY, STREAM_WIDTH, 36);
+
+                // Score
+                ctx.fillStyle = '#FFD700';
+                ctx.font = 'bold 15px sans-serif';
+                ctx.fillText('⭐ Score: ' + Math.floor(score), 14, 25);
+
+                // Timer
+                const timerColor = timeRemaining < 20 ? '#ff5555' : '#ffffff';
+                ctx.fillStyle = timerColor;
+                ctx.fillText('⏱ ' + Math.ceil(timeRemaining) + 's', 200, 25);
+
+                // Combo
+                if (comboCount > 1) {
+                    ctx.fillStyle = '#ff8800';
+                    ctx.font = 'bold 13px sans-serif';
+                    ctx.fillText('🔥 Combo x' + comboCount, 340, 25);
+                }
+
+                // Health bar
+                const healthBarX = 460;
+                const healthBarW = 140;
+                const healthBarH = 18;
+                const healthBarY = 9;
+                ctx.fillStyle = '#333';
+                ctx.fillRect(healthBarX, healthBarY, healthBarW, healthBarH);
+                const healthColor = streamHealth > 50 ?
+                    `hsl(${streamHealth*1.2},70%,50%)` :
+                    `hsl(0,70%,${40+streamHealth/50*30}%)`;
+                ctx.fillStyle = healthColor;
+                ctx.fillRect(healthBarX, healthBarY, healthBarW * (streamHealth / 100), healthBarH);
+                ctx.strokeStyle = '#555';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(healthBarX, healthBarY, healthBarW, healthBarH);
+                ctx.fillStyle = '#fff';
+                ctx.font = '10px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Mood: ' + Math.floor(streamHealth) + '%', healthBarX + healthBarW / 2, healthBarY + 13);
+                ctx.textAlign = 'start';
+
+                // Viewer count in top bar
+                ctx.fillStyle = '#ccc';
+                ctx.font = '12px sans-serif';
+                ctx.fillText('👁 ' + Math.floor(viewerCount) + ' viewers', healthBarX + healthBarW + 12, 25);
+            }
+
+            // --- GAME OVER SCREEN ---
+            function renderGameOver() {
+                ctx.fillStyle = 'rgba(0,0,0,0.75)';
+                ctx.fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+
+                const cardX = LOGICAL_WIDTH / 2 - 200;
+                const cardY = LOGICAL_HEIGHT / 2 - 160;
+                const cardW = 400;
+                const cardH = 320;
+
+                ctx.fillStyle = '#1e1e28';
+                ctx.strokeStyle = '#555';
+                ctx.lineWidth = 3;
+                roundRect(cardX, cardY, cardW, cardH, 16, true, true);
+
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 26px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('📺 Stream Ended!', LOGICAL_WIDTH / 2, cardY + 40);
+                ctx.textAlign = 'start';
+
+                const statsX = cardX + 40;
+                const statsStartY = cardY + 70;
+                ctx.fillStyle = '#ccc';
+                ctx.font = '14px sans-serif';
+                const lineH = 28;
+                ctx.fillText('⭐ Final Score: ' + Math.floor(score), statsX, statsStartY);
+                ctx.fillText('🛡 Messages Moderated: ' + messagesModerated, statsX, statsStartY + lineH);
+                ctx.fillText('💎 Donations Collected: ' + donationsCollected, statsX, statsStartY + lineH * 2);
+                ctx.fillText('❓ Questions Answered: ' + questionsAnswered, statsX, statsStartY + lineH * 3);
+                ctx.fillText('⚠ Toxic Missed: ' + toxicMissed, statsX, statsStartY + lineH * 4);
+                ctx.fillText('🔥 Max Combo: x' + maxCombo, statsX, statsStartY + lineH * 5);
+                ctx.fillText('👁 Peak Viewers: ' + Math.floor(viewerCount), statsX, statsStartY + lineH * 6);
+
+                // Restart button
+                const btnX = LOGICAL_WIDTH / 2 - 90;
+                const btnY = cardY + cardH - 55;
+                const btnW = 180;
+                const btnH = 40;
+                ctx.fillStyle = '#6c3cff';
+                ctx.strokeStyle = '#9a7fff';
+                ctx.lineWidth = 2;
+                roundRect(btnX, btnY, btnW, btnH, 20, true, true);
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('🔄 Moderate Again!', LOGICAL_WIDTH / 2, btnY + 28);
+                ctx.textAlign = 'start';
+
+                // Store button bounds for click detection
+                return { btnX, btnY, btnW, btnH };
+            }
+
+            // --- START SCREEN ---
+            function renderStartScreen() {
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+
+                const cardX = LOGICAL_WIDTH / 2 - 220;
+                const cardY = LOGICAL_HEIGHT / 2 - 170;
+                const cardW = 440;
+                const cardH = 340;
+
+                ctx.fillStyle = '#1e1e28';
+                ctx.strokeStyle = '#6c3cff';
+                ctx.lineWidth = 3;
+                roundRect(cardX, cardY, cardW, cardH, 16, true, true);
+                ctx.shadowColor = '#6c3cff';
+                ctx.shadowBlur = 20;
+                roundRect(cardX, cardY, cardW, cardH, 16, false, true);
+                ctx.shadowBlur = 0;
+
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 28px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('🎮 Stream Chat Simulator', LOGICAL_WIDTH / 2, cardY + 45);
+
+                ctx.fillStyle = '#ccc';
+                ctx.font = '15px sans-serif';
+                const instrX = cardX + 30;
+                const instrY = cardY + 75;
+                ctx.fillText('You\'re moderating a live stream chat!', LOGICAL_WIDTH / 2, instrY);
+                ctx.fillText('', LOGICAL_WIDTH / 2, instrY + 22);
+                ctx.fillText('🟢 Normal messages — auto-score', LOGICAL_WIDTH / 2, instrY + 44);
+                ctx.fillText('🔴 Toxic messages — CLICK to remove!', LOGICAL_WIDTH / 2, instrY + 66);
+                ctx.fillText('🟡 Spam — CLICK to delete!', LOGICAL_WIDTH / 2, instrY + 88);
+                ctx.fillText('🔵 Questions — CLICK to answer (+bonus)', LOGICAL_WIDTH / 2, instrY + 110);
+                ctx.fillText('💎 Donations — CLICK to thank! (+big bonus)', LOGICAL_WIDTH / 2, instrY + 132);
+
+                ctx.fillStyle = '#ff8888';
+                ctx.font = 'bold 13px sans-serif';
+                ctx.fillText('⚠ Missed toxic/spam messages hurt your score!', LOGICAL_WIDTH / 2, instrY + 158);
+
+                const btnX = LOGICAL_WIDTH / 2 - 100;
+                const btnY = cardY + cardH - 55;
+                const btnW = 200;
+                const btnH = 44;
+                ctx.fillStyle = '#6c3cff';
+                ctx.strokeStyle = '#9a7fff';
+                ctx.lineWidth = 2;
+                roundRect(btnX, btnY, btnW, btnH, 22, true, true);
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 18px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('▶ Start Moderating!', LOGICAL_WIDTH / 2, btnY + 30);
+                ctx.textAlign = 'start';
+
+                return { btnX, btnY, btnW, btnH };
+            }
+
+            // --- PARTICLES & FLOATING TEXT ---
+            function updateParticles(dt) {
+                for (let p of particles) {
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += 40 * dt;
+                    p.life -= dt;
+                }
+                particles = particles.filter(p => p.life > 0);
+
+                for (let ft of floatingTexts) {
+                    ft.y -= 40 * dt;
+                    ft.life -= dt;
+                }
+                floatingTexts = floatingTexts.filter(ft => ft.life > 0);
+            }
+
+            function renderParticles() {
+                for (let p of particles) {
+                    const alpha = p.life / p.maxLife;
+                    ctx.fillStyle = p.color.replace(')', `,${alpha})`).replace('rgb',
+                        'rgba').replace('hsl', 'hsla');
+                    if (p.color.startsWith('#')) {
+                        ctx.globalAlpha = alpha;
+                        ctx.fillStyle = p.color;
+                    }
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+
+                for (let ft of floatingTexts) {
+                    const alpha = ft.life / ft.maxLife;
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = ft.color;
+                    ctx.font = 'bold 14px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(ft.text, ft.x, ft.y);
+                    ctx.textAlign = 'start';
+                }
+                ctx.globalAlpha = 1;
+            }
+
+            // --- HANDLE CLICK ---
+            function handleClick(logicalX, logicalY) {
+                initAudio();
+
+                if (gameState === STATE.IDLE) {
+                    const startBtn = renderStartScreen();
+                    const rect = canvas.getBoundingClientRect();
+                    const sx = (startBtn.btnX);
+                    const sy = (startBtn.btnY);
+                    const sw = (startBtn.btnW);
+                    const sh = (startBtn.btnH);
+                    if (logicalX >= sx && logicalX <= sx + sw && logicalY >= sy && logicalY <= sy + sh) {
+                        startGame();
+                    }
+                    return;
+                }
+
+                if (gameState === STATE.OVER) {
+                    const goBtn = { btnX: LOGICAL_WIDTH / 2 - 90, btnY: LOGICAL_HEIGHT / 2 + 160 - 55, btnW: 180, btnH: 40 };
+                    if (logicalX >= goBtn.btnX && logicalX <= goBtn.btnX + goBtn.btnW &&
+                        logicalY >= goBtn.btnY && logicalY <= goBtn.btnY + goBtn.btnH) {
+                        restartGame();
+                    }
+                    return;
+                }
+
+                if (gameState !== STATE.PLAYING) return;
+
+                // Check if click is in chat panel
+                if (logicalX < CHAT_PANEL_X + CHAT_PADDING || logicalX > LOGICAL_WIDTH - CHAT_PADDING) return;
+                if (logicalY < CHAT_TOP || logicalY > CHAT_BOTTOM) return;
+
+                // Find topmost message under cursor
+                let clickedMsg = null;
+                for (let i = messages.length - 1; i >= 0; i--) {
+                    const msg = messages[i];
+                    if (!msg.active) continue;
+                    const mx = CHAT_PANEL_X + CHAT_PADDING;
+                    const my = msg.y;
+                    const mw = MESSAGE_WIDTH;
+                    const mh = MESSAGE_HEIGHT;
+                    if (logicalX >= mx && logicalX <= mx + mw && logicalY >= my && logicalY <= my + mh) {
+                        clickedMsg = msg;
+                        break;
+                    }
+                }
+
+                if (!clickedMsg) return;
+
+                const msg = clickedMsg;
+                const msgCenterX = CHAT_PANEL_X + CHAT_PADDING + MESSAGE_WIDTH / 2;
+                const msgCenterY = msg.y + MESSAGE_HEIGHT / 2;
+
+                switch (msg.type) {
+                    case 'toxic':
+                        msg.active = false;
+                        score += 20 + comboCount * 3;
+                        comboCount++;
+                        if (comboCount > maxCombo) maxCombo = comboCount;
+                        messagesModerated++;
+                        streamHealth = Math.min(100, streamHealth + 3);
+                        spawnParticles(msgCenterX, msgCenterY, 15, '#F44336', 5);
+                        spawnFloatingText(msgCenterX, msgCenterY - 10, '+20 Removed!', '#ff6666');
+                        sfxToxicRemoved();
+                        if (comboCount >= 5 && comboCount % 5 === 0) sfxCombo();
+                        break;
+                    case 'spam':
+                        msg.active = false;
+                        score += 15 + comboCount * 2;
+                        comboCount++;
+                        if (comboCount > maxCombo) maxCombo = comboCount;
+                        messagesModerated++;
+                        streamHealth = Math.min(100, streamHealth + 2);
+                        spawnParticles(msgCenterX, msgCenterY, 12, '#FF9800', 4);
+                        spawnFloatingText(msgCenterX, msgCenterY - 10, '+15 Deleted!', '#ffaa00');
+                        sfxModerate();
+                        if (comboCount >= 5 && comboCount % 5 === 0) sfxCombo();
+                        break;
+                    case 'question':
+                        msg.active = false;
+                        score += 25 + comboCount * 2;
+                        comboCount++;
+                        if (comboCount > maxCombo) maxCombo = comboCount;
+                        questionsAnswered++;
+                        messagesModerated++;
+                        spawnParticles(msgCenterX, msgCenterY, 10, '#42A5F5', 4);
+                        spawnFloatingText(msgCenterX, msgCenterY - 10, '+25 Answered!', '#66bbff');
+                        sfxQuestion();
+                        if (comboCount >= 5 && comboCount % 5 === 0) sfxCombo();
+                        break;
+                    case 'donation':
+                        msg.active = false;
+                        score += 50 + comboCount * 5;
+                        comboCount++;
+                        if (comboCount > maxCombo) maxCombo = comboCount;
+                        donationsCollected++;
+                        messagesModerated++;
+                        streamHealth = Math.min(100, streamHealth + 8);
+                        viewerCount += 5 + Math.floor(Math.random() * 15);
+                        spawnParticles(msgCenterX, msgCenterY, 25, '#FFD700', 7);
+                        spawnFloatingText(msgCenterX, msgCenterY - 10, '+50 Thanked! 💎', '#FFD700');
+                        sfxDonation();
+                        if (comboCount >= 5 && comboCount % 5 === 0) sfxCombo();
+                        break;
+                    case 'normal':
+                        // Clicking normal messages gives tiny bonus
+                        score += 3;
+                        spawnParticles(msgCenterX, msgCenterY, 5, '#4CAF50', 2);
+                        spawnFloatingText(msgCenterX, msgCenterY - 10, '+3', '#88ff88');
+                        sfxModerate();
+                        break;
+                }
+            }
+
+            // --- GAME FLOW ---
+            function startGame() {
+                initAudio();
+                sfxStart();
+                gameState = STATE.PLAYING;
+                score = 0;
+                comboCount = 0;
+                maxCombo = 0;
+                streamHealth = 100;
+                timeRemaining = GAME_DURATION;
+                messagesModerated = 0;
+                toxicMissed = 0;
+                spamMissed = 0;
+                questionsAnswered = 0;
+                donationsCollected = 0;
+                viewerCount = 120;
+                spawnTimer = 0;
+                spawnInterval = 1.8;
+                gameTimer = 0;
+                messages = [];
+                particles = [];
+                floatingTexts = [];
+                shakeAmount = 0;
+                streamEventTimer = 10;
+                streamEventActive = false;
+                messageIdCounter = 0;
+                initStreamWorld();
+                lastTime = performance.now();
+            }
+
+            function restartGame() {
+                startGame();
+            }
+
+            function endGame() {
+                gameState = STATE.OVER;
+                // Final viewer adjustment
+                viewerCount = Math.max(30, viewerCount + Math.floor((score - toxicMissed * 10) / 5));
+            }
+
+            // --- MAIN GAME LOOP ---
+            function update(dt) {
+                if (gameState !== STATE.PLAYING) return;
+                if (dt > 0.2) dt = 0.2; // Cap dt
+
+                gameTimer += dt;
+                timeRemaining = GAME_DURATION - gameTimer;
+
+                if (timeRemaining <= 0) {
+                    timeRemaining = 0;
+                    endGame();
+                    return;
+                }
+                if (streamHealth <= 0) {
+                    streamHealth = 0;
+                    endGame();
+                    return;
+                }
+
+                // Dynamic spawn interval
+                const progress = gameTimer / GAME_DURATION;
+                spawnInterval = 1.8 - progress * 1.2;
+                if (spawnInterval < 0.55) spawnInterval = 0.55;
+
+                // Stream events increase spawn rate
+                if (streamEventActive) spawnInterval *= 0.65;
+
+                spawnTimer += dt;
+                while (spawnTimer >= spawnInterval) {
+                    spawnTimer -= spawnInterval;
+                    spawnMessage();
+                    // Sometimes spawn extra during events
+                    if (streamEventActive && Math.random() < 0.4) spawnMessage();
+                }
+
+                // Update messages
+                for (let msg of messages) {
+                    if (!msg.active) continue;
+                    msg.y -= MESSAGE_SCROLL_SPEED * dt;
+
+                    // Check if message scrolled off top
+                    if (msg.y + MESSAGE_HEIGHT < CHAT_TOP) {
+                        msg.active = false;
+                        // Penalty for missed toxic/spam
+                        if (msg.type === 'toxic') {
+                            toxicMissed++;
+                            score -= 30;
+                            streamHealth -= 15;
+                            comboCount = 0;
+                            viewerCount -= 8 + Math.floor(Math.random() * 12);
+                            sfxMiss();
+                            shakeAmount = Math.max(shakeAmount, 6);
+                        } else if (msg.type === 'spam') {
+                            spamMissed++;
+                            score -= 20;
+                            streamHealth -= 8;
+                            comboCount = 0;
+                            viewerCount -= 3 + Math.floor(Math.random() * 6);
+                            sfxMiss();
+                        } else if (msg.type === 'normal') {
+                            score += 5;
+                        } else if (msg.type === 'question' || msg.type === 'donation') {
+                            // Missed opportunity, small penalty
+                            score -= 5;
+                        }
+                    }
+                }
+
+                // Clean inactive messages
+                messages = messages.filter(m => m.active || m.y + MESSAGE_HEIGHT >= CHAT_TOP - 50);
+                // Fully remove old ones
+                messages = messages.filter(m => m.y + MESSAGE_HEIGHT > CHAT_TOP - 80 || m.active);
+
+                // Update stream world
+                updateStreamWorld(dt);
+
+                // Update particles
+                updateParticles(dt);
+
+                // Shake decay
+                if (shakeAmount > 0) shakeAmount = Math.max(0, shakeAmount - dt * 8);
+
+                // Viewer count fluctuation
+                viewerCount += (Math.random() - 0.48) * 2;
+                viewerCount = Math.max(30, Math.min(999, viewerCount));
+                if (streamHealth < 30) viewerCount -= 1;
+
+                // Stream health slow recovery
+                if (streamHealth < 100 && streamHealth > 0) {
+                    streamHealth += dt * 1.5;
+                }
+                streamHealth = Math.min(100, Math.max(0, streamHealth));
+
+                // Combo decay (lose combo if no moderation for a while)
+                // We'll handle this via timer - if no messages moderated in 4 seconds
+                if (comboCount > 0 && messagesModerated === (messagesModerated || 0)) {
+                    // combo decay handled implicitly via missed messages
+                }
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+
+                // Apply screen shake
+                let shakeX = 0,
+                    shakeY = 0;
+                if (shakeAmount > 0.1) {
+                    shakeX = (Math.random() - 0.5) * shakeAmount * 2;
+                    shakeY = (Math.random() - 0.5) * shakeAmount * 2;
+                }
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                // Render stream area
+                renderStreamWorld();
+
+                // Render chat panel
+                renderChatPanel();
+
+                // Render UI overlay
+                renderUI();
+
+                // Render particles
+                renderParticles();
+
+                ctx.restore();
+
+                // Game state overlays (not affected by shake)
+                if (gameState === STATE.IDLE) {
+                    renderStartScreen();
+                } else if (gameState === STATE.OVER) {
+                    renderGameOver();
+                }
+
+                // Cursor hint in chat area
+                if (gameState === STATE.PLAYING) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+                    ctx.fillRect(CHAT_PANEL_X + CHAT_PADDING, CHAT_TOP, MESSAGE_WIDTH, CHAT_VISIBLE_HEIGHT);
+                    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([6, 6]);
+                    ctx.strokeRect(CHAT_PANEL_X + CHAT_PADDING, CHAT_TOP, MESSAGE_WIDTH, CHAT_VISIBLE_HEIGHT);
+                    ctx.setLineDash([]);
+                }
+            }
+
+            function gameLoop(timestamp) {
+                if (!lastTime) lastTime = timestamp;
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                lastTime = timestamp;
+
+                update(dt);
+                render();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // --- INPUT ---
+            function getLogicalCoords(e) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = LOGICAL_WIDTH / rect.width;
+                const scaleY = LOGICAL_HEIGHT / rect.height;
+                let clientX, clientY;
+                if (e.touches && e.touches.length > 0) {
+                    clientX = e.touches[0].clientX;
+                    clientY = e.touches[0].clientY;
+                } else if (e.changedTouches && e.changedTouches.length > 0) {
+                    clientX = e.changedTouches[0].clientX;
+                    clientY = e.changedTouches[0].clientY;
+                } else {
+                    clientX = e.clientX;
+                    clientY = e.clientY;
+                }
+                return {
+                    x: (clientX - rect.left) * scaleX,
+                    y: (clientY - rect.top) * scaleY
+                };
+            }
+
+            canvas.addEventListener('click', function(e) {
+                e.preventDefault();
+                const coords = getLogicalCoords(e);
+                handleClick(coords.x, coords.y);
+            });
+
+            canvas.addEventListener('touchstart', function(e) {
+                e.preventDefault();
+                const coords = getLogicalCoords(e);
+                handleClick(coords.x, coords.y);
+            }, { passive: false });
+
+            canvas.addEventListener('touchend', function(e) {
+                e.preventDefault();
+            }, { passive: false });
+
+            // Prevent double-tap zoom on mobile
+            canvas.addEventListener('touchmove', function(e) {
+                e.preventDefault();
+            }, { passive: false });
+
+            // Keyboard shortcut for testing
+            window.addEventListener('keydown', function(e) {
+                if (e.key === 'r' || e.key === 'R') {
+                    if (gameState === STATE.OVER) restartGame();
+                }
+                if (e.key === ' ' || e.key === 'Enter') {
+                    if (gameState === STATE.IDLE) startGame();
+                    e.preventDefault();
+                }
+            });
+
+            // --- INIT ---
+            function init() {
+                initStreamWorld();
+                lastTime = performance.now();
+                requestAnimationFrame(gameLoop);
+            }
+
+            init();
+
+            console.log('🎮 Stream Chat Simulator ready!');
+            console.log('📺 Moderate the chat on the right side of the stream.');
+            console.log('🟢 Normal = auto-score | 🔴 Toxic = click to remove | 🟡 Spam = click to delete');
+            console.log('🔵 Questions = click to answer | 💎 Donations = click to thank');
+            console.log('⏱ 90 seconds | Keep the stream mood high!');
+            console.log('💡 Press SPACE or ENTER to start, R to restart after game over.');
+        })();
+    </script>
+</body>
+</html>
