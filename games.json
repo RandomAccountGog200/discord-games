@@ -178,5 +178,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T04:44:17.682Z",
     "updatedAt": "2026-07-16T04:44:17.682Z"
+  },
+  {
+    "slug": "combat-algie-vs-kqi",
+    "title": "Combat: Algie vs Kqi",
+    "description": "combat algie vs kqi",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T04:44:20.038Z",
+    "updatedAt": "2026-07-16T04:44:20.038Z"
   }
 ]
