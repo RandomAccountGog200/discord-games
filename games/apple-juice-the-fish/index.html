@@ -226,6 +226,7 @@
                     collected: false,
                 };
                 appleJuices.push(juice);
+                return juice;
             }
 
             // ---- Spawn Enemy ----
@@ -315,7 +316,6 @@
                     const j = spawnAppleJuice();
                     j.y = 40 + Math.random() * (GAME_H - 80);
                     j.vy = 0.3 + Math.random() * 0.5;
-                    appleJuices.push(j);
                 }
             }
 
