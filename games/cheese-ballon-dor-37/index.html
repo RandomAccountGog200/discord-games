@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, maximum-scale=2.0, minimum-scale=0.5">
+  <title>🥇 Cheese Ballon Dor 37</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      background: linear-gradient(145deg, #1a1e2b 0%, #2a3142 100%);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-family: 'Segoe UI', 'Poppins', system-ui, sans-serif;
+      padding: 1rem;
+      margin: 0;
+      touch-action: manipulation;
+    }
+    .game-container {
+      background: radial-gradient(circle at 30% 20%, #3b4252, #1e2230);
+      border-radius: 3.5rem;
+      padding: 2rem 2rem 2.2rem;
+      box-shadow: 0 30px 50px rgba(0,0,0,0.7), inset 0 2px 8px rgba(255,255,200,0.3);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border: 2px solid #d4a843;
+      max-width: 500px;
+      width: fit-content;
+      margin: auto;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      max-width: 400px;
+      border-radius: 2.5rem;
+      background: radial-gradient(circle at 20% 30%, #fffde7, #f9e3a0);
+      box-shadow: inset 0 -8px 20px rgba(0,0,0,0.4), 0 20px 30px rgba(0,0,0,0.5);
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    .info-panel {
+      width: 100%;
+      margin-top: 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(14px);
+      border-radius: 4rem;
+      padding: 0.8rem 1.8rem;
+      color: #f7eac7;
+      font-weight: bold;
+      border: 1px solid #c9a53b;
+      box-shadow: 0 8px 18px rgba(0,0,0,0.5);
+      gap: 1rem;
+    }
+    .touches-left {
+      background: #ffd966;
+      color: #2d2d2d;
+      padding: 0.5rem 1.4rem;
+      border-radius: 3rem;
+      font-size: 1.3rem;
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      box-shadow: 0 0 20px #fbbf24;
+      letter-spacing: 0.5px;
+    }
+    .money-display {
+      background: #1e3b2f;
+      color: #d4f57a;
+      padding: 0.5rem 1.6rem;
+      border-radius: 3rem;
+      font-size: 1.4rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      box-shadow: 0 0 18px #a3e635;
+      border: 1px solid #86b837;
+    }
+    .cheese-fans {
+      font-size: 0.9rem;
+      background: #4a3b1f;
+      padding: 0.35rem 1.2rem;
+      border-radius: 2rem;
+      color: #ffd78b;
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      white-space: nowrap;
+    }
+    button {
+      background: #f5b042;
+      border: none;
+      color: #1e1e1e;
+      font-weight: bold;
+      font-size: 1.1rem;
+      padding: 0.7rem 2rem;
+      border-radius: 3rem;
+      letter-spacing: 0.8px;
+      cursor: pointer;
+      box-shadow: 0 6px 0 #b36b1e, 0 10px 20px rgba(0,0,0,0.4);
+      transition: all 0.08s ease;
+      background: linear-gradient(180deg, #ffbb4d 0%, #e5941e 100%);
+      border: 1px solid #ffe3a5;
+      text-transform: uppercase;
+      margin-left: 0.5rem;
+    }
+    button:active {
+      transform: translateY(3px);
+      box-shadow: 0 3px 0 #b36b1e, 0 8px 15px rgba(0,0,0,0.5);
+      background: linear-gradient(180deg, #e5a132 0%, #c47a14 100%);
+    }
+    .instructions {
+      color: #ddd8c0;
+      font-size: 0.9rem;
+      margin-bottom: 0.3rem;
+      text-align: center;
+      font-style: italic;
+      background: rgba(0,0,0,0.4);
+      padding: 0.3rem 1.5rem;
+      border-radius: 2rem;
+      display: inline-block;
+      align-self: center;
+    }
+    .footer-text {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      margin-top: 0.4rem;
+    }
+    @media (max-width: 450px) {
+      .info-panel {
+        flex-direction: column;
+        align-items: center;
+        gap: 0.5rem;
+      }
+    }
+  </style>
+</head>
+<body>
+<div style="display: flex; flex-direction: column; align-items: center;">
+  <div class="game-container">
+    <canvas id="ballonCanvas" width="400" height="400" aria-label="Golden Ballon Dor, tap it 37 times"></canvas>
+    <div class="info-panel">
+      <div class="touches-left">
+        <span>✨</span> <span id="tapCounter">37</span> <span>left</span>
+      </div>
+      <div class="money-display">
+        <span>💰</span> <span id="moneyAmount">0</span>
+      </div>
+      <div class="cheese-fans">
+        <span>🧀</span> <span>7000</span><span> want cheese</span>
+      </div>
+    </div>
+    <div class="footer-text">
+      <span class="instructions" id="instructionText">Tap the golden ballon 37 times!</span>
+      <button id="restartButton">↺ New Ballon</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function() {
+    // ----- GAME STATE -----
+    const canvas = document.getElementById('ballonCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // UI elements
+    const tapCounterSpan = document.getElementById('tapCounter');
+    const moneySpan = document.getElementById('moneyAmount');
+    const instructionText = document.getElementById('instructionText');
+
+    // Game constants
+    const TOTAL_TAPS_NEEDED = 37;
+    const CHEESE_FANS = 7000;
+    const MONEY_PER_TAP = 7;   // because 7000 people want cheese, money grows meaningfully
+
+    // State variables
+    let tapsRemaining = TOTAL_TAPS_NEEDED;
+    let moneyEarned = 0;
+    let gameActive = true;      // becomes false when taps reach 0 (ballon popped / goal reached)
+    let celebrationParticles = [];
+    let ballonScale = 1.0;
+    let scaleDirection = 1;    // for subtle breathing animation
+    let lastTimestamp = 0;
+
+    // Ballon position (center of canvas)
+    const ballonX = canvas.width / 2;
+    const ballonY = canvas.height / 2 - 8; // slightly upper for visual balance
+    const ballonBaseRadius = 72;
+
+    // ----- AUDIO (Web Audio API) -----
+    let audioCtx = null;
+
+    function initAudio() {
+      if (audioCtx) return;
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      } catch (e) {
+        console.warn("Web Audio API not supported, sounds disabled.");
+        audioCtx = null;
+      }
+    }
+
+    function playTapSound() {
+      if (!audioCtx) return;
+      // short bright pop sound
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(780, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(520, audioCtx.currentTime + 0.08);
+      gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.13);
+    }
+
+    function playCheeseVictorySound() {
+      if (!audioCtx) return;
+      // celebratory chord
+      const notes = [523.25, 659.25, 783.99]; // C5, E5, G5
+      notes.forEach((freq, i) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime + i * 0.1);
+        gain.gain.setValueAtTime(0.15, audioCtx.currentTime + i * 0.1);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5 + i * 0.1);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(audioCtx.currentTime + i * 0.1);
+        osc.stop(audioCtx.currentTime + 0.6 + i * 0.1);
+      });
+    }
+
+    // ----- PARTICLE SYSTEM for celebration -----
+    function spawnCelebrationParticles(x, y) {
+      for (let i = 0; i < 18; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 2.5 + Math.random() * 6;
+        celebrationParticles.push({
+          x: x,
+          y: y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed - 1.2,
+          life: 0.9 + Math.random() * 0.5,
+          maxLife: 0.9 + Math.random() * 0.5,
+          size: 3 + Math.random() * 8,
+          color: `hsl(${40 + Math.random() * 25}, 90%, 65%)`,
+          type: 'spark'
+        });
+      }
+      // add cheese emoji-like particles (yellow triangles)
+      for (let i = 0; i < 6; i++) {
+        celebrationParticles.push({
+          x: x + (Math.random() - 0.5) * 30,
+          y: y + (Math.random() - 0.5) * 20,
+          vx: (Math.random() - 0.5) * 3.5,
+          vy: -2.5 - Math.random() * 3,
+          life: 0.7 + Math.random() * 0.6,
+          maxLife: 0.7 + Math.random() * 0.6,
+          size: 5 + Math.random() * 9,
+          color: '#fbbf24',
+          type: 'cheese'
+        });
+      }
+    }
+
+    function updateParticles(deltaTime) {
+      for (let i = celebrationParticles.length - 1; i >= 0; i--) {
+        const p = celebrationParticles[i];
+        p.life -= deltaTime;
+        if (p.life <= 0 || p.y > canvas.height + 20 || p.y < -20) {
+          celebrationParticles.splice(i, 1);
+          continue;
+        }
+        p.x += p.vx * deltaTime * 30;
+        p.y += p.vy * deltaTime * 30;
+        p.vy += 0.15 * deltaTime * 30; // gravity
+      }
+    }
+
+    function drawParticles() {
+      for (let p of celebrationParticles) {
+        ctx.save();
+        const alpha = Math.min(p.life / p.maxLife, 0.9);
+        ctx.globalAlpha = alpha;
+        if (p.type === 'cheese') {
+          // tiny cheese wedge
+          ctx.fillStyle = '#fbbf24';
+          ctx.shadowColor = '#f59e0b';
+          ctx.shadowBlur = 6;
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y - p.size * 0.5);
+          ctx.lineTo(p.x + p.size * 0.6, p.y + p.size * 0.4);
+          ctx.lineTo(p.x - p.size * 0.6, p.y + p.size * 0.4);
+          ctx.closePath();
+          ctx.fill();
+          // holes
+          ctx.fillStyle = '#eab308';
+          ctx.shadowBlur = 4;
+          ctx.beginPath();
+          ctx.arc(p.x - 1, p.y + 1, p.size * 0.2, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.fillStyle = p.color;
+          ctx.shadowColor = '#fbbf24';
+          ctx.shadowBlur = 10;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.size * (0.5 + p.life * 0.5), 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+    }
+
+    // ----- HANDLE TAP / CLICK on canvas -----
+    function handleCanvasInteraction(clientX, clientY) {
+      if (!gameActive) {
+        // Game is over (ballon already popped), but we can still allow restart via button.
+        // But we also allow tapping on canvas to restart? Better to use restart button only.
+        // However, let's make it friendly: if game inactive, tapping canvas triggers restart too.
+        restartGame();
+        return;
+      }
+
+      // Initialize audio on first interaction (browser policy)
+      initAudio();
+
+      // Get canvas bounding rect
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;   // canvas physical vs CSS
+      const scaleY = canvas.height / rect.height;
+
+      // Calculate mouse/touch position relative to canvas in canvas pixels
+      const canvasX = (clientX - rect.left) * scaleX;
+      const canvasY = (clientY - rect.top) * scaleY;
+
+      // Check distance from ballon center
+      const dx = canvasX - ballonX;
+      const dy = canvasY - ballonY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      // Effective radius with current breathing scale
+      const effectiveRadius = ballonBaseRadius * ballonScale;
+
+      if (dist <= effectiveRadius + 10) { // small extra tolerance for touch
+        // Valid tap on ballon!
+        if (tapsRemaining > 0) {
+          tapsRemaining--;
+          moneyEarned += MONEY_PER_TAP;
+
+          // Update UI
+          tapCounterSpan.textContent = tapsRemaining;
+          moneySpan.textContent = moneyEarned;
+
+          // Play tap sound
+          playTapSound();
+
+          // Spawn small particles at tap point
+          spawnCelebrationParticles(canvasX, canvasY);
+
+          // Ballon reaction: brief scale bump
+          ballonScale = 1.08;
+          scaleDirection = -1; // will animate back
+
+          // Check if goal reached
+          if (tapsRemaining === 0) {
+            completeBallonGoal();
+          }
+        }
+      } else {
+        // Missed tap? Could give feedback but not necessary.
+        // Slight negative? No, just ignore.
+      }
+    }
+
+    function completeBallonGoal() {
+      gameActive = false;
+      instructionText.textContent = "🎉 YOU DID IT! 7000 people got cheese! 🧀";
+      tapCounterSpan.textContent = "0";
+      // Extra money bonus for completion
+      moneyEarned += 37;
+      moneySpan.textContent = moneyEarned;
+
+      // Big celebration
+      playCheeseVictorySound();
+      for (let i = 0; i < 4; i++) {
+        setTimeout(() => {
+          spawnCelebrationParticles(ballonX, ballonY - 10);
+        }, i * 70);
+      }
+      // Also spawn many particles around
+      spawnCelebrationParticles(ballonX, ballonY);
+      spawnCelebrationParticles(ballonX - 15, ballonY + 15);
+      spawnCelebrationParticles(ballonX + 20, ballonY - 5);
+    }
+
+    function restartGame() {
+      // Reset state
+      tapsRemaining = TOTAL_TAPS_NEEDED;
+      moneyEarned = 0;
+      gameActive = true;
+      celebrationParticles = [];
+      ballonScale = 1.0;
+      scaleDirection = 1;
+
+      // Update UI
+      tapCounterSpan.textContent = tapsRemaining;
+      moneySpan.textContent = "0";
+      instructionText.textContent = "Tap the golden ballon 37 times!";
+
+      // small audio init on restart if needed
+      initAudio();
+    }
+
+    // ----- EVENT LISTENERS -----
+    function bindEvents() {
+      // Mouse events
+      canvas.addEventListener('click', (e) => {
+        e.preventDefault();
+        handleCanvasInteraction(e.clientX, e.clientY);
+      });
+
+      // Touch events for mobile
+      canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        if (touch) {
+          handleCanvasInteraction(touch.clientX, touch.clientY);
+        }
+      }, { passive: false });
+
+      // Prevent default touch actions on canvas to avoid zoom/scroll interference
+      canvas.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+      canvas.addEventListener('touchend', (e) => e.preventDefault());
+      canvas.addEventListener('touchcancel', (e) => e.preventDefault());
+
+      // Restart button
+      document.getElementById('restartButton').addEventListener('click', (e) => {
+        restartGame();
+      });
+
+      // Also allow keyboard 'R' for restart
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'r' || e.key === 'R') {
+          e.preventDefault();
+          restartGame();
+        }
+      });
+    }
+
+    // ----- ANIMATION LOOP (drawing) -----
+    function drawBallon() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Draw subtle background glow
+      const gradient = ctx.createRadialGradient(ballonX, ballonY - 5, ballonBaseRadius * 0.6, ballonX, ballonY, ballonBaseRadius * 1.6);
+      gradient.addColorStop(0, '#fff9e6');
+      gradient.addColorStop(0.5, '#fce38d');
+      gradient.addColorStop(1, '#d49b3b');
+      ctx.fillStyle = gradient;
+      ctx.shadowColor = '#fbbf24';
+      ctx.shadowBlur = 28;
+      ctx.beginPath();
+      ctx.arc(ballonX, ballonY, ballonBaseRadius * ballonScale, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Inner highlight
+      ctx.shadowBlur = 15;
+      ctx.fillStyle = '#fffef0';
+      ctx.beginPath();
+      ctx.arc(ballonX - 12, ballonY - 14, ballonBaseRadius * 0.28 * ballonScale, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Ballon texture / golden stripes
+      ctx.shadowBlur = 8;
+      ctx.strokeStyle = '#e6b422';
+      ctx.lineWidth = 2.5;
+      for (let i = 0; i < 5; i++) {
+        let angle = (i * 0.8) + 0.2;
+        ctx.beginPath();
+        ctx.ellipse(ballonX, ballonY, ballonBaseRadius * 0.8 * ballonScale, ballonBaseRadius * 0.25 * ballonScale, angle, 0, Math.PI * 2);
+        ctx.strokeStyle = '#c99b2c';
+        ctx.stroke();
+      }
+      
+      // Ballon knot at bottom
+      ctx.fillStyle = '#8b6b2c';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.ellipse(ballonX, ballonY + ballonBaseRadius * 0.82 * ballonScale, 7, 9, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#5e481c';
+      ctx.beginPath();
+      ctx.arc(ballonX, ballonY + ballonBaseRadius * 0.88 * ballonScale, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // String
+      ctx.strokeStyle = '#d4b87a';
+      ctx.lineWidth = 2.2;
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.moveTo(ballonX, ballonY + ballonBaseRadius * 0.92 * ballonScale);
+      ctx.quadraticCurveTo(ballonX - 12, ballonY + ballonBaseRadius * 1.3, ballonX - 6, ballonY + ballonBaseRadius * 1.55);
+      ctx.stroke();
+      
+      // Draw "37" small text on ballon maybe
+      ctx.font = 'bold 20px "Segoe UI", "Poppins"';
+      ctx.fillStyle = '#b8861c';
+      ctx.shadowBlur = 12;
+      ctx.shadowColor = '#ffd966';
+      ctx.fillText('⚽', ballonX - 14, ballonY - 22);
+      ctx.font = 'italic bold 18px "Segoe UI"';
+      ctx.fillStyle = '#4a3800';
+      ctx.shadowBlur = 6;
+      ctx.fillText('37', ballonX + 8, ballonY - 8);
+      
+      // Reset shadow for particles
+      ctx.shadowBlur = 0;
+      ctx.shadowColor = 'transparent';
+      
+      // Draw particles on top
+      drawParticles();
+      
+      // If game inactive, draw overlay message
+      if (!gameActive) {
+        ctx.save();
+        ctx.font = 'bold 26px "Segoe UI", "Poppins"';
+        ctx.fillStyle = '#1e293b';
+        ctx.shadowColor = '#fde047';
+        ctx.shadowBlur = 18;
+        ctx.fillText('🧀 CHEESE!', ballonX - 85, ballonY - 90);
+        ctx.restore();
+      }
+    }
+
+    function animate(timestamp) {
+      if (lastTimestamp === 0) lastTimestamp = timestamp;
+      const deltaTime = Math.min(0.05, (timestamp - lastTimestamp) / 1000); // in seconds, cap
+      lastTimestamp = timestamp;
+
+      // Update ballon breathing scale
+      if (gameActive) {
+        // subtle breathing
+        if (scaleDirection === 1) {
+          ballonScale += 0.0025;
+          if (ballonScale >= 1.035) scaleDirection = -1;
+        } else {
+          ballonScale -= 0.0025;
+          if (ballonScale <= 0.97) scaleDirection = 1;
+        }
+      } else {
+        // when game inactive, ballon might still slightly pulse but slower
+        ballonScale += 0.001 * (scaleDirection);
+        if (ballonScale > 1.06) scaleDirection = -1;
+        if (ballonScale < 0.98) scaleDirection = 1;
+      }
+
+      // Update particles
+      updateParticles(deltaTime);
+
+      // Draw everything
+      drawBallon();
+
+      requestAnimationFrame(animate);
+    }
+
+    // Initial setup
+    bindEvents();
+    // Set initial UI
+    tapCounterSpan.textContent = tapsRemaining;
+    moneySpan.textContent = "0";
+    instructionText.textContent = "Tap the golden ballon 37 times!";
+
+    // Start animation
+    requestAnimationFrame(animate);
+
+    // Ensure audio context can be started on user gesture
+    document.addEventListener('click', initAudio, { once: true });
+    document.addEventListener('touchstart', initAudio, { once: true });
+  })();
+</script>
+</body>
+</html>
