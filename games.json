@@ -115,5 +115,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T04:35:32.266Z",
     "updatedAt": "2026-07-16T04:35:32.266Z"
+  },
+  {
+    "slug": "bifffffff-penalty-shootout",
+    "title": "BIFFFFFFF! Penalty Shootout",
+    "description": "BIFFFFFFF WHEN PENILTY IN SOCCAR",
+    "creator": "kaipie16",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T04:36:05.423Z",
+    "updatedAt": "2026-07-16T04:36:05.423Z"
   }
 ]
