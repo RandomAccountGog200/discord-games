@@ -160,5 +160,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T04:43:34.705Z",
     "updatedAt": "2026-07-16T04:43:34.705Z"
+  },
+  {
+    "slug": "apple-time",
+    "title": "🍎 Apple Time!",
+    "description": "apple time we want",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T04:43:59.552Z",
+    "updatedAt": "2026-07-16T04:43:59.552Z"
   }
 ]
