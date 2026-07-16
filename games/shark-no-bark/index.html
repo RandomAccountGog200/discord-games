@@ -1,0 +1,1341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Shark No Bark 🦈</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0a1a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+        canvas {
+            display: block;
+            border-radius: 12px;
+            box-shadow: 0 0 60px rgba(0, 150, 255, 0.3), 0 0 120px rgba(0, 80, 180, 0.2);
+            cursor: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            // --- Audio Engine ---
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    try {
+                        audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                    } catch (e) {
+                        audioCtx = null;
+                    }
+                }
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            }
+
+            function playSound(freq, type, duration, vol = 0.15, slideTo = 0) {
+                if (!audioCtx) return;
+                try {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                    if (slideTo) osc.frequency.linearRampToValueAtTime(slideTo, audioCtx.currentTime + duration);
+                    gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(audioCtx.currentTime);
+                    osc.stop(audioCtx.currentTime + duration);
+                } catch (e) { /* silent */ }
+            }
+
+            function sfxBark() {
+                if (!audioCtx) return;
+                try {
+                    const dur = 0.25;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(180, audioCtx.currentTime);
+                    osc.frequency.linearRampToValueAtTime(60, audioCtx.currentTime + dur);
+                    gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+                    const osc2 = audioCtx.createOscillator();
+                    const gain2 = audioCtx.createGain();
+                    osc2.type = 'square';
+                    osc2.frequency.setValueAtTime(90, audioCtx.currentTime);
+                    osc2.frequency.linearRampToValueAtTime(30, audioCtx.currentTime + dur);
+                    gain2.gain.setValueAtTime(0.12, audioCtx.currentTime);
+                    gain2.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc2.connect(gain2);
+                    gain2.connect(audioCtx.destination);
+                    osc.start(audioCtx.currentTime);
+                    osc.stop(audioCtx.currentTime + dur);
+                    osc2.start(audioCtx.currentTime);
+                    osc2.stop(audioCtx.currentTime + dur);
+                } catch (e) { /* silent */ }
+            }
+
+            function sfxCollect() {
+                playSound(600, 'sine', 0.12, 0.18, 900);
+                setTimeout(() => playSound(1000, 'sine', 0.08, 0.1, 1400), 60);
+            }
+
+            function sfxHit() {
+                playSound(50, 'triangle', 0.35, 0.25, 20);
+                if (audioCtx) {
+                    try {
+                        const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.2, audioCtx.sampleRate);
+                        const data = buf.getChannelData(0);
+                        for (let i = 0; i < data.length; i++) {
+                            data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (audioCtx.sampleRate * 0.04));
+                        }
+                        const noise = audioCtx.createBufferSource();
+                        noise.buffer = buf;
+                        const ng = audioCtx.createGain();
+                        ng.gain.setValueAtTime(0.15, audioCtx.currentTime);
+                        ng.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
+                        noise.connect(ng);
+                        ng.connect(audioCtx.destination);
+                        noise.start(audioCtx.currentTime);
+                    } catch (e) { /* silent */ }
+                }
+            }
+
+            function sfxGameOver() {
+                playSound(200, 'triangle', 0.5, 0.5, 40);
+                setTimeout(() => playSound(150, 'triangle', 0.4, 0.45, 30), 300);
+            }
+
+            // --- Canvas Setup ---
+            let W, H, dpr;
+
+            function resize() {
+                dpr = Math.min(window.devicePixelRatio || 1, 2);
+                W = window.innerWidth;
+                H = window.innerHeight;
+                canvas.width = W * dpr;
+                canvas.height = H * dpr;
+                canvas.style.width = W + 'px';
+                canvas.style.height = H + 'px';
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.scale(dpr, dpr);
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            // --- Game State ---
+            const STATE = { INTRO: 'intro', PLAYING: 'playing', GAMEOVER: 'gameover' };
+            let gameState = STATE.INTRO;
+            let score = 0;
+            let highScore = parseInt(localStorage.getItem('sharkNoBarkHighScore')) || 0;
+            let lives = 3;
+            let invincibleTimer = 0;
+            let shakeTimer = 0;
+            let shakeIntensity = 0;
+            let difficulty = 1;
+            let barkSpawnTimer = 0;
+            let fishSpawnTimer = 0;
+            let survivalTime = 0;
+            let comboCount = 0;
+            let comboTimer = 0;
+            let comboTexts = [];
+
+            // --- Player (Shark) ---
+            const player = {
+                x: 0,
+                y: 0,
+                vx: 0,
+                vy: 0,
+                size: 28,
+                speed: 320,
+                facingRight: true,
+                mouthOpen: 0,
+                mouthDir: 1,
+                trailPositions: [],
+            };
+
+            function resetPlayer() {
+                player.x = W / 2;
+                player.y = H / 2;
+                player.vx = 0;
+                player.vy = 0;
+                player.facingRight = true;
+                player.mouthOpen = 0;
+                player.mouthDir = 1;
+                player.trailPositions = [];
+                invincibleTimer = 0;
+                lives = 3;
+                score = 0;
+                survivalTime = 0;
+                difficulty = 1;
+                barkSpawnTimer = 1.0;
+                fishSpawnTimer = 1.5;
+                comboCount = 0;
+                comboTimer = 0;
+                comboTexts = [];
+                shakeTimer = 0;
+                shakeIntensity = 0;
+            }
+
+            // --- Game Objects ---
+            let barkWaves = [];
+            let fishes = [];
+            let particles = [];
+            let bubbles = [];
+            let dogFaces = [];
+            let floatingTexts = [];
+
+            function spawnBarkWave() {
+                let ox, oy;
+                const margin = 60;
+                const side = Math.floor(Math.random() * 4);
+                switch (side) {
+                    case 0:
+                        ox = Math.random() * W;
+                        oy = -margin;
+                        break;
+                    case 1:
+                        ox = W + margin;
+                        oy = Math.random() * H;
+                        break;
+                    case 2:
+                        ox = Math.random() * W;
+                        oy = H + margin;
+                        break;
+                    case 3:
+                        ox = -margin;
+                        oy = Math.random() * H;
+                        break;
+                }
+                // Sometimes spawn closer to player for challenge
+                if (Math.random() < 0.3 && gameState === STATE.PLAYING) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = 180 + Math.random() * 250;
+                    ox = player.x + Math.cos(angle) * dist;
+                    oy = player.y + Math.sin(angle) * dist;
+                    ox = Math.max(-40, Math.min(W + 40, ox));
+                    oy = Math.max(-40, Math.min(H + 40, oy));
+                }
+                const maxR = 180 + Math.random() * 200;
+                barkWaves.push({
+                    ox,
+                    oy,
+                    radius: 8,
+                    maxRadius: maxR,
+                    speed: 90 + Math.random() * 100 + difficulty * 15,
+                    opacity: 0.9,
+                    ringWidth: 22,
+                    hitPlayer: false,
+                });
+                // Spawn dog face at origin occasionally
+                if (Math.random() < 0.55) {
+                    dogFaces.push({
+                        x: ox,
+                        y: oy,
+                        life: 1.5,
+                        maxLife: 1.5,
+                        size: 18 + Math.random() * 16,
+                    });
+                }
+                sfxBark();
+            }
+
+            function spawnFish() {
+                const fromLeft = Math.random() < 0.5;
+                const fx = fromLeft ? -30 : W + 30;
+                const fy = 60 + Math.random() * (H - 120);
+                const fvx = (fromLeft ? 1 : -1) * (80 + Math.random() * 160);
+                const colors = ['#ff6b6b', '#ffd93d', '#6bcb77', '#4d96ff', '#ff922b', '#f06595',
+                '#20c997'];
+                const col = colors[Math.floor(Math.random() * colors.length)];
+                fishes.push({
+                    x: fx,
+                    y: fy,
+                    vx: fvx,
+                    vy: (Math.random() - 0.5) * 40,
+                    size: 10 + Math.random() * 14,
+                    color: col,
+                    bobOffset: Math.random() * Math.PI * 2,
+                    alive: true,
+                });
+            }
+
+            function spawnParticles(x, y, count, color, spread = 3, life = 0.6) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * spread * 60;
+                    particles.push({
+                        x,
+                        y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        life,
+                        maxLife: life,
+                        color,
+                        size: 2 + Math.random() * 4,
+                    });
+                }
+            }
+
+            function spawnFloatingText(x, y, text, color = '#fff') {
+                floatingTexts.push({
+                    x,
+                    y,
+                    text,
+                    color,
+                    life: 1.2,
+                    maxLife: 1.2,
+                });
+            }
+
+            function spawnBubbles(count) {
+                for (let i = 0; i < count; i++) {
+                    bubbles.push({
+                        x: Math.random() * W,
+                        y: H + 20 + Math.random() * 60,
+                        vy: -20 - Math.random() * 50,
+                        size: 2 + Math.random() * 5,
+                        life: 3 + Math.random() * 5,
+                        maxLife: 3 + Math.random() * 5,
+                        wobble: Math.random() * Math.PI * 2,
+                        wobbleSpeed: 0.5 + Math.random() * 2,
+                    });
+                }
+            }
+
+            // --- Initialize bubbles ---
+            function initBubbles() {
+                bubbles = [];
+                spawnBubbles(40);
+            }
+            initBubbles();
+
+            // --- Input Handling ---
+            const keys = {};
+            let mouseDown = false;
+            let touchActive = false;
+            let touchX = 0;
+            let touchY = 0;
+            let useTouchMove = false;
+
+            window.addEventListener('keydown', (e) => {
+                keys[e.key.toLowerCase()] = true;
+                if (gameState === STATE.INTRO) {
+                    startGame();
+                }
+                if (gameState === STATE.GAMEOVER && (e.key === ' ' || e.key === 'Enter' || e.key === 'r')) {
+                    restartGame();
+                }
+                initAudio();
+                e.preventDefault();
+            });
+
+            window.addEventListener('keyup', (e) => {
+                keys[e.key.toLowerCase()] = false;
+            });
+
+            canvas.addEventListener('mousedown', (e) => {
+                initAudio();
+                mouseDown = true;
+                useTouchMove = false;
+                if (gameState === STATE.INTRO) startGame();
+                if (gameState === STATE.GAMEOVER) restartGame();
+                const rect = canvas.getBoundingClientRect();
+                touchX = e.clientX - rect.left;
+                touchY = e.clientY - rect.top;
+            });
+
+            canvas.addEventListener('mousemove', (e) => {
+                if (mouseDown) {
+                    const rect = canvas.getBoundingClientRect();
+                    touchX = e.clientX - rect.left;
+                    touchY = e.clientY - rect.top;
+                }
+            });
+
+            canvas.addEventListener('mouseup', () => { mouseDown = false; });
+            canvas.addEventListener('mouseleave', () => { mouseDown = false; });
+
+            canvas.addEventListener('touchstart', (e) => {
+                initAudio();
+                touchActive = true;
+                useTouchMove = true;
+                if (gameState === STATE.INTRO) startGame();
+                if (gameState === STATE.GAMEOVER) restartGame();
+                const rect = canvas.getBoundingClientRect();
+                touchX = e.clientX - rect.left;
+                touchY = e.clientY - rect.top;
+                e.preventDefault();
+            }, { passive: false });
+
+            canvas.addEventListener('touchmove', (e) => {
+                if (touchActive) {
+                    const rect = canvas.getBoundingClientRect();
+                    touchX = e.clientX - rect.left;
+                    touchY = e.clientY - rect.top;
+                }
+                e.preventDefault();
+            }, { passive: false });
+
+            canvas.addEventListener('touchend', () => { touchActive = false;
+                useTouchMove = false; });
+            canvas.addEventListener('touchcancel', () => { touchActive = false;
+                useTouchMove = false; });
+
+            function startGame() {
+                gameState = STATE.PLAYING;
+                resetPlayer();
+                barkWaves = [];
+                fishes = [];
+                particles = [];
+                dogFaces = [];
+                floatingTexts = [];
+                comboTexts = [];
+                comboCount = 0;
+                comboTimer = 0;
+                barkSpawnTimer = 0.8;
+                fishSpawnTimer = 1.0;
+                initBubbles();
+            }
+
+            function restartGame() {
+                startGame();
+            }
+
+            function gameOver() {
+                gameState = STATE.GAMEOVER;
+                sfxGameOver();
+                shakeIntensity = 18;
+                shakeTimer = 0.5;
+                spawnParticles(player.x, player.y, 60, '#ff4444', 8, 1.2);
+                spawnParticles(player.x, player.y, 30, '#ffaa00', 6, 1.0);
+                if (score > highScore) {
+                    highScore = score;
+                    try { localStorage.setItem('sharkNoBarkHighScore', highScore); } catch (e) {}
+                }
+                barkWaves = [];
+                fishes = [];
+                dogFaces = [];
+            }
+
+            function hitPlayer() {
+                if (invincibleTimer > 0 || gameState !== STATE.PLAYING) return;
+                lives--;
+                invincibleTimer = 1.8;
+                shakeIntensity = 12;
+                shakeTimer = 0.35;
+                sfxHit();
+                spawnParticles(player.x, player.y, 35, '#ff6644', 6, 0.7);
+                spawnParticles(player.x, player.y, 20, '#ffffff', 4, 0.5);
+                spawnFloatingText(player.x, player.y - 20, '-1 ❤️', '#ff4444');
+                comboCount = 0;
+                comboTimer = 0;
+                // Knockback
+                if (barkWaves.length > 0) {
+                    const nearest = barkWaves.reduce((a, b) => {
+                        const da = Math.hypot(player.x - a.ox, player.y - a.oy);
+                        const db = Math.hypot(player.x - b.ox, player.y - b.oy);
+                        return da < db ? a : b;
+                    });
+                    const dx = player.x - nearest.ox;
+                    const dy = player.y - nearest.oy;
+                    const dist = Math.hypot(dx, dy) || 1;
+                    player.vx += (dx / dist) * 300;
+                    player.vy += (dy / dist) * 300;
+                }
+                if (lives <= 0) {
+                    gameOver();
+                }
+            }
+
+            // --- Update ---
+            function update(dt) {
+                if (gameState !== STATE.PLAYING) {
+                    // Still update bubbles
+                    updateBubbles(dt);
+                    updateParticles(dt);
+                    updateFloatingTexts(dt);
+                    if (gameState === STATE.GAMEOVER) {
+                        if (shakeTimer > 0) shakeTimer -= dt;
+                    }
+                    return;
+                }
+
+                const effectiveDt = Math.min(dt, 0.1);
+                survivalTime += effectiveDt;
+                score += Math.floor(effectiveDt * 10);
+                difficulty = 1 + Math.floor(survivalTime / 20);
+
+                // Player movement
+                let targetVx = 0;
+                let targetVy = 0;
+
+                if (useTouchMove || mouseDown) {
+                    const dx = touchX - player.x;
+                    const dy = touchY - player.y;
+                    const dist = Math.hypot(dx, dy);
+                    if (dist > 8) {
+                        const normX = dx / dist;
+                        const normY = dy / dist;
+                        const speedFactor = Math.min(dist / 60, 1.5);
+                        targetVx = normX * player.speed * speedFactor;
+                        targetVy = normY * player.speed * speedFactor;
+                    }
+                } else {
+                    const kx = (keys['arrowright'] || keys['d'] ? 1 : 0) - (keys['arrowleft'] || keys['a'] ? 1 : 0);
+                    const ky = (keys['arrowdown'] || keys['s'] ? 1 : 0) - (keys['arrowup'] || keys['w'] ? 1 : 0);
+                    const kmag = Math.hypot(kx, ky);
+                    if (kmag > 0) {
+                        targetVx = (kx / kmag) * player.speed;
+                        targetVy = (ky / kmag) * player.speed;
+                    }
+                }
+
+                // Smooth velocity
+                const accel = 1800;
+                const decel = 1200;
+                if (Math.abs(targetVx) > 0.1 || Math.abs(targetVy) > 0.1) {
+                    player.vx += (targetVx - player.vx) * Math.min(accel * effectiveDt / player.speed, 1);
+                    player.vy += (targetVy - player.vy) * Math.min(accel * effectiveDt / player.speed, 1);
+                } else {
+                    player.vx += (0 - player.vx) * Math.min(decel * effectiveDt / player.speed, 1);
+                    player.vy += (0 - player.vy) * Math.min(decel * effectiveDt / player.speed, 1);
+                }
+
+                // Clamp speed
+                const spd = Math.hypot(player.vx, player.vy);
+                if (spd > player.speed * 1.3) {
+                    player.vx = (player.vx / spd) * player.speed * 1.3;
+                    player.vy = (player.vy / spd) * player.speed * 1.3;
+                }
+
+                player.x += player.vx * effectiveDt;
+                player.y += player.vy * effectiveDt;
+
+                // Boundaries
+                const margin = player.size;
+                player.x = Math.max(margin, Math.min(W - margin, player.x));
+                player.y = Math.max(margin, Math.min(H - margin, player.y));
+                if (player.x <= margin || player.x >= W - margin) player.vx *= 0.3;
+                if (player.y <= margin || player.y >= H - margin) player.vy *= 0.3;
+
+                // Facing direction
+                if (Math.abs(player.vx) > 15) {
+                    player.facingRight = player.vx > 0;
+                }
+
+                // Mouth animation
+                player.mouthOpen += player.mouthDir * effectiveDt * 4;
+                if (player.mouthOpen >= 1) player.mouthDir = -1;
+                if (player.mouthOpen <= 0) player.mouthDir = 1;
+
+                // Trail
+                if (spd > 50) {
+                    player.trailPositions.push({ x: player.x, y: player.y, life: 0.35, maxLife: 0.35 });
+                }
+                for (let t of player.trailPositions) t.life -= effectiveDt;
+                player.trailPositions = player.trailPositions.filter(t => t.life > 0);
+
+                // Invincibility
+                if (invincibleTimer > 0) invincibleTimer -= effectiveDt;
+
+                // Shake
+                if (shakeTimer > 0) shakeTimer -= effectiveDt;
+
+                // Bark wave spawning
+                barkSpawnTimer -= effectiveDt;
+                const spawnInterval = Math.max(0.35, 1.3 - difficulty * 0.07);
+                if (barkSpawnTimer <= 0) {
+                    barkSpawnTimer = spawnInterval + (Math.random() - 0.5) * 0.5;
+                    spawnBarkWave();
+                    if (difficulty >= 3 && Math.random() < 0.3) {
+                        setTimeout(() => { if (gameState === STATE.PLAYING) spawnBarkWave(); }, 150 + Math.random() *
+                            300);
+                    }
+                }
+
+                // Fish spawning
+                fishSpawnTimer -= effectiveDt;
+                if (fishSpawnTimer <= 0) {
+                    fishSpawnTimer = 1.2 + Math.random() * 2.5;
+                    spawnFish();
+                    if (Math.random() < 0.4) {
+                        setTimeout(() => { if (gameState === STATE.PLAYING) spawnFish(); }, 200 + Math.random() * 600);
+                    }
+                }
+
+                // Update bark waves
+                for (let bw of barkWaves) {
+                    bw.radius += bw.speed * effectiveDt;
+                    bw.opacity = Math.max(0, 1 - (bw.radius / bw.maxRadius));
+                }
+                // Check collisions
+                for (let bw of barkWaves) {
+                    if (bw.hitPlayer) continue;
+                    if (invincibleTimer > 0) continue;
+                    const dist = Math.hypot(player.x - bw.ox, player.y - bw.oy);
+                    const innerEdge = bw.radius - bw.ringWidth * 0.6;
+                    const outerEdge = bw.radius + bw.ringWidth * 0.6;
+                    if (dist > innerEdge - player.size * 0.7 && dist < outerEdge + player.size * 0.7) {
+                        bw.hitPlayer = true;
+                        hitPlayer();
+                    }
+                }
+                // Remove expired
+                barkWaves = barkWaves.filter(bw => bw.radius < bw.maxRadius && bw.opacity > 0.02);
+
+                // Update dog faces
+                for (let df of dogFaces) df.life -= effectiveDt;
+                dogFaces = dogFaces.filter(df => df.life > 0);
+
+                // Update fishes
+                for (let f of fishes) {
+                    f.x += f.vx * effectiveDt;
+                    f.y += f.vy * effectiveDt;
+                    f.y += Math.sin(survivalTime * 3 + f.bobOffset) * effectiveDt * 25;
+                }
+                // Check fish collection
+                for (let f of fishes) {
+                    if (!f.alive) continue;
+                    const dist = Math.hypot(player.x - f.x, player.y - f.y);
+                    if (dist < player.size + f.size) {
+                        f.alive = false;
+                        comboCount++;
+                        comboTimer = 1.5;
+                        const bonusPoints = 10 + Math.min(comboCount - 1, 8) * 5;
+                        score += bonusPoints;
+                        sfxCollect();
+                        spawnParticles(f.x, f.y, 12, f.color, 3, 0.5);
+                        spawnFloatingText(f.x, f.y - 10, '+' + bonusPoints, f.color);
+                        if (comboCount >= 3 && comboCount % 3 === 0) {
+                            spawnFloatingText(f.x, f.y - 30, comboCount + 'x COMBO!', '#ffd700');
+                        }
+                    }
+                }
+                fishes = fishes.filter(f => f.alive && f.x > -60 && f.x < W + 60 && f.y > -60 && f.y < H + 60);
+
+                // Combo timer
+                if (comboTimer > 0) {
+                    comboTimer -= effectiveDt;
+                    if (comboTimer <= 0) comboCount = 0;
+                }
+
+                // Update particles
+                updateParticles(effectiveDt);
+
+                // Update floating texts
+                updateFloatingTexts(effectiveDt);
+
+                // Update bubbles
+                updateBubbles(effectiveDt);
+
+                // Spawn ambient bubbles
+                if (Math.random() < effectiveDt * 8) {
+                    bubbles.push({
+                        x: Math.random() * W,
+                        y: H + 10,
+                        vy: -15 - Math.random() * 40,
+                        size: 1.5 + Math.random() * 4,
+                        life: 3 + Math.random() * 4,
+                        maxLife: 3 + Math.random() * 4,
+                        wobble: Math.random() * Math.PI * 2,
+                        wobbleSpeed: 0.3 + Math.random() * 1.5,
+                    });
+                }
+            }
+
+            function updateParticles(dt) {
+                for (let p of particles) {
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.life -= dt;
+                }
+                particles = particles.filter(p => p.life > 0);
+            }
+
+            function updateFloatingTexts(dt) {
+                for (let ft of floatingTexts) {
+                    ft.y -= 40 * dt;
+                    ft.life -= dt;
+                }
+                floatingTexts = floatingTexts.filter(ft => ft.life > 0);
+            }
+
+            function updateBubbles(dt) {
+                for (let b of bubbles) {
+                    b.y += b.vy * dt;
+                    b.x += Math.sin(b.wobble) * dt * 15;
+                    b.wobble += b.wobbleSpeed * dt;
+                    b.life -= dt;
+                    if (b.y < -20) b.life = 0;
+                }
+                bubbles = bubbles.filter(b => b.life > 0);
+                if (bubbles.length < 35) spawnBubbles(8);
+            }
+
+            // --- Drawing ---
+            function drawOceanBackground() {
+                const grad = ctx.createLinearGradient(0, 0, 0, H);
+                grad.addColorStop(0, '#0b3d6b');
+                grad.addColorStop(0.35, '#0a2f55');
+                grad.addColorStop(0.7, '#061e3a');
+                grad.addColorStop(1, '#03101f');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, W, H);
+
+                // Light rays
+                ctx.save();
+                ctx.globalAlpha = 0.04;
+                for (let i = 0; i < 5; i++) {
+                    const rx = W * 0.15 + i * W * 0.18;
+                    const gradRay = ctx.createLinearGradient(rx, 0, rx, H);
+                    gradRay.addColorStop(0, '#ffffff');
+                    gradRay.addColorStop(1, 'transparent');
+                    ctx.fillStyle = gradRay;
+                    ctx.beginPath();
+                    ctx.moveTo(rx - 30, 0);
+                    ctx.lineTo(rx + 30, 0);
+                    ctx.lineTo(rx + 120, H);
+                    ctx.lineTo(rx - 80, H);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+                ctx.restore();
+
+                // Subtle caustic patterns
+                ctx.save();
+                ctx.globalAlpha = 0.025;
+                for (let i = 0; i < 20; i++) {
+                    const cx = (i * 173 + survivalTime * 40) % W;
+                    const cy = (i * 97 + 50) % H;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 20 + Math.sin(i + survivalTime) * 10, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.restore();
+            }
+
+            function drawSeaweed() {
+                ctx.save();
+                const clusters = [
+                    { x: W * 0.05, count: 5, height: 100 },
+                    { x: W * 0.12, count: 3, height: 70 },
+                    { x: W * 0.85, count: 4, height: 90 },
+                    { x: W * 0.93, count: 6, height: 110 },
+                    { x: W * 0.78, count: 3, height: 65 },
+                ];
+                for (let cl of clusters) {
+                    for (let i = 0; i < cl.count; i++) {
+                        const sx = cl.x + i * 18 - cl.count * 9;
+                        const sh = cl.height + Math.sin(survivalTime * 1.5 + i) * 15;
+                        const sway = Math.sin(survivalTime * 2 + i * 0.7) * 12;
+                        ctx.strokeStyle = '#0d5c2e';
+                        ctx.lineWidth = 3 + Math.random() * 2;
+                        ctx.lineCap = 'round';
+                        ctx.beginPath();
+                        ctx.moveTo(sx, H);
+                        const cp1x = sx + sway;
+                        const cp1y = H - sh * 0.5;
+                        const cp2x = sx - sway * 0.6;
+                        const cp2y = H - sh * 0.75;
+                        ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, sx + sway * 0.3, H - sh);
+                        ctx.stroke();
+                        // Lighter highlight
+                        ctx.strokeStyle = '#0f7d3a';
+                        ctx.lineWidth = 1.5;
+                        ctx.globalAlpha = 0.5;
+                        ctx.stroke();
+                        ctx.globalAlpha = 1;
+                    }
+                }
+                ctx.restore();
+            }
+
+            function drawShark(x, y, facingRight, mouthOpen, invincible) {
+                ctx.save();
+                ctx.translate(x, y);
+                if (!facingRight) ctx.scale(-1, 1);
+
+                // Flash when invincible
+                if (invincible && Math.floor(invincibleTimer * 20) % 2 === 0) {
+                    ctx.globalAlpha = 0.4;
+                }
+
+                const s = player.size;
+                // Body
+                const bodyGrad = ctx.createLinearGradient(0, -s * 0.6, 0, s * 0.6);
+                bodyGrad.addColorStop(0, '#4a7c9b');
+                bodyGrad.addColorStop(0.4, '#6b9db8');
+                bodyGrad.addColorStop(0.55, '#9cc4d9');
+                bodyGrad.addColorStop(0.7, '#c9dfe8');
+                bodyGrad.addColorStop(1, '#e8f0f4');
+
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                // Nose
+                ctx.moveTo(s * 0.9, 0);
+                // Upper body curve
+                ctx.bezierCurveTo(s * 0.8, -s * 0.35, s * 0.3, -s * 0.55, -s * 0.3, -s * 0.25);
+                // Dorsal fin
+                ctx.lineTo(-s * 0.15, -s * 0.7);
+                ctx.lineTo(-s * 0.4, -s * 0.2);
+                // Upper tail
+                ctx.lineTo(-s * 0.85, -s * 0.1);
+                ctx.lineTo(-s * 1.05, -s * 0.55);
+                ctx.lineTo(-s * 0.7, -s * 0.02);
+                // Tail notch
+                ctx.lineTo(-s * 1.1, 0);
+                // Lower tail
+                ctx.lineTo(-s * 0.7, s * 0.02);
+                ctx.lineTo(-s * 1.05, s * 0.55);
+                ctx.lineTo(-s * 0.85, s * 0.1);
+                // Lower body
+                ctx.lineTo(-s * 0.4, s * 0.2);
+                // Pelvic fin
+                ctx.lineTo(-s * 0.2, s * 0.55);
+                ctx.lineTo(-s * 0.05, s * 0.25);
+                // Belly curve back to nose
+                ctx.bezierCurveTo(s * 0.3, s * 0.4, s * 0.7, s * 0.15, s * 0.9, 0);
+                ctx.closePath();
+                ctx.fill();
+
+                // Outline
+                ctx.strokeStyle = '#2c5068';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Pectoral fin
+                ctx.fillStyle = '#5a8aa8';
+                ctx.beginPath();
+                ctx.moveTo(s * 0.25, s * 0.1);
+                ctx.bezierCurveTo(s * 0.1, s * 0.5, -s * 0.1, s * 0.55, -s * 0.2, s * 0.3);
+                ctx.bezierCurveTo(-s * 0.05, s * 0.2, s * 0.1, s * 0.08, s * 0.25, s * 0.1);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+
+                // Eye
+                const eyeX = s * 0.5;
+                const eyeY = -s * 0.15;
+                ctx.fillStyle = '#111';
+                ctx.beginPath();
+                ctx.arc(eyeX, eyeY, s * 0.1, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(eyeX - s * 0.02, eyeY - s * 0.03, s * 0.04, 0, Math.PI * 2);
+                ctx.fill();
+                // Eye ring
+                ctx.strokeStyle = '#1a1a1a';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.arc(eyeX, eyeY, s * 0.1, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Mouth
+                const mouthY = s * 0.05;
+                const mouthLen = s * 0.35;
+                ctx.strokeStyle = '#1a3040';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(s * 0.55, mouthY);
+                ctx.lineTo(s * 0.55 + mouthLen, mouthY - mouthOpen * s * 0.12);
+                ctx.stroke();
+                // Lower jaw hint
+                ctx.strokeStyle = '#2c5068';
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                ctx.moveTo(s * 0.5, mouthY + s * 0.06);
+                ctx.lineTo(s * 0.55 + mouthLen * 0.8, mouthY + mouthOpen * s * 0.06);
+                ctx.stroke();
+
+                // Gill slits
+                ctx.strokeStyle = '#3d6880';
+                ctx.lineWidth = 1.5;
+                for (let g = 0; g < 3; g++) {
+                    const gx = s * 0.15 - g * s * 0.1;
+                    ctx.beginPath();
+                    ctx.moveTo(gx, -s * 0.2);
+                    ctx.lineTo(gx - s * 0.05, s * 0.15);
+                    ctx.stroke();
+                }
+
+                ctx.restore();
+            }
+
+            function drawBarkWave(bw) {
+                ctx.save();
+                const alpha = bw.opacity * 0.8;
+                const r = bw.radius;
+                const rw = bw.ringWidth;
+
+                // Glow
+                const glowGrad = ctx.createRadialGradient(bw.ox, bw.oy, r - rw * 0.5, bw.ox, bw.oy, r + rw * 0.5);
+                glowGrad.addColorStop(0, `rgba(255,140,30,${alpha * 0.3})`);
+                glowGrad.addColorStop(0.4, `rgba(255,100,20,${alpha * 0.7})`);
+                glowGrad.addColorStop(0.6, `rgba(255,80,15,${alpha * 0.5})`);
+                glowGrad.addColorStop(1, `rgba(255,60,10,0)`);
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(bw.ox, bw.oy, r + rw * 0.6, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Main ring
+                ctx.strokeStyle = `rgba(255,140,40,${alpha})`;
+                ctx.lineWidth = rw;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.arc(bw.ox, bw.oy, r, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Inner ring
+                ctx.strokeStyle = `rgba(255,180,70,${alpha * 0.7})`;
+                ctx.lineWidth = rw * 0.4;
+                ctx.beginPath();
+                ctx.arc(bw.ox, bw.oy, r - rw * 0.5, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Outer ring
+                ctx.strokeStyle = `rgba(255,100,20,${alpha * 0.5})`;
+                ctx.lineWidth = rw * 0.3;
+                ctx.beginPath();
+                ctx.arc(bw.ox, bw.oy, r + rw * 0.45, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Jagged waveform overlay
+                ctx.strokeStyle = `rgba(255,200,100,${alpha * 0.35})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                const segments = 60;
+                for (let i = 0; i <= segments; i++) {
+                    const angle = (i / segments) * Math.PI * 2;
+                    const jitter = Math.sin(i * 7 + survivalTime * 20) * rw * 0.35;
+                    const jr = r + jitter;
+                    const jx = bw.ox + Math.cos(angle) * jr;
+                    const jy = bw.oy + Math.sin(angle) * jr;
+                    if (i === 0) ctx.moveTo(jx, jy);
+                    else ctx.lineTo(jx, jy);
+                }
+                ctx.closePath();
+                ctx.stroke();
+
+                ctx.restore();
+            }
+
+            function drawDogFace(df) {
+                ctx.save();
+                const alpha = Math.max(0, df.life / df.maxLife);
+                ctx.globalAlpha = alpha;
+                const s = df.size;
+                const x = df.x;
+                const y = df.y;
+
+                // Face circle
+                const faceGrad = ctx.createRadialGradient(x, y - s * 0.1, s * 0.1, x, y, s);
+                faceGrad.addColorStop(0, '#e8b87a');
+                faceGrad.addColorStop(0.7, '#c48a4d');
+                faceGrad.addColorStop(1, '#8b5e30');
+                ctx.fillStyle = faceGrad;
+                ctx.beginPath();
+                ctx.arc(x, y, s, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#5a3a1a';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Ears
+                ctx.fillStyle = '#b0703a';
+                ctx.beginPath();
+                ctx.ellipse(x - s * 0.7, y - s * 0.9, s * 0.4, s * 0.65, -0.3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.ellipse(x + s * 0.7, y - s * 0.9, s * 0.4, s * 0.65, 0.3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+
+                // Inner ears
+                ctx.fillStyle = '#e8c9a0';
+                ctx.beginPath();
+                ctx.ellipse(x - s * 0.7, y - s * 0.9, s * 0.22, s * 0.4, -0.3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(x + s * 0.7, y - s * 0.9, s * 0.22, s * 0.4, 0.3, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Eyes
+                ctx.fillStyle = '#111';
+                ctx.beginPath();
+                ctx.arc(x - s * 0.3, y - s * 0.2, s * 0.16, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(x + s * 0.3, y - s * 0.2, s * 0.16, 0, Math.PI * 2);
+                ctx.fill();
+                // Eye shine
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(x - s * 0.33, y - s * 0.25, s * 0.06, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(x + s * 0.27, y - s * 0.25, s * 0.06, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Snout
+                ctx.fillStyle = '#d4956b';
+                ctx.beginPath();
+                ctx.ellipse(x, y + s * 0.3, s * 0.35, s * 0.25, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#5a3a1a';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+                // Nose
+                ctx.fillStyle = '#1a0a00';
+                ctx.beginPath();
+                ctx.arc(x, y + s * 0.22, s * 0.1, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Mouth
+                ctx.strokeStyle = '#3a2010';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(x - s * 0.15, y + s * 0.4);
+                ctx.quadraticCurveTo(x, y + s * 0.55, x + s * 0.15, y + s * 0.4);
+                ctx.stroke();
+
+                ctx.restore();
+            }
+
+            function drawFish(f) {
+                ctx.save();
+                ctx.translate(f.x, f.y);
+                const facingLeft = f.vx < 0;
+                if (facingLeft) ctx.scale(-1, 1);
+
+                const fs = f.size;
+                // Body
+                const bodyGrad = ctx.createLinearGradient(0, -fs * 0.4, 0, fs * 0.4);
+                bodyGrad.addColorStop(0, f.color);
+                bodyGrad.addColorStop(1, '#fff');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.ellipse(fs * 0.1, 0, fs * 0.55, fs * 0.35, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+                ctx.lineWidth = 1.2;
+                ctx.stroke();
+
+                // Tail
+                ctx.fillStyle = f.color;
+                ctx.beginPath();
+                ctx.moveTo(-fs * 0.4, 0);
+                ctx.lineTo(-fs * 0.9, -fs * 0.45);
+                ctx.lineTo(-fs * 0.9, fs * 0.45);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+
+                // Eye
+                ctx.fillStyle = '#111';
+                ctx.beginPath();
+                ctx.arc(fs * 0.3, -fs * 0.05, fs * 0.1, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(fs * 0.32, -fs * 0.07, fs * 0.04, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.restore();
+            }
+
+            function drawBubble(b) {
+                ctx.save();
+                const alpha = Math.max(0, b.life / b.maxLife) * 0.6;
+                ctx.globalAlpha = alpha;
+                const grad = ctx.createRadialGradient(b.x - b.size * 0.2, b.y - b.size * 0.2, b.size * 0.1, b.x, b.y, b
+                .size);
+                grad.addColorStop(0, 'rgba(255,255,255,0.8)');
+                grad.addColorStop(0.5, 'rgba(180,210,240,0.4)');
+                grad.addColorStop(1, 'rgba(100,160,200,0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(b.x, b.y, b.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                ctx.lineWidth = 0.8;
+                ctx.stroke();
+                // Highlight
+                ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                ctx.beginPath();
+                ctx.arc(b.x - b.size * 0.25, b.y - b.size * 0.3, b.size * 0.25, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            function drawHUD() {
+                // Score
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 22px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'left';
+                ctx.shadowColor = 'rgba(0,0,0,0.6)';
+                ctx.shadowBlur = 6;
+                ctx.fillText('🦈 Score: ' + Math.floor(score), 20, 40);
+                ctx.shadowBlur = 0;
+
+                // High score
+                ctx.fillStyle = '#ffd700';
+                ctx.font = 'bold 14px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText('👑 Best: ' + Math.floor(highScore), 22, 62);
+
+                // Lives
+                ctx.textAlign = 'right';
+                ctx.font = '26px sans-serif';
+                let heartsStr = '';
+                for (let i = 0; i < lives; i++) heartsStr += '❤️';
+                for (let i = lives; i < 3; i++) heartsStr += '🖤';
+                ctx.fillText(heartsStr, W - 20, 42);
+
+                // Combo
+                if (comboCount >= 2 && comboTimer > 0 && gameState === STATE.PLAYING) {
+                    const comboAlpha = Math.min(1, comboTimer / 0.5);
+                    ctx.fillStyle = `rgba(255,215,0,${comboAlpha})`;
+                    ctx.font = 'bold 20px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🔥 ' + comboCount + 'x COMBO!', W / 2, 55);
+                }
+
+                // Difficulty indicator
+                if (difficulty > 1) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                    ctx.font = '11px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'right';
+                    ctx.fillText('Depth: ' + difficulty, W - 20, 68);
+                }
+            }
+
+            function drawIntroOverlay() {
+                ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                ctx.fillRect(0, 0, W, H);
+
+                ctx.fillStyle = '#fff';
+                ctx.textAlign = 'center';
+                ctx.font = 'bold 48px "Segoe UI", system-ui, sans-serif';
+                ctx.shadowColor = 'rgba(0,150,255,0.8)';
+                ctx.shadowBlur = 20;
+                ctx.fillText('🦈 Shark No Bark', W / 2, H * 0.3);
+                ctx.shadowBlur = 0;
+
+                ctx.font = '18px "Segoe UI", system-ui, sans-serif';
+                ctx.fillStyle = '#ddeeff';
+                ctx.fillText('Dodge the barking sound waves!', W / 2, H * 0.42);
+                ctx.fillText('Collect fish for bonus points 🐟', W / 2, H * 0.48);
+
+                ctx.font = 'bold 22px "Segoe UI", system-ui, sans-serif';
+                ctx.fillStyle = '#ffd700';
+                const pulse = Math.sin(Date.now() / 800) * 0.3 + 0.7;
+                ctx.globalAlpha = pulse;
+                ctx.fillText('Tap or press any key to play', W / 2, H * 0.6);
+                ctx.globalAlpha = 1;
+
+                ctx.font = '14px "Segoe UI", system-ui, sans-serif';
+                ctx.fillStyle = '#aaccdd';
+                ctx.fillText('🖱️ Mouse drag / Touch to move', W / 2, H * 0.68);
+                ctx.fillText('⌨️ Arrow keys or WASD on desktop', W / 2, H * 0.73);
+            }
+
+            function drawGameOverOverlay() {
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(0, 0, W, H);
+
+                ctx.fillStyle = '#ff5555';
+                ctx.textAlign = 'center';
+                ctx.font = 'bold 50px "Segoe UI", system-ui, sans-serif';
+                ctx.shadowColor = 'rgba(255,0,0,0.6)';
+                ctx.shadowBlur = 25;
+                ctx.fillText('GAME OVER', W / 2, H * 0.32);
+                ctx.shadowBlur = 0;
+
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 28px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('Score: ' + Math.floor(score), W / 2, H * 0.44);
+
+                if (score >= highScore && score > 0) {
+                    ctx.fillStyle = '#ffd700';
+                    ctx.font = 'bold 22px "Segoe UI", system-ui, sans-serif';
+                    ctx.fillText('🏆 NEW BEST! 🏆', W / 2, H * 0.52);
+                } else {
+                    ctx.fillStyle = '#ddd';
+                    ctx.font = '18px "Segoe UI", system-ui, sans-serif';
+                    ctx.fillText('Best: ' + Math.floor(highScore), W / 2, H * 0.52);
+                }
+
+                const pulse2 = Math.sin(Date.now() / 700) * 0.3 + 0.7;
+                ctx.fillStyle = '#ffd700';
+                ctx.font = 'bold 20px "Segoe UI", system-ui, sans-serif';
+                ctx.globalAlpha = pulse2;
+                ctx.fillText('Tap or press SPACE to restart', W / 2, H * 0.63);
+                ctx.globalAlpha = 1;
+            }
+
+            // --- Render ---
+            function render() {
+                ctx.clearRect(0, 0, W, H);
+
+                // Apply screen shake
+                let shakeX = 0;
+                let shakeY = 0;
+                if (shakeTimer > 0 && shakeIntensity > 0) {
+                    const decay = shakeTimer / 0.5;
+                    const si = shakeIntensity * decay;
+                    shakeX = (Math.random() - 0.5) * si * 2;
+                    shakeY = (Math.random() - 0.5) * si * 2;
+                }
+
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                drawOceanBackground();
+                drawSeaweed();
+
+                // Draw bubbles
+                for (let b of bubbles) drawBubble(b);
+
+                // Draw bark waves
+                for (let bw of barkWaves) drawBarkWave(bw);
+
+                // Draw dog faces
+                for (let df of dogFaces) drawDogFace(df);
+
+                // Draw fishes
+                for (let f of fishes) {
+                    if (f.alive) drawFish(f);
+                }
+
+                // Draw player trail
+                for (let t of player.trailPositions) {
+                    const alpha = t.life / t.maxLife;
+                    ctx.fillStyle = `rgba(150,200,220,${alpha * 0.35})`;
+                    ctx.beginPath();
+                    ctx.arc(t.x, t.y, player.size * 0.5 * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Draw player
+                if (gameState !== STATE.GAMEOVER) {
+                    drawShark(player.x, player.y, player.facingRight, player.mouthOpen, invincibleTimer > 0);
+                }
+
+                // Draw particles
+                for (let p of particles) {
+                    const alpha = p.life / p.maxLife;
+                    ctx.fillStyle = p.color.replace(')', `, ${alpha})`).replace('rgb',
+                        'rgba');
+                    if (p.color.startsWith('#')) {
+                        ctx.globalAlpha = alpha;
+                        ctx.fillStyle = p.color;
+                    }
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+
+                // Draw floating texts
+                for (let ft of floatingTexts) {
+                    const alpha = ft.life / ft.maxLife;
+                    ctx.fillStyle = ft.color.replace(')', `, ${alpha})`);
+                    if (ft.color.startsWith('#')) {
+                        ctx.globalAlpha = alpha;
+                        ctx.fillStyle = ft.color;
+                    }
+                    ctx.font = 'bold 16px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(ft.text, ft.x, ft.y);
+                }
+                ctx.globalAlpha = 1;
+
+                ctx.restore();
+
+                // HUD (no shake)
+                drawHUD();
+
+                // Overlays
+                if (gameState === STATE.INTRO) drawIntroOverlay();
+                if (gameState === STATE.GAMEOVER) drawGameOverOverlay();
+            }
+
+            // --- Game Loop ---
+            let lastTime = performance.now();
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.2) dt = 0.2;
+                lastTime = timestamp;
+
+                update(dt);
+                render();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // --- Initialize ---
+            resetPlayer();
+            player.x = W / 2;
+            player.y = H / 2;
+            initBubbles();
+            // Spawn a few initial fish for visual appeal during intro
+            for (let i = 0; i < 5; i++) spawnFish();
+
+            // --- Handle resize during gameplay ---
+            window.addEventListener('resize', () => {
+                const oldW = W;
+                const oldH = H;
+                resize();
+                player.x = Math.max(player.size, Math.min(W - player.size, player.x * (W / oldW)));
+                player.y = Math.max(player.size, Math.min(H - player.size, player.y * (H / oldH)));
+                // Adjust bark waves
+                for (let bw of barkWaves) {
+                    bw.ox = bw.ox * (W / oldW);
+                    bw.oy = bw.oy * (H / oldH);
+                }
+                initBubbles();
+            });
+
+            // --- Start ---
+            requestAnimationFrame(gameLoop);
+            console.log('🦈 Shark No Bark is ready!');
+            console.log('  - Dodge the orange bark waves');
+            console.log('  - Collect colorful fish');
+            console.log('  - Survive as long as you can!');
+            console.log('  Controls: Arrow keys/WASD or touch/mouse drag');
+        })();
+    </script>
+</body>
+</html>
