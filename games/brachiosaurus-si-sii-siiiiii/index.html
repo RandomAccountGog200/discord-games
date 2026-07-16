@@ -1,0 +1,1298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Brachiosaurus si sii siiiiii</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+        canvas {
+            display: block;
+            border-radius: 16px;
+            box-shadow: 0 0 60px rgba(100, 200, 130, 0.3), 0 0 120px rgba(100, 180, 120, 0.15);
+            max-width: 100vw;
+            max-height: 100vh;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            // --- Audio System ---
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playSiSound(duration, pitch = 780) {
+                if (!audioCtx) return;
+                try {
+                    const now = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(pitch, now);
+                    osc.frequency.linearRampToValueAtTime(pitch * 1.08, now + duration * 0.5);
+                    osc.frequency.linearRampToValueAtTime(pitch * 0.95, now + duration);
+                    gain.gain.setValueAtTime(0, now);
+                    gain.gain.linearRampToValueAtTime(0.35, now + 0.02);
+                    gain.gain.linearRampToValueAtTime(0.28, now + duration * 0.6);
+                    gain.gain.linearRampToValueAtTime(0, now + duration + 0.05);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(now);
+                    osc.stop(now + duration + 0.06);
+                } catch (e) { /* silent */ }
+            }
+
+            function playSuccessSound() {
+                if (!audioCtx) return;
+                try {
+                    const now = audioCtx.currentTime;
+                    [660, 880, 1100].forEach((freq, i) => {
+                        const osc = audioCtx.createOscillator();
+                        const gain = audioCtx.createGain();
+                        osc.type = 'sine';
+                        osc.frequency.value = freq;
+                        gain.gain.setValueAtTime(0, now + i * 0.08);
+                        gain.gain.linearRampToValueAtTime(0.3, now + i * 0.08 + 0.02);
+                        gain.gain.linearRampToValueAtTime(0, now + i * 0.08 + 0.2);
+                        osc.connect(gain);
+                        gain.connect(audioCtx.destination);
+                        osc.start(now + i * 0.08);
+                        osc.stop(now + i * 0.08 + 0.22);
+                    });
+                } catch (e) { /* silent */ }
+            }
+
+            function playFailSound() {
+                if (!audioCtx) return;
+                try {
+                    const now = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(200, now);
+                    osc.frequency.linearRampToValueAtTime(80, now + 0.3);
+                    gain.gain.setValueAtTime(0.25, now);
+                    gain.gain.linearRampToValueAtTime(0, now + 0.35);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(now);
+                    osc.stop(now + 0.4);
+                } catch (e) { /* silent */ }
+            }
+
+            // --- Game State ---
+            const STATE = { TITLE: 0, PLAYING: 1, GAMEOVER: 2, ROUND_FEEDBACK: 3 };
+            let gameState = STATE.TITLE;
+            let score = 0;
+            let lives = 3;
+            let combo = 0;
+            let maxCombo = 0;
+            let roundCount = 0;
+            let targetZone = null; // 'si', 'sii', 'siiiiii'
+            let isHolding = false;
+            let holdStartTime = 0;
+            let fillProgress = 0;
+            let currentRoundActive = false;
+            let feedbackTimer = 0;
+            let feedbackType = null; // 'success', 'fail'
+            let particles = [];
+            let shakeAmount = 0;
+            let brachiosaurusMood = 'happy'; // 'happy', 'singing', 'sad', 'excited'
+            let brachiosaurusAnimTimer = 0;
+            let brachiosaurusBobOffset = 0;
+            let eyeBlinkTimer = 0;
+            let isBlinking = false;
+            let blinkFrame = 0;
+            let mouthOpenAmount = 0;
+            let targetMouthOpen = 0;
+            let floatingNotes = [];
+            let titlePulse = 0;
+            let groundPlants = [];
+            let cloudPositions = [];
+
+            const TOTAL_FILL_TIME = 2.2;
+            const ZONE_DEFS = {
+                si: { min: 0.0, max: 0.26, label: 'si', color: '#FFD740', glowColor: '#FFE082', emoji: '🎵' },
+                sii: { min: 0.26, max: 0.58, label: 'sii', color: '#FF9800', glowColor: '#FFB74D', emoji: '🎶' },
+                siiiiii: { min: 0.58, max: 1.0, label: 'siiiiii', color: '#FF5252', glowColor: '#FF8A80',
+                emoji: '🎼' }
+            };
+
+            function getZoneForProgress(progress) {
+                const clamped = Math.max(0, Math.min(1, progress));
+                if (clamped <= ZONE_DEFS.si.max) return 'si';
+                if (clamped <= ZONE_DEFS.sii.max) return 'sii';
+                return 'siiiiii';
+            }
+
+            function getRandomTarget() {
+                const r = Math.random();
+                if (r < 0.35) return 'si';
+                if (r < 0.7) return 'sii';
+                return 'siiiiii';
+            }
+
+            // --- Canvas Sizing ---
+            function resizeCanvas() {
+                const w = window.innerWidth;
+                const h = window.innerHeight;
+                const aspect = 4 / 3;
+                let cw, ch;
+                if (w / h > aspect) {
+                    ch = Math.min(h, 800);
+                    cw = ch * aspect;
+                } else {
+                    cw = Math.min(w, 600);
+                    ch = cw / aspect;
+                }
+                canvas.width = Math.floor(cw);
+                canvas.height = Math.floor(ch);
+                canvas.style.width = cw + 'px';
+                canvas.style.height = ch + 'px';
+            }
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+
+            // --- Initialize scenery ---
+            function initScenery() {
+                groundPlants = [];
+                for (let i = 0; i < 8; i++) {
+                    groundPlants.push({
+                        x: Math.random() * canvas.width,
+                        h: 15 + Math.random() * 35,
+                        w: 4 + Math.random() * 8,
+                        sway: Math.random() * Math.PI * 2
+                    });
+                }
+                cloudPositions = [];
+                for (let i = 0; i < 5; i++) {
+                    cloudPositions.push({
+                        x: Math.random() * canvas.width,
+                        y: 20 + Math.random() * canvas.height * 0.25,
+                        w: 50 + Math.random() * 90,
+                        h: 20 + Math.random() * 35,
+                        speed: 0.15 + Math.random() * 0.4
+                    });
+                }
+            }
+            initScenery();
+
+            // --- Particle System ---
+            function spawnParticles(x, y, count, color, spread = 3, life = 0.6) {
+                for (let i = 0; i < count; i++) {
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: (Math.random() - 0.5) * spread * 2,
+                        vy: (Math.random() - 0.7) * spread * 2 - Math.random() * 4,
+                        life: life + Math.random() * 0.4,
+                        maxLife: life + 0.4,
+                        color: color,
+                        size: 2 + Math.random() * 5,
+                        gravity: 0.05 + Math.random() * 0.08
+                    });
+                }
+            }
+
+            function spawnFloatingNote(x, y, duration) {
+                floatingNotes.push({
+                    x: x,
+                    y: y,
+                    vy: -1.5 - Math.random() * 2,
+                    vx: (Math.random() - 0.5) * 1.5,
+                    life: duration + 0.5,
+                    maxLife: duration + 0.5,
+                    size: 10 + Math.random() * 16,
+                    rotation: (Math.random() - 0.5) * 0.5,
+                    rotSpeed: (Math.random() - 0.5) * 0.04
+                });
+            }
+
+            function updateParticles(dt) {
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += p.gravity;
+                    p.life -= dt;
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+                for (let i = floatingNotes.length - 1; i >= 0; i--) {
+                    const n = floatingNotes[i];
+                    n.x += n.vx;
+                    n.y += n.vy;
+                    n.rotation += n.rotSpeed;
+                    n.life -= dt;
+                    if (n.life <= 0) floatingNotes.splice(i, 1);
+                }
+            }
+
+            function drawParticles(ctx) {
+                for (const p of particles) {
+                    const alpha = Math.max(0, p.life / p.maxLife);
+                    const size = p.size * alpha;
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = p.color;
+                    ctx.shadowColor = p.color;
+                    ctx.shadowBlur = 6 * alpha;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+                for (const n of floatingNotes) {
+                    const alpha = Math.max(0, n.life / n.maxLife);
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.translate(n.x, n.y);
+                    ctx.rotate(n.rotation);
+                    ctx.fillStyle = '#FFF';
+                    ctx.shadowColor = '#FFD740';
+                    ctx.shadowBlur = 10 * alpha;
+                    ctx.font = `${n.size}px serif`;
+                    ctx.fillText('♪', -n.size / 2, n.size / 3);
+                    ctx.restore();
+                }
+            }
+
+            // --- Drawing Functions ---
+            function drawSkyBackground(ctx) {
+                const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+                grad.addColorStop(0, '#87CEEB');
+                grad.addColorStop(0.55, '#B8E4F0');
+                grad.addColorStop(0.75, '#D4E8D0');
+                grad.addColorStop(1, '#C8D8B0');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Clouds
+                for (const cloud of cloudPositions) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                    ctx.beginPath();
+                    const cx = cloud.x;
+                    const cy = cloud.y;
+                    const cw = cloud.w;
+                    const ch = cloud.h;
+                    ctx.arc(cx, cy, ch * 0.5, 0, Math.PI * 2);
+                    ctx.arc(cx - cw * 0.25, cy - ch * 0.15, ch * 0.4, 0, Math.PI * 2);
+                    ctx.arc(cx + cw * 0.25, cy - ch * 0.1, ch * 0.45, 0, Math.PI * 2);
+                    ctx.arc(cx + cw * 0.1, cy + ch * 0.05, ch * 0.35, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Distant hills
+                ctx.fillStyle = '#9DC88D';
+                ctx.beginPath();
+                ctx.moveTo(0, canvas.height * 0.72);
+                ctx.quadraticCurveTo(canvas.width * 0.25, canvas.height * 0.6, canvas.width * 0.5, canvas.height * 0.68);
+                ctx.quadraticCurveTo(canvas.width * 0.7, canvas.height * 0.58, canvas.width, canvas.height * 0.65);
+                ctx.lineTo(canvas.width, canvas.height);
+                ctx.lineTo(0, canvas.height);
+                ctx.fill();
+
+                ctx.fillStyle = '#8BBF7A';
+                ctx.beginPath();
+                ctx.moveTo(0, canvas.height * 0.76);
+                ctx.quadraticCurveTo(canvas.width * 0.3, canvas.height * 0.66, canvas.width * 0.6, canvas.height * 0.72);
+                ctx.quadraticCurveTo(canvas.width * 0.8, canvas.height * 0.64, canvas.width, canvas.height * 0.7);
+                ctx.lineTo(canvas.width, canvas.height);
+                ctx.lineTo(0, canvas.height);
+                ctx.fill();
+
+                // Ground
+                const groundY = canvas.height * 0.78;
+                const groundGrad = ctx.createLinearGradient(0, groundY, 0, canvas.height);
+                groundGrad.addColorStop(0, '#A8C97F');
+                groundGrad.addColorStop(0.3, '#8DB568');
+                groundGrad.addColorStop(1, '#6B9B4A');
+                ctx.fillStyle = groundGrad;
+                ctx.fillRect(0, groundY, canvas.width, canvas.height - groundY);
+
+                // Ground line
+                ctx.strokeStyle = '#7DAA5C';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(0, groundY);
+                for (let x = 0; x < canvas.width; x += 8) {
+                    ctx.lineTo(x, groundY + Math.sin(x * 0.05) * 3);
+                }
+                ctx.stroke();
+
+                // Small plants
+                for (const plant of groundPlants) {
+                    const px = plant.x;
+                    const py = groundY - 2;
+                    const sway = Math.sin(Date.now() * 0.002 + plant.sway) * 3;
+                    ctx.strokeStyle = '#5D8A3C';
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.moveTo(px, py);
+                    ctx.quadraticCurveTo(px + sway, py - plant.h * 0.6, px + sway * 1.5, py - plant.h);
+                    ctx.stroke();
+                    if (plant.w > 5) {
+                        ctx.beginPath();
+                        ctx.moveTo(px, py);
+                        ctx.quadraticCurveTo(px - sway * 0.7, py - plant.h * 0.5, px - sway, py - plant.h * 0.8);
+                        ctx.stroke();
+                    }
+                    ctx.fillStyle = '#7CB342';
+                    ctx.beginPath();
+                    ctx.arc(px + sway * 1.5, py - plant.h, plant.w * 0.6, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function drawBrachiosaurus(ctx, mood, animTimer, bobOffset, mouthOpen, isPlayerHolding) {
+                const cx = canvas.width * 0.5;
+                const groundY = canvas.height * 0.78;
+                const scale = Math.min(canvas.width / 500, canvas.height / 600);
+
+                ctx.save();
+                ctx.translate(cx, groundY);
+                ctx.scale(scale, scale);
+
+                const bobY = bobOffset * 8;
+                const bodyY = -120 + bobY;
+                const bodyW = 140;
+                const bodyH = 90;
+
+                // Tail
+                ctx.fillStyle = '#6DAE5C';
+                ctx.beginPath();
+                ctx.moveTo(-bodyW * 0.55, bodyY - 10);
+                ctx.quadraticCurveTo(-bodyW * 0.9, bodyY - 30, -bodyW * 1.05, bodyY - 5);
+                ctx.quadraticCurveTo(-bodyW * 0.85, bodyY + 15, -bodyW * 0.5, bodyY + 20);
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = '#5A9A4A';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Back legs
+                drawDinoLeg(ctx, -bodyW * 0.35, bodyY + bodyH * 0.35, 28, 55, bodyY, bodyH);
+                drawDinoLeg(ctx, bodyW * 0.15, bodyY + bodyH * 0.35, 28, 55, bodyY, bodyH);
+
+                // Body
+                const bodyGrad = ctx.createLinearGradient(0, bodyY - bodyH / 2, 0, bodyY + bodyH / 2);
+                bodyGrad.addColorStop(0, '#8CC97A');
+                bodyGrad.addColorStop(0.5, '#7AB868');
+                bodyGrad.addColorStop(1, '#5E9E4E');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.ellipse(0, bodyY, bodyW / 2, bodyH / 2, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#5A9A4A';
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+
+                // Belly
+                ctx.fillStyle = '#C8E6B8';
+                ctx.beginPath();
+                ctx.ellipse(5, bodyY + 12, bodyW * 0.32, bodyH * 0.3, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body spots
+                ctx.fillStyle = '#5A9A4A';
+                [
+                    [-25, bodyY - 20, 10],
+                    [15, bodyY - 25, 8],
+                    [-10, bodyY - 5, 11],
+                    [30, bodyY - 8, 7],
+                    [-35, bodyY + 10, 9]
+                ].forEach(([sx, sy, sr]) => {
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+
+                // Front legs
+                drawDinoLeg(ctx, -bodyW * 0.2, bodyY + bodyH * 0.3, 30, 60, bodyY, bodyH);
+                drawDinoLeg(ctx, bodyW * 0.3, bodyY + bodyH * 0.3, 30, 60, bodyY, bodyH);
+
+                // Neck
+                const neckBaseX = bodyW * 0.25;
+                const neckBaseY = bodyY - bodyH * 0.35;
+                const neckTopX = neckBaseX + 15;
+                const neckTopY = bodyY - 200 + bobY * 0.5;
+
+                ctx.fillStyle = '#7AB868';
+                ctx.beginPath();
+                ctx.moveTo(neckBaseX - 18, neckBaseY);
+                ctx.bezierCurveTo(neckBaseX - 25, neckBaseY - 80, neckTopX - 10, neckTopY + 30, neckTopX - 12, neckTopY);
+                ctx.lineTo(neckTopX + 12, neckTopY);
+                ctx.bezierCurveTo(neckTopX + 14, neckTopY + 30, neckBaseX + 20, neckBaseY - 80, neckBaseX + 18, neckBaseY);
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = '#5A9A4A';
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+
+                // Neck lighter stripe
+                ctx.fillStyle = '#A8D898';
+                ctx.beginPath();
+                ctx.moveTo(neckBaseX - 6, neckBaseY);
+                ctx.bezierCurveTo(neckBaseX - 8, neckBaseY - 70, neckTopX - 2, neckTopY + 25, neckTopX - 3, neckTopY + 5);
+                ctx.lineTo(neckTopX + 3, neckTopY + 5);
+                ctx.bezierCurveTo(neckTopX + 4, neckTopY + 25, neckBaseX + 8, neckBaseY - 70, neckBaseX + 6, neckBaseY);
+                ctx.closePath();
+                ctx.fill();
+
+                // Head
+                const headX = neckTopX;
+                const headY = neckTopY - 10;
+                ctx.fillStyle = '#8CC97A';
+                ctx.beginPath();
+                ctx.ellipse(headX, headY, 22, 26, -0.15, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#5A9A4A';
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+
+                // Snout
+                ctx.fillStyle = '#7AB868';
+                ctx.beginPath();
+                ctx.ellipse(headX + 16, headY + 4, 14, 18, 0.1, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#5A9A4A';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Mouth
+                const mouthW = 8 + mouthOpen * 14;
+                const mouthH = 3 + mouthOpen * 10;
+                ctx.fillStyle = '#4A3020';
+                ctx.beginPath();
+                ctx.ellipse(headX + 20, headY + 12, mouthW, mouthH, 0, 0, Math.PI * 2);
+                ctx.fill();
+                if (mouthOpen > 0.3) {
+                    ctx.fillStyle = '#6B3020';
+                    ctx.beginPath();
+                    ctx.ellipse(headX + 20, headY + 10, mouthW * 0.7, mouthH * 0.6, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Eyes
+                const eyeY = headY - 8;
+                // Eye whites
+                ctx.fillStyle = '#FFF';
+                ctx.beginPath();
+                ctx.arc(headX + 5, eyeY, 8, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(headX + 18, eyeY - 1, 7, 0, Math.PI * 2);
+                ctx.fill();
+                // Pupils
+                if (isBlinking && blinkFrame < 3) {
+                    ctx.fillStyle = '#5A9A4A';
+                    ctx.beginPath();
+                    ctx.arc(headX + 5, eyeY, 8, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(headX + 18, eyeY - 1, 7, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#4A3A2A';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(headX - 3, eyeY);
+                    ctx.lineTo(headX + 13, eyeY);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(headX + 11, eyeY - 1);
+                    ctx.lineTo(headX + 25, eyeY - 1);
+                    ctx.stroke();
+                } else {
+                    ctx.fillStyle = '#1A1A0A';
+                    ctx.beginPath();
+                    ctx.arc(headX + 6, eyeY, 4.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(headX + 19, eyeY - 1, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Eye sparkle
+                    ctx.fillStyle = '#FFF';
+                    ctx.beginPath();
+                    ctx.arc(headX + 4, eyeY - 2, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(headX + 17, eyeY - 3, 1.8, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Nostrils
+                ctx.fillStyle = '#4A6A3A';
+                ctx.beginPath();
+                ctx.arc(headX + 22, headY + 1, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(headX + 26, headY + 2, 2.2, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Cheek blush
+                if (mood === 'excited' || mood === 'singing') {
+                    ctx.fillStyle = 'rgba(255,150,150,0.5)';
+                    ctx.beginPath();
+                    ctx.arc(headX + 12, headY + 6, 6, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Small crest bumps on head
+                ctx.fillStyle = '#7AB868';
+                [
+                    [headX - 5, headY - 22, 5],
+                    [headX + 3, headY - 24, 4.5],
+                    [headX + 10, headY - 21, 4]
+                ].forEach(([cx2, cy2, r]) => {
+                    ctx.beginPath();
+                    ctx.arc(cx2, cy2, r, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#5A9A4A';
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+                });
+
+                ctx.restore();
+
+                // Return head position in canvas coordinates for effects
+                const headCanvasX = cx + (neckTopX) * scale;
+                const headCanvasY = groundY + (neckTopY - 10) * scale;
+                return { x: headCanvasX, y: headCanvasY, mouthX: headCanvasX + 20 * scale, mouthY: headCanvasY + 12 * scale };
+            }
+
+            function drawDinoLeg(ctx, x, y, w, h, bodyY, bodyH) {
+                const legGrad = ctx.createLinearGradient(x, y, x, y + h);
+                legGrad.addColorStop(0, '#7AB868');
+                legGrad.addColorStop(1, '#5A8A40');
+                ctx.fillStyle = legGrad;
+                ctx.beginPath();
+                ctx.roundRect(x - w / 2, y, w, h, w * 0.4);
+                ctx.fill();
+                ctx.strokeStyle = '#4A7A36';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                // Foot
+                ctx.fillStyle = '#5E8E44';
+                ctx.beginPath();
+                ctx.ellipse(x, y + h - 2, w * 0.7, w * 0.35, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#4A7A36';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+                // Toe lines
+                ctx.strokeStyle = '#4A7A36';
+                ctx.lineWidth = 1;
+                for (let tx = -w * 0.3; tx <= w * 0.3; tx += w * 0.3) {
+                    ctx.beginPath();
+                    ctx.moveTo(x + tx, y + h - 2);
+                    ctx.lineTo(x + tx, y + h + w * 0.25);
+                    ctx.stroke();
+                }
+            }
+
+            function drawHoldMeter(ctx, targetZoneKey, fillProgress, isActive) {
+                const barWidth = canvas.width * 0.7;
+                const barHeight = 28;
+                const barX = (canvas.width - barWidth) / 2;
+                const barY = canvas.height * 0.82;
+                const cornerRadius = 14;
+
+                // Background
+                ctx.fillStyle = 'rgba(0,0,0,0.4)';
+                ctx.beginPath();
+                ctx.roundRect(barX - 3, barY - 3, barWidth + 6, barHeight + 6, cornerRadius + 2);
+                ctx.fill();
+
+                // Bar background
+                const barBgGrad = ctx.createLinearGradient(0, barY, 0, barY + barHeight);
+                barBgGrad.addColorStop(0, '#3A3A3A');
+                barBgGrad.addColorStop(1, '#2A2A2A');
+                ctx.fillStyle = barBgGrad;
+                ctx.beginPath();
+                ctx.roundRect(barX, barY, barWidth, barHeight, cornerRadius);
+                ctx.fill();
+                ctx.strokeStyle = '#555';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Zone markings
+                const zoneColors = {
+                    si: { start: 0, end: ZONE_DEFS.si.max, color: ZONE_DEFS.si.color, glow: ZONE_DEFS.si.glowColor },
+                    sii: { start: ZONE_DEFS.sii.min, end: ZONE_DEFS.sii.max, color: ZONE_DEFS.sii.color,
+                        glow: ZONE_DEFS.sii.glowColor },
+                    siiiiii: { start: ZONE_DEFS.siiiiii.min, end: ZONE_DEFS.siiiiii.max, color: ZONE_DEFS.siiiiii.color,
+                        glow: ZONE_DEFS.siiiiii.glowColor }
+                };
+
+                for (const [key, zone] of Object.entries(zoneColors)) {
+                    const zx = barX + zone.start * barWidth;
+                    const zw = (zone.end - zone.start) * barWidth;
+                    const isTarget = key === targetZoneKey && isActive;
+
+                    ctx.fillStyle = isTarget ? zone.glow : zone.color;
+                    ctx.globalAlpha = isTarget ? 0.7 : 0.35;
+                    ctx.beginPath();
+                    if (key === 'si') {
+                        ctx.roundRect(zx, barY + 2, zw, barHeight - 4, { upperLeft: cornerRadius, lowerLeft: cornerRadius,
+                            upperRight: 0, lowerRight: 0 });
+                    } else if (key === 'siiiiii') {
+                        ctx.roundRect(zx, barY + 2, zw, barHeight - 4, { upperLeft: 0, lowerLeft: 0, upperRight: cornerRadius,
+                            lowerRight: cornerRadius });
+                    } else {
+                        ctx.fillRect(zx, barY + 2, zw, barHeight - 4);
+                    }
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+
+                    if (isTarget) {
+                        // Glow effect
+                        ctx.save();
+                        ctx.shadowColor = zone.glow;
+                        ctx.shadowBlur = 18;
+                        ctx.fillStyle = 'rgba(255,255,255,0.15)';
+                        ctx.fillRect(zx, barY + 2, zw, barHeight - 4);
+                        ctx.restore();
+                        // Pulsing border
+                        const pulse = Math.sin(Date.now() * 0.006) * 0.4 + 0.6;
+                        ctx.strokeStyle = `rgba(255,255,255,${0.5 + pulse * 0.5})`;
+                        ctx.lineWidth = 3;
+                        ctx.strokeRect(zx + 1, barY + 2, zw - 2, barHeight - 4);
+                    }
+                }
+
+                // Zone divider lines
+                ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([4, 6]);
+                [
+                    [ZONE_DEFS.si.max, 'si'],
+                    [ZONE_DEFS.sii.max, 'sii']
+                ].forEach(([pos]) => {
+                    const dx = barX + pos * barWidth;
+                    ctx.beginPath();
+                    ctx.moveTo(dx, barY + 2);
+                    ctx.lineTo(dx, barY + barHeight - 2);
+                    ctx.stroke();
+                });
+                ctx.setLineDash([]);
+
+                // Fill progress
+                if (fillProgress > 0) {
+                    const fillWidth = Math.min(fillProgress, 1) * barWidth;
+                    const fillGrad = ctx.createLinearGradient(barX, 0, barX + barWidth, 0);
+                    fillGrad.addColorStop(0, '#FFE082');
+                    fillGrad.addColorStop(0.5, '#FFCC02');
+                    fillGrad.addColorStop(1, '#FF9800');
+                    ctx.fillStyle = fillGrad;
+                    ctx.beginPath();
+                    if (fillWidth < barWidth - cornerRadius) {
+                        ctx.roundRect(barX, barY + 3, Math.max(fillWidth, cornerRadius), barHeight - 6, cornerRadius);
+                    } else {
+                        ctx.roundRect(barX, barY + 3, fillWidth, barHeight - 6, cornerRadius);
+                    }
+                    ctx.fill();
+
+                    // Fill glow
+                    ctx.save();
+                    ctx.shadowColor = '#FFD740';
+                    ctx.shadowBlur = 12;
+                    ctx.fillStyle = 'rgba(255,255,200,0.4)';
+                    ctx.fillRect(barX, barY + 3, Math.max(fillWidth, 2), barHeight - 6);
+                    ctx.restore();
+
+                    // Fill tip indicator
+                    const tipX = barX + fillWidth;
+                    ctx.fillStyle = '#FFF';
+                    ctx.beginPath();
+                    ctx.arc(tipX, barY + barHeight / 2, 8, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#FF9800';
+                    ctx.lineWidth = 2.5;
+                    ctx.stroke();
+                    ctx.fillStyle = '#FF6D00';
+                    ctx.beginPath();
+                    ctx.arc(tipX, barY + barHeight / 2, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Zone labels
+                ctx.fillStyle = '#FFF';
+                ctx.font = 'bold 11px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = 'rgba(0,0,0,0.6)';
+                ctx.shadowBlur = 3;
+                const labelY = barY + barHeight / 2 + 4;
+                ctx.fillText('si', barX + 0.13 * barWidth, labelY);
+                ctx.fillText('sii', barX + 0.42 * barWidth, labelY);
+                ctx.fillText('siiiiii', barX + 0.79 * barWidth, labelY);
+                ctx.shadowBlur = 0;
+                ctx.textAlign = 'start';
+            }
+
+            function drawUI(ctx) {
+                // Score
+                ctx.fillStyle = '#FFF';
+                ctx.font = 'bold 22px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'left';
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.shadowBlur = 4;
+                ctx.fillText(`⭐ ${score}`, 20, 38);
+                ctx.shadowBlur = 0;
+
+                // Combo
+                if (combo > 1) {
+                    ctx.fillStyle = '#FFD740';
+                    ctx.font = 'bold 18px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'right';
+                    ctx.shadowColor = 'rgba(255,150,0,0.7)';
+                    ctx.shadowBlur = 8;
+                    ctx.fillText(`${combo}x COMBO!`, canvas.width - 20, 38);
+                    ctx.shadowBlur = 0;
+                }
+
+                // Lives
+                ctx.textAlign = 'right';
+                const heartSize = 20;
+                const heartY = 60;
+                for (let i = 0; i < 3; i++) {
+                    const hx = canvas.width - 20 - i * (heartSize + 8);
+                    if (i < lives) {
+                        drawHeart(ctx, hx, heartY, heartSize, '#FF5252', '#FF1744');
+                    } else {
+                        drawHeart(ctx, hx, heartY, heartSize, '#555', '#333');
+                    }
+                }
+                ctx.textAlign = 'start';
+            }
+
+            function drawHeart(ctx, x, y, size, fillColor, strokeColor) {
+                ctx.fillStyle = fillColor;
+                ctx.strokeStyle = strokeColor;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                const s = size / 2;
+                ctx.moveTo(x, y + s * 0.3);
+                ctx.bezierCurveTo(x, y - s * 0.2, x - s, y - s * 0.2, x - s, y + s * 0.3);
+                ctx.bezierCurveTo(x - s, y + s * 0.9, x, y + s * 1.3, x, y + s * 1.3);
+                ctx.bezierCurveTo(x, y + s * 1.3, x + s, y + s * 0.9, x + s, y + s * 0.3);
+                ctx.bezierCurveTo(x + s, y - s * 0.2, x, y - s * 0.2, x, y + s * 0.3);
+                ctx.fill();
+                ctx.stroke();
+            }
+
+            function drawTitleScreen(ctx) {
+                // Title
+                const titleY = canvas.height * 0.22;
+                ctx.fillStyle = '#FFF';
+                ctx.font = `bold ${Math.floor(canvas.width * 0.08)}px "Segoe UI", system-ui, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.shadowBlur = 8;
+                ctx.fillText('Brachiosaurus', canvas.width / 2, titleY);
+
+                // Subtitle with fun styling
+                const subY = titleY + canvas.height * 0.08;
+                ctx.font = `bold ${Math.floor(canvas.width * 0.055)}px "Segoe UI", system-ui, sans-serif`;
+                const pulse = Math.sin(titlePulse * 0.04) * 0.3 + 0.7;
+                ctx.fillStyle = `rgba(255,215,64,${0.8 + pulse * 0.2})`;
+                ctx.shadowColor = 'rgba(255,150,0,0.8)';
+                ctx.shadowBlur = 15;
+                ctx.fillText('si sii siiiiii', canvas.width / 2, subY);
+                ctx.shadowBlur = 0;
+
+                // Instructions
+                const instY = canvas.height * 0.55;
+                ctx.fillStyle = '#FFF';
+                ctx.font = `${Math.floor(canvas.width * 0.035)}px "Segoe UI", system-ui, sans-serif`;
+                ctx.shadowColor = 'rgba(0,0,0,0.4)';
+                ctx.shadowBlur = 3;
+                ctx.fillText('Match the brachiosaurus!', canvas.width / 2, instY);
+                ctx.fillText('Press & hold — release in the', canvas.width / 2, instY + 30);
+                ctx.fillText('highlighted zone! 🎵', canvas.width / 2, instY + 56);
+                ctx.shadowBlur = 0;
+
+                // Start button
+                const btnX = canvas.width / 2;
+                const btnY = canvas.height * 0.72;
+                const btnW = 180;
+                const btnH = 50;
+                const btnPulse = Math.sin(titlePulse * 0.05) * 5;
+
+                ctx.fillStyle = '#FF9800';
+                ctx.beginPath();
+                ctx.roundRect(btnX - btnW / 2, btnY - btnH / 2, btnW, btnH + btnPulse, 25);
+                ctx.fill();
+                ctx.strokeStyle = '#FFF';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                ctx.fillStyle = '#FFF';
+                ctx.font = 'bold 20px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('🎮 Tap to Play!', btnX, btnY + 7);
+
+                // Spacebar hint
+                ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                ctx.font = `${Math.floor(canvas.width * 0.028)}px "Segoe UI", system-ui, sans-serif`;
+                ctx.fillText('or press SPACEBAR', canvas.width / 2, btnY + btnH / 2 + 28);
+
+                ctx.textAlign = 'start';
+            }
+
+            function drawGameOverScreen(ctx) {
+                // Overlay
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Game Over text
+                const goY = canvas.height * 0.3;
+                ctx.fillStyle = '#FF5252';
+                ctx.font = `bold ${Math.floor(canvas.width * 0.09)}px "Segoe UI", system-ui, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.shadowColor = 'rgba(255,0,0,0.6)';
+                ctx.shadowBlur = 20;
+                ctx.fillText('Game Over!', canvas.width / 2, goY);
+                ctx.shadowBlur = 0;
+
+                ctx.fillStyle = '#FFF';
+                ctx.font = `${Math.floor(canvas.width * 0.04)}px "Segoe UI", system-ui, sans-serif`;
+                ctx.fillText(`Final Score: ${score}`, canvas.width / 2, goY + 50);
+                ctx.fillText(`Max Combo: ${maxCombo}x`, canvas.width / 2, goY + 80);
+                ctx.fillText(`Rounds: ${roundCount}`, canvas.width / 2, goY + 108);
+
+                // Restart button
+                const btnX = canvas.width / 2;
+                const btnY = canvas.height * 0.68;
+                const btnW = 170;
+                const btnH = 48;
+                ctx.fillStyle = '#4CAF50';
+                ctx.beginPath();
+                ctx.roundRect(btnX - btnW / 2, btnY - btnH / 2, btnW, btnH, 24);
+                ctx.fill();
+                ctx.strokeStyle = '#FFF';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                ctx.fillStyle = '#FFF';
+                ctx.font = 'bold 18px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('🔄 Play Again', btnX, btnY + 7);
+                ctx.textAlign = 'start';
+            }
+
+            // --- Input Handling ---
+            function handlePress() {
+                initAudio();
+                if (gameState === STATE.TITLE) {
+                    startGame();
+                    return;
+                }
+                if (gameState === STATE.GAMEOVER) {
+                    resetGame();
+                    return;
+                }
+                if (gameState === STATE.PLAYING && currentRoundActive && !isHolding) {
+                    isHolding = true;
+                    holdStartTime = performance.now() / 1000;
+                    fillProgress = 0;
+                    brachiosaurusMood = 'singing';
+                    targetMouthOpen = 0.6;
+                }
+            }
+
+            function handleRelease() {
+                if (gameState === STATE.PLAYING && isHolding && currentRoundActive) {
+                    isHolding = false;
+                    targetMouthOpen = 0;
+                    const releaseProgress = fillProgress;
+                    const playerZone = getZoneForProgress(releaseProgress);
+                    const correct = playerZone === targetZone;
+
+                    if (correct) {
+                        // Success!
+                        feedbackType = 'success';
+                        feedbackTimer = 0.8;
+                        combo++;
+                        if (combo > maxCombo) maxCombo = combo;
+                        const comboBonus = Math.min(combo, 10);
+                        const points = 100 * comboBonus;
+                        score += points;
+                        brachiosaurusMood = 'excited';
+                        playSuccessSound();
+                        const barX = (canvas.width - canvas.width * 0.7) / 2;
+                        const barY = canvas.height * 0.82;
+                        const releaseX = barX + releaseProgress * canvas.width * 0.7;
+                        const releaseY = barY + 14;
+                        spawnParticles(releaseX, releaseY, 25 + combo * 3, '#FFD740', 5, 0.8);
+                        spawnParticles(releaseX, releaseY, 15, '#FFF', 3, 0.5);
+                        const headPos = getBrachiosaurusHeadPos();
+                        spawnFloatingNote(headPos.mouthX, headPos.mouthY, 0.8);
+                    } else {
+                        // Fail
+                        feedbackType = 'fail';
+                        feedbackTimer = 0.7;
+                        combo = 0;
+                        lives--;
+                        brachiosaurusMood = 'sad';
+                        shakeAmount = 8;
+                        playFailSound();
+                        const barX = (canvas.width - canvas.width * 0.7) / 2;
+                        const barY = canvas.height * 0.82;
+                        const releaseX = barX + releaseProgress * canvas.width * 0.7;
+                        spawnParticles(releaseX, barY + 14, 20, '#FF5252', 4, 0.5);
+                    }
+
+                    currentRoundActive = false;
+                    gameState = STATE.ROUND_FEEDBACK;
+                    fillProgress = releaseProgress;
+                }
+            }
+
+            function getBrachiosaurusHeadPos() {
+                const cx = canvas.width * 0.5;
+                const groundY = canvas.height * 0.78;
+                const scale = Math.min(canvas.width / 500, canvas.height / 600);
+                const neckTopX = 15;
+                const neckTopY = -200 + brachiosaurusBobOffset * 0.5;
+                const headX = neckTopX;
+                const headY = neckTopY - 10;
+                return {
+                    x: cx + headX * scale,
+                    y: groundY + headY * scale,
+                    mouthX: cx + (headX + 20) * scale,
+                    mouthY: groundY + (headY + 12) * scale
+                };
+            }
+
+            canvas.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                handlePress();
+            });
+            canvas.addEventListener('mouseup', (e) => {
+                e.preventDefault();
+                handleRelease();
+            });
+            canvas.addEventListener('mouseleave', (e) => {
+                if (isHolding) handleRelease();
+            });
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                handlePress();
+            });
+            canvas.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                handleRelease();
+            });
+            canvas.addEventListener('touchcancel', (e) => {
+                if (isHolding) handleRelease();
+            });
+            window.addEventListener('keydown', (e) => {
+                if (e.code === 'Space' || e.code === 'KeyJ') {
+                    e.preventDefault();
+                    if (!isHolding) handlePress();
+                }
+            });
+            window.addEventListener('keyup', (e) => {
+                if (e.code === 'Space' || e.code === 'KeyJ') {
+                    e.preventDefault();
+                    if (isHolding) handleRelease();
+                }
+            });
+
+            // --- Game Flow ---
+            function startGame() {
+                score = 0;
+                lives = 3;
+                combo = 0;
+                maxCombo = 0;
+                roundCount = 0;
+                particles = [];
+                floatingNotes = [];
+                shakeAmount = 0;
+                brachiosaurusMood = 'happy';
+                isHolding = false;
+                fillProgress = 0;
+                currentRoundActive = false;
+                feedbackTimer = 0;
+                feedbackType = null;
+                gameState = STATE.PLAYING;
+                startNewRound();
+            }
+
+            function resetGame() {
+                startGame();
+            }
+
+            function startNewRound() {
+                roundCount++;
+                targetZone = getRandomTarget();
+                currentRoundActive = true;
+                isHolding = false;
+                fillProgress = 0;
+                holdStartTime = 0;
+                feedbackTimer = 0;
+                feedbackType = null;
+                brachiosaurusMood = 'happy';
+                targetMouthOpen = 0;
+                // Brachiosaurus "announces" the target
+                const durations = { si: 0.18, sii: 0.45, siiiiii: 1.0 };
+                const pitches = { si: 820, sii: 740, siiiiii: 680 };
+                const dur = durations[targetZone] || 0.3;
+                const pitch = pitches[targetZone] || 780;
+                playSiSound(dur, pitch);
+                const headPos = getBrachiosaurusHeadPos();
+                spawnFloatingNote(headPos.mouthX, headPos.mouthY, dur);
+                targetMouthOpen = dur > 0.4 ? 0.8 : 0.4;
+                setTimeout(() => {
+                    if (gameState === STATE.PLAYING && currentRoundActive) {
+                        targetMouthOpen = 0;
+                    }
+                }, dur * 1000 + 200);
+            }
+
+            function checkGameOver() {
+                if (lives <= 0) {
+                    gameState = STATE.GAMEOVER;
+                    currentRoundActive = false;
+                    isHolding = false;
+                    brachiosaurusMood = 'sad';
+                    const headPos = getBrachiosaurusHeadPos();
+                    spawnParticles(headPos.x, headPos.y, 40, '#FF5252', 6, 1.2);
+                    spawnParticles(headPos.x, headPos.y, 20, '#FFD740', 4, 0.8);
+                }
+            }
+
+            // --- Game Loop ---
+            let lastTime = performance.now();
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt > 0.1) dt = 0.1; // Cap to prevent jumps
+                if (dt <= 0) dt = 0.016;
+                lastTime = timestamp;
+
+                update(dt);
+                render();
+
+                requestAnimationFrame(gameLoop);
+            }
+
+            function update(dt) {
+                titlePulse += dt * 60;
+                brachiosaurusAnimTimer += dt;
+                eyeBlinkTimer += dt;
+
+                // Blink logic
+                if (eyeBlinkTimer > 2.5 + Math.random() * 3) {
+                    eyeBlinkTimer = 0;
+                    isBlinking = true;
+                    blinkFrame = 0;
+                }
+                if (isBlinking) {
+                    blinkFrame++;
+                    if (blinkFrame > 6) isBlinking = false;
+                }
+
+                // Mouth animation
+                mouthOpenAmount += (targetMouthOpen - mouthOpenAmount) * Math.min(dt * 12, 1);
+                if (Math.abs(mouthOpenAmount - targetMouthOpen) < 0.01) mouthOpenAmount = targetMouthOpen;
+
+                // Brachiosaurus bob
+                brachiosaurusBobOffset = Math.sin(brachiosaurusAnimTimer * 2.5) * 0.4;
+
+                // Shake decay
+                if (shakeAmount > 0) {
+                    shakeAmount *= Math.exp(-dt * 8);
+                    if (shakeAmount < 0.1) shakeAmount = 0;
+                }
+
+                // Update clouds
+                for (const cloud of cloudPositions) {
+                    cloud.x += cloud.speed * dt * 15;
+                    if (cloud.x > canvas.width + 100) cloud.x = -cloud.w;
+                }
+
+                // Update particles
+                updateParticles(dt);
+
+                // Update fill progress
+                if (gameState === STATE.PLAYING && isHolding && currentRoundActive) {
+                    const elapsed = (performance.now() / 1000) - holdStartTime;
+                    fillProgress = Math.min(elapsed / TOTAL_FILL_TIME, 1.0);
+                }
+
+                // Feedback timer
+                if (gameState === STATE.ROUND_FEEDBACK) {
+                    feedbackTimer -= dt;
+                    if (feedbackTimer <= 0) {
+                        feedbackTimer = 0;
+                        feedbackType = null;
+                        checkGameOver();
+                        if (gameState === STATE.PLAYING) {
+                            startNewRound();
+                        } else if (gameState === STATE.ROUND_FEEDBACK) {
+                            gameState = STATE.PLAYING;
+                            startNewRound();
+                        }
+                    }
+                }
+
+                // Handle round timeout
+                if (gameState === STATE.PLAYING && currentRoundActive && !isHolding && fillProgress === 0) {
+                    // Player hasn't started holding yet; no timeout needed, they can start anytime
+                }
+                if (gameState === STATE.PLAYING && isHolding && fillProgress >= 1.0 && currentRoundActive) {
+                    // Player held to max; auto-release
+                    handleRelease();
+                }
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                // Apply shake
+                let shakeX = 0,
+                    shakeY = 0;
+                if (shakeAmount > 0) {
+                    shakeX = (Math.random() - 0.5) * shakeAmount * 2;
+                    shakeY = (Math.random() - 0.5) * shakeAmount * 2;
+                }
+
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                drawSkyBackground(ctx);
+
+                // Draw brachiosaurus
+                const headPos = drawBrachiosaurus(ctx, brachiosaurusMood, brachiosaurusAnimTimer, brachiosaurusBobOffset,
+                    mouthOpenAmount, isHolding);
+
+                // Draw hold meter
+                if (gameState === STATE.PLAYING || gameState === STATE.ROUND_FEEDBACK) {
+                    const displayTarget = targetZone || 'si';
+                    const displayFill = (gameState === STATE.ROUND_FEEDBACK) ? fillProgress : (isHolding ? fillProgress :
+                        0);
+                    drawHoldMeter(ctx, displayTarget, displayFill, currentRoundActive || gameState === STATE.ROUND_FEEDBACK);
+                }
+
+                // Draw floating notes (from brachiosaurus)
+                drawParticles(ctx);
+
+                // Draw UI
+                drawUI(ctx);
+
+                // Feedback text
+                if (gameState === STATE.ROUND_FEEDBACK && feedbackType) {
+                    const barX = (canvas.width - canvas.width * 0.7) / 2;
+                    const barY = canvas.height * 0.82;
+                    const textY = barY - 35;
+                    const alpha = Math.min(1, feedbackTimer / 0.3);
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.textAlign = 'center';
+                    if (feedbackType === 'success') {
+                        ctx.fillStyle = '#FFD740';
+                        ctx.font = `bold ${Math.floor(canvas.width * 0.06)}px "Segoe UI", system-ui, sans-serif`;
+                        ctx.shadowColor = '#FF9800';
+                        ctx.shadowBlur = 15;
+                        const comboText = combo > 1 ? ` ${combo}x COMBO!` : '';
+                        ctx.fillText(`✅ Perfect!${comboText}`, canvas.width / 2, textY);
+                    } else {
+                        ctx.fillStyle = '#FF5252';
+                        ctx.font = `bold ${Math.floor(canvas.width * 0.05)}px "Segoe UI", system-ui, sans-serif`;
+                        ctx.shadowColor = '#FF0000';
+                        ctx.shadowBlur = 12;
+                        ctx.fillText('❌ Miss!', canvas.width / 2, textY);
+                    }
+                    ctx.shadowBlur = 0;
+                    ctx.restore();
+                }
+
+                // Target indicator above bar
+                if ((gameState === STATE.PLAYING && currentRoundActive && !isHolding) || (gameState === STATE
+                        .ROUND_FEEDBACK && feedbackType === null)) {
+                    const barX = (canvas.width - canvas.width * 0.7) / 2;
+                    const barY = canvas.height * 0.82;
+                    const targetMid = targetZone ? (ZONE_DEFS[targetZone].min + ZONE_DEFS[targetZone].max) / 2 : 0.5;
+                    const arrowX = barX + targetMid * canvas.width * 0.7;
+                    const arrowY = barY - 18;
+                    const bounce = Math.sin(Date.now() * 0.005) * 5;
+                    ctx.fillStyle = '#FFF';
+                    ctx.font = '20px serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('👇', arrowX, arrowY + bounce);
+                }
+
+                ctx.restore();
+
+                // Draw overlays (title/gameover - not affected by shake)
+                if (gameState === STATE.TITLE) {
+                    drawTitleScreen(ctx);
+                } else if (gameState === STATE.GAMEOVER) {
+                    drawGameOverScreen(ctx);
+                }
+
+                // Press hint during active round
+                if (gameState === STATE.PLAYING && currentRoundActive && !isHolding && fillProgress === 0) {
+                    const barY = canvas.height * 0.82;
+                    const hintY = barY + 55;
+                    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+                    ctx.font = `${Math.floor(canvas.width * 0.032)}px "Segoe UI", system-ui, sans-serif`;
+                    ctx.textAlign = 'center';
+                    const pulse = Math.sin(Date.now() * 0.004) * 0.3 + 0.7;
+                    ctx.globalAlpha = pulse;
+                    ctx.fillText('Hold SPACEBAR or tap & hold!', canvas.width / 2, hintY);
+                    ctx.globalAlpha = 1;
+                    ctx.textAlign = 'start';
+                }
+            }
+
+            // --- Initialize and Start ---
+            function init() {
+                resizeCanvas();
+                initScenery();
+                lastTime = performance.now();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // Handle window resize for scenery
+            window.addEventListener('resize', () => {
+                resizeCanvas();
+                initScenery();
+            });
+
+            init();
+
+            console.log('🦕 Brachiosaurus si sii siiiiii - Ready!');
+            console.log('Match the hold duration to the highlighted zone!');
+            console.log('si = short tap | sii = medium hold | siiiiii = long hold');
+        })();
+    </script>
+</body>
+</html>
