@@ -1,0 +1,1335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Messi vs Poland ⚽</title>
+    <style>
+        :root {
+            --bg: #1a1a2e;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Segoe UI', 'Arial', sans-serif;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            position: fixed;
+            top: 0;
+            left: 0;
+        }
+
+        #gameContainer {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            height: 100%;
+            max-width: 500px;
+            max-height: 900px;
+        }
+
+        canvas {
+            display: block;
+            border-radius: 16px;
+            box-shadow: 0 0 60px rgba(100, 180, 255, 0.3), 0 0 120px rgba(100, 150, 255, 0.15);
+            background: #0a5e1a;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            // --- Audio Engine ---
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            let audioCtx;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new AudioCtx();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playSound(freq, type, duration, vol = 0.15, glideTo = null) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (glideTo) osc.frequency.linearRampToValueAtTime(glideTo, t + duration);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) {
+                    // Silently fail
+                }
+            }
+
+            function sfxKick() { playSound(200, 'square', 0.12, 0.2, 80);
+                playSound(60, 'triangle', 0.08, 0.25); }
+
+            function sfxGoal() {
+                playSound(523, 'square', 0.15, 0.15);
+                setTimeout(() => playSound(659, 'square', 0.15, 0.15), 120);
+                setTimeout(() => playSound(784, 'square', 0.2, 0.3), 240);
+                playSound(100, 'triangle', 0.12, 0.5);
+            }
+
+            function sfxSave() { playSound(120, 'sawtooth', 0.1, 0.3, 50); }
+
+            function sfxMiss() { playSound(80, 'triangle', 0.06, 0.4); }
+
+            function sfxHit() { playSound(90, 'sawtooth', 0.18, 0.25, 40);
+                playSound(50, 'triangle', 0.12, 0.3); }
+
+            function sfxWhistle() { playSound(800, 'sine', 0.1, 0.3, 600); }
+
+            // --- Game Constants ---
+            const VIRTUAL_WIDTH = 400;
+            const VIRTUAL_HEIGHT = 700;
+
+            // --- Canvas Setup ---
+            function resizeCanvas() {
+                const container = document.getElementById('gameContainer');
+                const maxW = Math.min(container.clientWidth, 500);
+                const maxH = Math.min(container.clientHeight, 900);
+                const aspect = VIRTUAL_WIDTH / VIRTUAL_HEIGHT;
+                let w, h;
+                if (maxW / maxH > aspect) {
+                    h = maxH;
+                    w = h * aspect;
+                } else {
+                    w = maxW;
+                    h = w / aspect;
+                }
+                canvas.width = VIRTUAL_WIDTH;
+                canvas.height = VIRTUAL_HEIGHT;
+                canvas.style.width = Math.floor(w) + 'px';
+                canvas.style.height = Math.floor(h) + 'px';
+                return { scaleX: VIRTUAL_WIDTH / w, scaleY: VIRTUAL_HEIGHT / h, displayW: w, displayH: h };
+            }
+
+            let displayInfo = resizeCanvas();
+            window.addEventListener('resize', () => { displayInfo = resizeCanvas(); });
+            window.addEventListener('orientationchange', () => {
+                setTimeout(() => { displayInfo = resizeCanvas(); }, 300);
+            });
+
+            // --- Input State ---
+            const input = {
+                up: false,
+                down: false,
+                left: false,
+                right: false,
+                shoot: false,
+                shootPressed: false,
+                // Touch joystick
+                joystickActive: false,
+                joystickId: null,
+                joystickOriginX: 0,
+                joystickOriginY: 0,
+                joystickX: 0,
+                joystickY: 0,
+                shootTouchActive: false,
+                shootTouchId: null,
+            };
+
+            // --- Game State ---
+            const STATE = { MENU: 'menu', PLAYING: 'playing', SHOOTING: 'shooting', CELEBRATING: 'celebrating',
+                HIT: 'hit', GAME_OVER: 'gameOver' };
+            let gameState = STATE.MENU;
+            let score = 0;
+            let lives = 3;
+            let invulnerableTimer = 0;
+            let celebrateTimer = 0;
+            let hitTimer = 0;
+            let difficulty = 1;
+            let shakeAmount = 0;
+
+            // --- Entities ---
+            let player, ball, goalkeeper, defenders, particles, fieldOffsetY;
+
+            // Goal definition (in game coords)
+            const GOAL_Y = 30;
+            const GOAL_LEFT = VIRTUAL_WIDTH / 2 - 65;
+            const GOAL_RIGHT = VIRTUAL_WIDTH / 2 + 65;
+            const GOAL_POST_RADIUS = 6;
+            const SHOOTING_ZONE_Y = 200;
+
+            function resetPlayer() {
+                player = {
+                    x: VIRTUAL_WIDTH / 2,
+                    y: VIRTUAL_HEIGHT - 120,
+                    vx: 0,
+                    vy: 0,
+                    radius: 16,
+                    speed: 200,
+                    hasBall: true,
+                    facingAngle: -Math.PI / 2, // facing up
+                    trail: [],
+                };
+            }
+
+            function resetBall() {
+                ball = {
+                    x: player.x,
+                    y: player.y - player.radius - 8,
+                    vx: 0,
+                    vy: 0,
+                    radius: 7,
+                    active: false,
+                    shadowY: 0,
+                };
+            }
+
+            function resetGoalkeeper() {
+                goalkeeper = {
+                    x: VIRTUAL_WIDTH / 2,
+                    y: GOAL_Y + 25,
+                    radius: 20,
+                    speed: 90 + difficulty * 8,
+                    direction: Math.random() > 0.5 ? 1 : -1,
+                    minX: GOAL_LEFT + 20,
+                    maxX: GOAL_RIGHT - 20,
+                    reactionTarget: null,
+                };
+            }
+
+            function spawnDefender(x, y, speed) {
+                return {
+                    x: x,
+                    y: y,
+                    radius: 14 + Math.random() * 4,
+                    speed: speed || (100 + Math.random() * 60 + difficulty * 12),
+                    vx: 0,
+                    vy: 0,
+                    baseX: x,
+                    baseY: y,
+                    patrolTimer: Math.random() * Math.PI * 2,
+                    patrolAmplitude: 30 + Math.random() * 50,
+                    aggression: 0.5 + Math.random() * 0.5,
+                };
+            }
+
+            function resetDefenders() {
+                defenders = [];
+                const count = 3 + Math.floor(difficulty / 3);
+                for (let i = 0; i < count; i++) {
+                    const x = GOAL_LEFT + 40 + Math.random() * (GOAL_RIGHT - GOAL_LEFT - 80);
+                    const y = GOAL_Y + 70 + Math.random() * 250;
+                    defenders.push(spawnDefender(x, y));
+                }
+                // Add 1-2 roaming defenders
+                const roamers = 1 + Math.floor(difficulty / 5);
+                for (let i = 0; i < roamers; i++) {
+                    const x = 40 + Math.random() * (VIRTUAL_WIDTH - 80);
+                    const y = 150 + Math.random() * 350;
+                    const d = spawnDefender(x, y, 80 + Math.random() * 50 + difficulty * 10);
+                    d.patrolAmplitude = 60 + Math.random() * 100;
+                    defenders.push(d);
+                }
+            }
+
+            function resetAll() {
+                resetPlayer();
+                resetBall();
+                resetGoalkeeper();
+                resetDefenders();
+                particles = [];
+                fieldOffsetY = 0;
+                difficulty = 1;
+                invulnerableTimer = 0;
+                celebrateTimer = 0;
+                hitTimer = 0;
+                shakeAmount = 0;
+            }
+
+            function spawnParticles(x, y, count, color, spread = 3, life = 0.6) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 80 + Math.random() * 350;
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        life: life + Math.random() * 0.4,
+                        maxLife: life + 0.4,
+                        color: color,
+                        radius: 2 + Math.random() * 5,
+                    });
+                }
+            }
+
+            // --- Initialize ---
+            function initGame() {
+                score = 0;
+                lives = 3;
+                resetAll();
+                gameState = STATE.PLAYING;
+                sfxWhistle();
+            }
+
+            resetAll();
+            // Initial ball placement
+            ball.x = player.x;
+            ball.y = player.y - player.radius - 8;
+
+            // --- Update Functions ---
+            function updatePlayer(dt) {
+                if (gameState === STATE.HIT || gameState === STATE.CELEBRATING || gameState === STATE.GAME_OVER) {
+                    // Still allow minimal movement or freeze
+                    if (gameState === STATE.HIT) {
+                        player.vx *= 0.85;
+                        player.vy *= 0.85;
+                    } else {
+                        player.vx = 0;
+                        player.vy = 0;
+                    }
+                    player.x += player.vx * dt;
+                    player.y += player.vy * dt;
+                    return;
+                }
+
+                // Read input
+                let moveX = 0;
+                let moveY = 0;
+                if (input.left || input.right) {
+                    moveX = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+                }
+                if (input.up || input.down) {
+                    moveY = (input.down ? 1 : 0) - (input.up ? 1 : 0);
+                }
+                // Touch joystick
+                if (input.joystickActive) {
+                    const dx = input.joystickX - input.joystickOriginX;
+                    const dy = input.joystickY - input.joystickOriginY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const maxDist = 50;
+                    if (dist > 8) {
+                        const clamp = Math.min(dist, maxDist);
+                        const nx = dx / dist;
+                        const ny = dy / dist;
+                        moveX = nx * (clamp / maxDist);
+                        moveY = ny * (clamp / maxDist);
+                    }
+                }
+
+                // Normalize
+                const mag = Math.sqrt(moveX * moveX + moveY * moveY);
+                if (mag > 1) { moveX /= mag;
+                    moveY /= mag; }
+
+                // Apply movement
+                const spd = player.speed;
+                player.vx = moveX * spd;
+                player.vy = moveY * spd;
+                player.x += player.vx * dt;
+                player.y += player.vy * dt;
+
+                // Update facing angle
+                if (mag > 0.15) {
+                    player.facingAngle = Math.atan2(moveY, moveX);
+                } else {
+                    // Gradually face upward
+                    const targetAngle = -Math.PI / 2;
+                    let diff = targetAngle - player.facingAngle;
+                    while (diff > Math.PI) diff -= Math.PI * 2;
+                    while (diff < -Math.PI) diff += Math.PI * 2;
+                    player.facingAngle += diff * 4 * dt;
+                }
+
+                // Clamp to field
+                player.x = Math.max(player.radius + 5, Math.min(VIRTUAL_WIDTH - player.radius - 5, player.x));
+                player.y = Math.max(player.radius + 5, Math.min(VIRTUAL_HEIGHT - player.radius - 5, player.y));
+
+                // Update trail
+                if (mag > 0.3) {
+                    player.trail.push({ x: player.x, y: player.y, life: 0.25 });
+                }
+                for (let i = player.trail.length - 1; i >= 0; i--) {
+                    player.trail[i].life -= dt;
+                    if (player.trail[i].life <= 0) player.trail.splice(i, 1);
+                }
+
+                // Update ball position when attached
+                if (player.hasBall && !ball.active) {
+                    const bx = player.x + Math.cos(player.facingAngle) * (player.radius + 10);
+                    const by = player.y + Math.sin(player.facingAngle) * (player.radius + 10);
+                    ball.x += (bx - ball.x) * 20 * dt;
+                    ball.y += (by - ball.y) * 20 * dt;
+                }
+            }
+
+            function updateBall(dt) {
+                if (!ball.active) return;
+                ball.x += ball.vx * dt;
+                ball.y += ball.vy * dt;
+                ball.shadowY += 180 * dt;
+
+                // Check if ball reaches goal line
+                if (ball.y <= GOAL_Y + 10 && ball.x > GOAL_LEFT && ball.x < GOAL_RIGHT &&
+                    ball.y > GOAL_Y - 15) {
+                    // Check goalkeeper save
+                    const gkDist = Math.abs(ball.x - goalkeeper.x);
+                    const saveChance = gkDist < goalkeeper.radius + 18 ? 0.7 : (gkDist < goalkeeper.radius + 35 ? 0.35 :
+                        0.05);
+                    if (Math.random() < saveChance && ball.y > GOAL_Y - 5) {
+                        // Saved!
+                        sfxSave();
+                        spawnParticles(ball.x, ball.y, 20, '#ff4444', 4, 0.5);
+                        shakeAmount = 4;
+                        ball.active = false;
+                        player.hasBall = true;
+                        ball.x = player.x;
+                        ball.y = player.y - player.radius - 8;
+                        ball.vx = 0;
+                        ball.vy = 0;
+                        gameState = STATE.PLAYING;
+                    } else if (ball.y <= GOAL_Y && ball.x > GOAL_LEFT && ball.x < GOAL_RIGHT) {
+                        // GOAL!
+                        sfxGoal();
+                        spawnParticles(ball.x, GOAL_Y, 50, '#FFD700', 6, 0.9);
+                        spawnParticles(ball.x, GOAL_Y, 30, '#FFFFFF', 5, 0.7);
+                        spawnParticles(ball.x, GOAL_Y, 25, '#75B2F0', 4, 0.8);
+                        score++;
+                        difficulty = 1 + Math.floor(score / 3);
+                        shakeAmount = 8;
+                        ball.active = false;
+                        player.hasBall = true;
+                        ball.x = player.x;
+                        ball.y = player.y - player.radius - 8;
+                        ball.vx = 0;
+                        ball.vy = 0;
+                        gameState = STATE.CELEBRATING;
+                        celebrateTimer = 1.2;
+                        resetDefenders();
+                        resetGoalkeeper();
+                        // Reset player position
+                        player.x = VIRTUAL_WIDTH / 2;
+                        player.y = VIRTUAL_HEIGHT - 150;
+                    }
+                }
+
+                // Ball out of bounds (miss)
+                if (ball.y < GOAL_Y - 20 || ball.y > VIRTUAL_HEIGHT + 30 ||
+                    ball.x < -20 || ball.x > VIRTUAL_WIDTH + 20) {
+                    sfxMiss();
+                    ball.active = false;
+                    player.hasBall = true;
+                    ball.x = player.x;
+                    ball.y = player.y - player.radius - 8;
+                    ball.vx = 0;
+                    ball.vy = 0;
+                    gameState = STATE.PLAYING;
+                    // Move player back slightly
+                    player.y = Math.min(player.y + 80, VIRTUAL_HEIGHT - 100);
+                }
+
+                // Ball hits goal post
+                if (ball.y < GOAL_Y + GOAL_POST_RADIUS + 8 &&
+                    (Math.abs(ball.x - GOAL_LEFT) < GOAL_POST_RADIUS + ball.radius ||
+                        Math.abs(ball.x - GOAL_RIGHT) < GOAL_POST_RADIUS + ball.radius)) {
+                    sfxHit();
+                    spawnParticles(ball.x, ball.y, 15, '#CCCCCC', 3, 0.4);
+                    ball.vx *= -0.5;
+                    ball.vy *= -0.5;
+                    ball.x += ball.vx * 0.05;
+                    ball.y += ball.vy * 0.05;
+                    shakeAmount = Math.max(shakeAmount, 3);
+                }
+            }
+
+            function updateDefenders(dt) {
+                for (const d of defenders) {
+                    // Patrol + chase behavior
+                    d.patrolTimer += dt * (1.5 + d.aggression);
+
+                    if (gameState === STATE.PLAYING && player.hasBall && invulnerableTimer <= 0) {
+                        // Chase player
+                        const dx = player.x - d.x;
+                        const dy = player.y - d.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        const chaseRange = 350;
+
+                        if (dist < chaseRange && dist > 0) {
+                            const nx = dx / dist;
+                            const ny = dy / dist;
+                            const chaseSpeed = d.speed * d.aggression * (dist < 80 ? 1.3 : 1.0);
+                            d.vx += (nx * chaseSpeed - d.vx) * 6 * dt;
+                            d.vy += (ny * chaseSpeed - d.vy) * 6 * dt;
+                        } else {
+                            // Patrol
+                            const px = d.baseX + Math.cos(d.patrolTimer) * d.patrolAmplitude;
+                            const py = d.baseY + Math.sin(d.patrolTimer * 0.7) * d.patrolAmplitude * 0.6;
+                            const pdx = px - d.x;
+                            const pdy = py - d.y;
+                            d.vx += (pdx * 0.5 - d.vx) * 3 * dt;
+                            d.vy += (pdy * 0.5 - d.vy) * 3 * dt;
+                        }
+                    } else {
+                        // Patrol when player doesn't have ball or is invulnerable
+                        const px = d.baseX + Math.cos(d.patrolTimer) * d.patrolAmplitude;
+                        const py = d.baseY + Math.sin(d.patrolTimer * 0.7) * d.patrolAmplitude * 0.6;
+                        const pdx = px - d.x;
+                        const pdy = py - d.y;
+                        d.vx += (pdx * 0.5 - d.vx) * 3 * dt;
+                        d.vy += (pdy * 0.5 - d.vy) * 3 * dt;
+                    }
+
+                    // Apply velocity
+                    d.x += d.vx * dt;
+                    d.y += d.vy * dt;
+
+                    // Clamp to field
+                    d.x = Math.max(d.radius + 3, Math.min(VIRTUAL_WIDTH - d.radius - 3, d.x));
+                    d.y = Math.max(GOAL_Y + 50, Math.min(VIRTUAL_HEIGHT - d.radius - 3, d.y));
+
+                    // Friction
+                    d.vx *= 0.92;
+                    d.vy *= 0.92;
+                }
+            }
+
+            function updateGoalkeeper(dt) {
+                if (gameState === STATE.SHOOTING && ball.active) {
+                    // React to shot
+                    const targetX = ball.x;
+                    goalkeeper.reactionTarget = targetX;
+                }
+                if (goalkeeper.reactionTarget !== null) {
+                    const dx = goalkeeper.reactionTarget - goalkeeper.x;
+                    goalkeeper.x += dx * 8 * dt;
+                    if (Math.abs(dx) < 3) goalkeeper.reactionTarget = null;
+                } else {
+                    // Patrol
+                    goalkeeper.x += goalkeeper.direction * goalkeeper.speed * dt;
+                    if (goalkeeper.x >= goalkeeper.maxX) {
+                        goalkeeper.x = goalkeeper.maxX;
+                        goalkeeper.direction = -1;
+                    }
+                    if (goalkeeper.x <= goalkeeper.minX) {
+                        goalkeeper.x = goalkeeper.minX;
+                        goalkeeper.direction = 1;
+                    }
+                }
+                goalkeeper.x = Math.max(goalkeeper.minX, Math.min(goalkeeper.maxX, goalkeeper.x));
+            }
+
+            function checkDefenderCollisions() {
+                if (gameState !== STATE.PLAYING) return;
+                if (!player.hasBall) return;
+                if (invulnerableTimer > 0) return;
+
+                for (const d of defenders) {
+                    const dx = player.x - d.x;
+                    const dy = player.y - d.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const collideDist = player.radius + d.radius - 2;
+                    if (dist < collideDist) {
+                        // Tackled!
+                        sfxHit();
+                        spawnParticles(player.x, player.y, 30, '#FF4444', 5, 0.6);
+                        spawnParticles(player.x, player.y, 15, '#FFFFFF', 3, 0.4);
+                        shakeAmount = 7;
+                        lives--;
+                        invulnerableTimer = 1.8;
+                        player.hasBall = true;
+                        ball.active = false;
+                        ball.x = player.x;
+                        ball.y = player.y - player.radius - 8;
+                        ball.vx = 0;
+                        ball.vy = 0;
+                        // Push player back
+                        player.x = VIRTUAL_WIDTH / 2 + (Math.random() - 0.5) * 100;
+                        player.y = Math.max(VIRTUAL_HEIGHT - 200, player.y + 60);
+                        player.vx = 0;
+                        player.vy = 0;
+                        gameState = STATE.HIT;
+                        hitTimer = 0.8;
+                        if (lives <= 0) {
+                            gameState = STATE.GAME_OVER;
+                            spawnParticles(player.x, player.y, 60, '#FF0000', 8, 1.2);
+                            sfxHit();
+                        }
+                        return;
+                    }
+                }
+            }
+
+            function shoot() {
+                if (!player.hasBall || ball.active) return;
+                if (player.y > SHOOTING_ZONE_Y) return; // Not in shooting zone
+                if (gameState !== STATE.PLAYING) return;
+
+                initAudio();
+                sfxKick();
+                ball.active = true;
+                player.hasBall = false;
+
+                // Calculate shot direction (toward goal with some spread)
+                const goalCenterX = VIRTUAL_WIDTH / 2;
+                const goalCenterY = GOAL_Y - 5;
+                const dx = goalCenterX - player.x;
+                const dy = goalCenterY - player.y;
+                const baseAngle = Math.atan2(dy, dx);
+
+                // Accuracy based on distance and defender proximity
+                let accuracy = 1.0;
+                const distToGoal = Math.sqrt(dx * dx + dy * dy);
+                accuracy *= Math.max(0.4, 1 - (distToGoal - 100) / 500);
+
+                // Check nearby defenders
+                for (const d of defenders) {
+                    const ddx = player.x - d.x;
+                    const ddy = player.y - d.y;
+                    const ddist = Math.sqrt(ddx * ddx + ddy * ddy);
+                    if (ddist < 80) accuracy -= 0.15;
+                }
+                accuracy = Math.max(0.2, Math.min(1.0, accuracy));
+
+                const spreadAngle = (1 - accuracy) * 0.5; // Max ~0.5 rad spread
+                const shotAngle = baseAngle + (Math.random() - 0.5) * spreadAngle * 2;
+
+                const shotSpeed = 500 + Math.random() * 200;
+                ball.vx = Math.cos(shotAngle) * shotSpeed;
+                ball.vy = Math.sin(shotAngle) * shotSpeed;
+                ball.x = player.x + Math.cos(shotAngle) * (player.radius + 8);
+                ball.y = player.y + Math.sin(shotAngle) * (player.radius + 8);
+                ball.shadowY = 0;
+
+                gameState = STATE.SHOOTING;
+                goalkeeper.reactionTarget = ball.x + ball.vx * 0.25;
+            }
+
+            function update(dt) {
+                // Clamp dt
+                if (dt > 0.1) dt = 0.1;
+
+                // Update timers
+                if (invulnerableTimer > 0) invulnerableTimer -= dt;
+                if (celebrateTimer > 0) {
+                    celebrateTimer -= dt;
+                    if (celebrateTimer <= 0 && gameState === STATE.CELEBRATING) {
+                        gameState = STATE.PLAYING;
+                        player.x = VIRTUAL_WIDTH / 2;
+                        player.y = VIRTUAL_HEIGHT - 150;
+                        player.hasBall = true;
+                        ball.active = false;
+                        ball.x = player.x;
+                        ball.y = player.y - player.radius - 8;
+                        ball.vx = 0;
+                        ball.vy = 0;
+                    }
+                }
+                if (hitTimer > 0) {
+                    hitTimer -= dt;
+                    if (hitTimer <= 0 && gameState === STATE.HIT) {
+                        gameState = STATE.PLAYING;
+                    }
+                }
+                if (shakeAmount > 0) shakeAmount *= Math.pow(0.05, dt);
+
+                // Update entities
+                updatePlayer(dt);
+                updateBall(dt);
+                updateDefenders(dt);
+                updateGoalkeeper(dt);
+                checkDefenderCollisions();
+
+                // Update particles
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.life -= dt;
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+
+                // Handle shoot input
+                if (input.shootPressed && gameState === STATE.PLAYING && player.hasBall && !ball.active && player.y <=
+                    SHOOTING_ZONE_Y) {
+                    shoot();
+                }
+                input.shootPressed = false;
+
+                // If ball goes inactive while in SHOOTING state (handled in updateBall), revert state
+                if (gameState === STATE.SHOOTING && !ball.active) {
+                    // State already reverted in updateBall
+                }
+            }
+
+            // --- Render Functions ---
+            function drawPitch() {
+                // Grass base
+                const grassGrad = ctx.createLinearGradient(0, 0, VIRTUAL_WIDTH, 0);
+                grassGrad.addColorStop(0, '#1a7a2e');
+                grassGrad.addColorStop(0.3, '#228B3a');
+                grassGrad.addColorStop(0.5, '#2a9d3f');
+                grassGrad.addColorStop(0.7, '#228B3a');
+                grassGrad.addColorStop(1, '#1a7a2e');
+                ctx.fillStyle = grassGrad;
+                ctx.fillRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
+
+                // Mowing stripes
+                for (let i = 0; i < VIRTUAL_HEIGHT; i += 45) {
+                    const stripeAlpha = 0.04 + 0.03 * Math.sin(i * 0.05);
+                    ctx.fillStyle = `rgba(255,255,255,${stripeAlpha})`;
+                    ctx.fillRect(0, i, VIRTUAL_WIDTH, 22);
+                }
+                for (let i = 22; i < VIRTUAL_HEIGHT; i += 45) {
+                    const stripeAlpha = 0.03 + 0.02 * Math.sin(i * 0.05);
+                    ctx.fillStyle = `rgba(0,0,0,${stripeAlpha})`;
+                    ctx.fillRect(0, i, VIRTUAL_WIDTH, 22);
+                }
+
+                // Field border
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 4;
+                ctx.strokeRect(15, GOAL_Y + 5, VIRTUAL_WIDTH - 30, VIRTUAL_HEIGHT - GOAL_Y - 20);
+
+                // Center line
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 2.5;
+                ctx.setLineDash([8, 20]);
+                ctx.beginPath();
+                ctx.moveTo(15, VIRTUAL_HEIGHT / 2 + 60);
+                ctx.lineTo(VIRTUAL_WIDTH - 15, VIRTUAL_HEIGHT / 2 + 60);
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // Center circle
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                ctx.arc(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT / 2 + 60, 55, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Goal area
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(GOAL_LEFT - 20, GOAL_Y + 5, GOAL_RIGHT - GOAL_LEFT + 40, 100);
+
+                // Goal box (6-yard)
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(GOAL_LEFT - 8, GOAL_Y + 5, GOAL_RIGHT - GOAL_LEFT + 16, 55);
+
+                // Goal
+                ctx.fillStyle = '#1a1a1a';
+                ctx.fillRect(GOAL_LEFT - 8, GOAL_Y - 18, GOAL_RIGHT - GOAL_LEFT + 16, 28);
+
+                // Goal net pattern
+                ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+                ctx.lineWidth = 0.8;
+                for (let nx = GOAL_LEFT - 5; nx <= GOAL_RIGHT + 5; nx += 12) {
+                    ctx.beginPath();
+                    ctx.moveTo(nx, GOAL_Y - 18);
+                    ctx.lineTo(nx, GOAL_Y + 5);
+                    ctx.stroke();
+                }
+                for (let ny = GOAL_Y - 16; ny <= GOAL_Y + 3; ny += 10) {
+                    ctx.beginPath();
+                    ctx.moveTo(GOAL_LEFT - 8, ny);
+                    ctx.lineTo(GOAL_RIGHT + 8, ny);
+                    ctx.stroke();
+                }
+
+                // Goal posts
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(GOAL_LEFT, GOAL_Y, GOAL_POST_RADIUS, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(GOAL_RIGHT, GOAL_Y, GOAL_POST_RADIUS, 0, Math.PI * 2);
+                ctx.fill();
+                // Crossbar
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 5;
+                ctx.beginPath();
+                ctx.moveTo(GOAL_LEFT, GOAL_Y);
+                ctx.lineTo(GOAL_RIGHT, GOAL_Y);
+                ctx.stroke();
+
+                // Shooting zone indicator (subtle)
+                const szGrad = ctx.createLinearGradient(0, SHOOTING_ZONE_Y - 20, 0, SHOOTING_ZONE_Y + 10);
+                szGrad.addColorStop(0, 'rgba(255,255,200,0.08)');
+                szGrad.addColorStop(1, 'rgba(255,255,200,0)');
+                ctx.fillStyle = szGrad;
+                ctx.fillRect(20, SHOOTING_ZONE_Y - 20, VIRTUAL_WIDTH - 40, 30);
+            }
+
+            function drawPlayer() {
+                if (gameState === STATE.GAME_OVER) return;
+
+                // Invulnerability flash
+                if (invulnerableTimer > 0 && Math.floor(invulnerableTimer * 15) % 2 === 0) return;
+
+                // Trail
+                for (const t of player.trail) {
+                    const alpha = t.life / 0.25;
+                    ctx.fillStyle = `rgba(135,206,250,${alpha * 0.5})`;
+                    ctx.beginPath();
+                    ctx.arc(t.x, t.y, player.radius * 0.7, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.35)';
+                ctx.beginPath();
+                ctx.ellipse(player.x, player.y + player.radius * 0.7, player.radius * 0.8, player.radius * 0.3, 0, 0, Math.PI *
+                    2);
+                ctx.fill();
+
+                // Body
+                const bodyGrad = ctx.createRadialGradient(player.x - 2, player.y - 3, player.radius * 0.2, player.x, player
+                    .y, player.radius);
+                bodyGrad.addColorStop(0, '#ffffff');
+                bodyGrad.addColorStop(0.35, '#89CFF0');
+                bodyGrad.addColorStop(0.6, '#4A90D9');
+                bodyGrad.addColorStop(1, '#1a3a6e');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Argentina stripes
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+                ctx.clip();
+                ctx.fillStyle = '#75B2F0';
+                ctx.fillRect(player.x - player.radius, player.y - player.radius * 0.22, player.radius * 2, player.radius *
+                    0.44);
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(player.x - player.radius, player.y - player.radius * 0.07, player.radius * 2, player.radius *
+                    0.14);
+                ctx.restore();
+
+                // Number 10
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = `bold ${player.radius*0.8}px 'Segoe UI', Arial, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('10', player.x, player.y + 1);
+
+                // Glow
+                const glowGrad = ctx.createRadialGradient(player.x, player.y, player.radius * 0.8, player.x, player.y,
+                    player.radius * 1.6);
+                glowGrad.addColorStop(0, 'rgba(180,220,255,0.4)');
+                glowGrad.addColorStop(1, 'rgba(180,220,255,0)');
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(player.x, player.y, player.radius * 1.6, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Direction indicator (small arrow)
+                if (player.hasBall && !ball.active) {
+                    const ax = player.x + Math.cos(player.facingAngle) * (player.radius + 12);
+                    const ay = player.y + Math.sin(player.facingAngle) * (player.radius + 12);
+                    ctx.fillStyle = '#FFD700';
+                    ctx.beginPath();
+                    ctx.arc(ax, ay, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function drawBall() {
+                if (ball.active || (!ball.active && player.hasBall && gameState !== STATE.GAME_OVER)) {
+                    // Shadow
+                    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+                    ctx.beginPath();
+                    ctx.ellipse(ball.x, ball.y + ball.radius * 0.5 + Math.min(ball.shadowY * 0.3, 10), ball.radius * 0.9, ball
+                        .radius * 0.3, 0, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Ball
+                    const ballGrad = ctx.createRadialGradient(ball.x - 2, ball.y - 2, ball.radius * 0.15, ball.x, ball.y,
+                        ball.radius);
+                    ballGrad.addColorStop(0, '#FFFFFF');
+                    ballGrad.addColorStop(0.5, '#F5F5F5');
+                    ballGrad.addColorStop(0.8, '#CCCCCC');
+                    ballGrad.addColorStop(1, '#888888');
+                    ctx.fillStyle = ballGrad;
+                    ctx.beginPath();
+                    ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Pentagon pattern
+                    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+                    ctx.lineWidth = 1;
+                    for (let i = 0; i < 5; i++) {
+                        const angle = (i / 5) * Math.PI * 2 + (ball.active ? performance.now() * 0.01 : 0);
+                        const px = ball.x + Math.cos(angle) * ball.radius * 0.5;
+                        const py = ball.y + Math.sin(angle) * ball.radius * 0.5;
+                        ctx.beginPath();
+                        ctx.arc(px, py, ball.radius * 0.22, 0, Math.PI * 2);
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            function drawDefender(d) {
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.beginPath();
+                ctx.ellipse(d.x, d.y + d.radius * 0.6, d.radius * 0.75, d.radius * 0.25, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body
+                const bodyGrad = ctx.createRadialGradient(d.x - 2, d.y - 2, d.radius * 0.2, d.x, d.y, d.radius);
+                bodyGrad.addColorStop(0, '#FFEEEE');
+                bodyGrad.addColorStop(0.4, '#E63946');
+                bodyGrad.addColorStop(0.7, '#C1121F');
+                bodyGrad.addColorStop(1, '#780000');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.arc(d.x, d.y, d.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // White trim
+                ctx.strokeStyle = '#FFFFFF';
+                ctx.lineWidth = 1.8;
+                ctx.beginPath();
+                ctx.arc(d.x, d.y, d.radius - 1, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Polish eagle-inspired simple mark
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = `bold ${d.radius*0.7}px 'Segoe UI', Arial, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('PL', d.x, d.y);
+            }
+
+            function drawGoalkeeper() {
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.35)';
+                ctx.beginPath();
+                ctx.ellipse(goalkeeper.x, goalkeeper.y + goalkeeper.radius * 0.5, goalkeeper.radius * 0.8, goalkeeper.radius *
+                    0.3, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body (larger, distinct)
+                const gkGrad = ctx.createRadialGradient(goalkeeper.x - 2, goalkeeper.y - 3, goalkeeper.radius * 0.3,
+                    goalkeeper.x, goalkeeper.y, goalkeeper.radius);
+                gkGrad.addColorStop(0, '#FFFF88');
+                gkGrad.addColorStop(0.4, '#FFD700');
+                gkGrad.addColorStop(0.7, '#E8A000');
+                gkGrad.addColorStop(1, '#8B6914');
+                ctx.fillStyle = gkGrad;
+                ctx.beginPath();
+                ctx.arc(goalkeeper.x, goalkeeper.y, goalkeeper.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Gloves
+                ctx.fillStyle = '#333333';
+                ctx.beginPath();
+                ctx.arc(goalkeeper.x - goalkeeper.radius * 0.7, goalkeeper.y - goalkeeper.radius * 0.4, goalkeeper.radius *
+                    0.35, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(goalkeeper.x + goalkeeper.radius * 0.7, goalkeeper.y - goalkeeper.radius * 0.4, goalkeeper.radius *
+                    0.35, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Cap
+                ctx.fillStyle = '#222222';
+                ctx.beginPath();
+                ctx.arc(goalkeeper.x, goalkeeper.y - goalkeeper.radius * 0.55, goalkeeper.radius * 0.6, Math.PI, Math.PI * 2);
+                ctx.fill();
+                ctx.fillRect(goalkeeper.x - goalkeeper.radius * 0.6, goalkeeper.y - goalkeeper.radius * 0.6, goalkeeper
+                    .radius * 1.2, goalkeeper.radius * 0.2);
+            }
+
+            function drawParticles() {
+                for (const p of particles) {
+                    const alpha = p.life / p.maxLife;
+                    ctx.fillStyle = p.color.replace(')', `,${alpha})`).replace('rgb',
+                        'rgba');
+                    if (p.color.startsWith('#')) {
+                        const hex = p.color;
+                        const r = parseInt(hex.slice(1, 3), 16);
+                        const g = parseInt(hex.slice(3, 5), 16);
+                        const b = parseInt(hex.slice(5, 7), 16);
+                        ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+                    }
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.radius * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function drawUI() {
+                // Score
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = 'bold 26px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText(`⚽ ${score}`, 20, VIRTUAL_HEIGHT - 20);
+
+                // Lives
+                ctx.textAlign = 'right';
+                let heartsStr = '';
+                for (let i = 0; i < lives; i++) heartsStr += '❤️ ';
+                ctx.fillText(heartsStr.trim(), VIRTUAL_WIDTH - 20, VIRTUAL_HEIGHT - 20);
+
+                // Shooting indicator
+                if (gameState === STATE.PLAYING && player.hasBall && !ball.active && player.y <= SHOOTING_ZONE_Y) {
+                    const pulse = 0.7 + 0.3 * Math.sin(performance.now() * 0.008);
+                    ctx.fillStyle = `rgba(255,215,0,${pulse})`;
+                    ctx.font = 'bold 18px "Segoe UI", Arial, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🔥 SHOOT! Press SPACE', VIRTUAL_WIDTH / 2, SHOOTING_ZONE_Y - 8);
+
+                    // Glow around player
+                    const glowGrad = ctx.createRadialGradient(player.x, player.y, player.radius, player.x, player.y, player
+                        .radius * 2.2);
+                    glowGrad.addColorStop(0, `rgba(255,215,0,${0.5*pulse})`);
+                    glowGrad.addColorStop(1, 'rgba(255,215,0,0)');
+                    ctx.fillStyle = glowGrad;
+                    ctx.beginPath();
+                    ctx.arc(player.x, player.y, player.radius * 2.2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Mobile shoot button indicator
+                if (gameState === STATE.PLAYING && player.hasBall && !ball.active && player.y <= SHOOTING_ZONE_Y &&
+                    ('ontouchstart' in window || navigator.maxTouchPoints > 0)) {
+                    const pulse = 0.7 + 0.3 * Math.sin(performance.now() * 0.008);
+                    const bx = VIRTUAL_WIDTH - 55;
+                    const by = VIRTUAL_HEIGHT / 2;
+                    ctx.fillStyle = `rgba(255,80,30,${0.7*pulse})`;
+                    ctx.beginPath();
+                    ctx.arc(bx, by, 38, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#FFFFFF';
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.font = 'bold 15px "Segoe UI", Arial, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('SHOOT', bx, by);
+                }
+
+                // Difficulty indicator
+                if (difficulty > 1) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                    ctx.font = '14px "Segoe UI", Arial, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`Wave ${difficulty}`, VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT - 45);
+                }
+            }
+
+            function drawMenu() {
+                // Dark overlay
+                ctx.fillStyle = 'rgba(0,0,0,0.65)';
+                ctx.fillRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
+
+                // Title
+                const titleY = VIRTUAL_HEIGHT * 0.28;
+                ctx.fillStyle = '#FFD700';
+                ctx.font = 'bold 38px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('MESSI', VIRTUAL_WIDTH / 2, titleY - 20);
+                ctx.fillText('VS', VIRTUAL_WIDTH / 2, titleY + 25);
+                ctx.fillText('POLAND', VIRTUAL_WIDTH / 2, titleY + 70);
+
+                // Subtitle
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = 'bold 18px "Segoe UI", Arial, sans-serif';
+                ctx.fillText('⚽ Score as many goals as you can! ⚽', VIRTUAL_WIDTH / 2, titleY + 110);
+
+                // Instructions
+                const instY = titleY + 170;
+                ctx.fillStyle = '#E0E0E0';
+                ctx.font = '15px "Segoe UI", Arial, sans-serif';
+                const instructions = [
+                    '🕹️  Arrow Keys / WASD to move',
+                    '🚀  SPACE to shoot near the goal',
+                    '📱  Mobile: Left side = joystick',
+                    '       Right side = shoot button',
+                    '',
+                    '❤️  3 Lives • Avoid defenders!',
+                ];
+                instructions.forEach((line, i) => {
+                    ctx.fillText(line, VIRTUAL_WIDTH / 2, instY + i * 28);
+                });
+
+                // Start prompt
+                const promptY = instY + instructions.length * 28 + 30;
+                const pulse = 0.6 + 0.4 * Math.sin(performance.now() * 0.005);
+                ctx.fillStyle = `rgba(255,215,0,${pulse})`;
+                ctx.font = 'bold 22px "Segoe UI", Arial, sans-serif';
+                ctx.fillText('TAP OR PRESS SPACE TO START', VIRTUAL_WIDTH / 2, promptY);
+
+                // Decorative soccer ball
+                const ballY = titleY - 80;
+                const ballBounce = Math.sin(performance.now() * 0.004) * 15;
+                const bGrad = ctx.createRadialGradient(VIRTUAL_WIDTH / 2 - 3, ballY + ballBounce - 3, 4, VIRTUAL_WIDTH / 2,
+                    ballY + ballBounce, 30);
+                bGrad.addColorStop(0, '#FFFFFF');
+                bGrad.addColorStop(0.6, '#DDDDDD');
+                bGrad.addColorStop(1, '#999999');
+                ctx.fillStyle = bGrad;
+                ctx.beginPath();
+                ctx.arc(VIRTUAL_WIDTH / 2, ballY + ballBounce, 30, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+            }
+
+            function drawGameOver() {
+                // Dark overlay
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
+
+                ctx.fillStyle = '#FF4444';
+                ctx.font = 'bold 36px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER', VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.35);
+
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = 'bold 22px "Segoe UI", Arial, sans-serif';
+                ctx.fillText(`Final Score: ${score} ⚽`, VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.45);
+
+                if (score >= 10) {
+                    ctx.fillStyle = '#FFD700';
+                    ctx.font = 'bold 20px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText('🌟 MESSI LEGEND! 🌟', VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.52);
+                } else if (score >= 5) {
+                    ctx.fillStyle = '#FFD700';
+                    ctx.font = 'bold 18px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText('Great performance!', VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.52);
+                }
+
+                const pulse = 0.6 + 0.4 * Math.sin(performance.now() * 0.005);
+                ctx.fillStyle = `rgba(255,255,255,${pulse})`;
+                ctx.font = 'bold 20px "Segoe UI", Arial, sans-serif';
+                ctx.fillText('TAP OR PRESS SPACE TO RETRY', VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.65);
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
+
+                // Apply screen shake
+                let shakeX = 0;
+                let shakeY = 0;
+                if (shakeAmount > 0.05) {
+                    shakeX = (Math.random() - 0.5) * shakeAmount * 2;
+                    shakeY = (Math.random() - 0.5) * shakeAmount * 2;
+                }
+
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                drawPitch();
+                drawParticles();
+
+                // Draw defenders
+                for (const d of defenders) {
+                    drawDefender(d);
+                }
+
+                drawGoalkeeper();
+                drawBall();
+                drawPlayer();
+                drawUI();
+
+                ctx.restore();
+
+                // Overlays (not affected by shake)
+                if (gameState === STATE.MENU) drawMenu();
+                if (gameState === STATE.GAME_OVER) drawGameOver();
+            }
+
+            // --- Game Loop ---
+            let lastTime = performance.now();
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                lastTime = timestamp;
+
+                update(dt);
+                render();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // --- Input Handling ---
+            // Keyboard
+            window.addEventListener('keydown', (e) => {
+                initAudio();
+                if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') input.left = true;
+                if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') input.right = true;
+                if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') input.up = true;
+                if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') input.down = true;
+                if (e.key === ' ' || e.key === 'Spacebar') {
+                    e.preventDefault();
+                    if (gameState === STATE.MENU) { initGame(); return; }
+                    if (gameState === STATE.GAME_OVER) {
+                        score = 0;
+                        lives = 3;
+                        resetAll();
+                        gameState = STATE.PLAYING;
+                        sfxWhistle();
+                        return;
+                    }
+                    input.shootPressed = true;
+                }
+            });
+
+            window.addEventListener('keyup', (e) => {
+                if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') input.left = false;
+                if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') input.right = false;
+                if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') input.up = false;
+                if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') input.down = false;
+                if (e.key === ' ' || e.key === 'Spacebar') {
+                    input.shootPressed = false;
+                }
+            });
+
+            // Touch
+            function getCanvasCoords(touch) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = VIRTUAL_WIDTH / rect.width;
+                const scaleY = VIRTUAL_HEIGHT / rect.height;
+                return {
+                    x: (touch.clientX - rect.left) * scaleX,
+                    y: (touch.clientY - rect.top) * scaleY,
+                };
+            }
+
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                initAudio();
+                if (gameState === STATE.MENU) { initGame(); return; }
+                if (gameState === STATE.GAME_OVER) {
+                    score = 0;
+                    lives = 3;
+                    resetAll();
+                    gameState = STATE.PLAYING;
+                    sfxWhistle();
+                    return;
+                }
+
+                for (const touch of e.changedTouches) {
+                    const coords = getCanvasCoords(touch);
+                    if (coords.x < VIRTUAL_WIDTH / 2 && !input.joystickActive) {
+                        // Left side - joystick
+                        input.joystickActive = true;
+                        input.joystickId = touch.identifier;
+                        input.joystickOriginX = coords.x;
+                        input.joystickOriginY = coords.y;
+                        input.joystickX = coords.x;
+                        input.joystickY = coords.y;
+                    } else if (coords.x >= VIRTUAL_WIDTH / 2) {
+                        // Right side - shoot
+                        if (gameState === STATE.PLAYING && player.hasBall && !ball.active && player.y <= SHOOTING_ZONE_Y) {
+                            shoot();
+                        }
+                        input.shootTouchActive = true;
+                        input.shootTouchId = touch.identifier;
+                    }
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                for (const touch of e.changedTouches) {
+                    if (input.joystickActive && touch.identifier === input.joystickId) {
+                        const coords = getCanvasCoords(touch);
+                        input.joystickX = coords.x;
+                        input.joystickY = coords.y;
+                    }
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                for (const touch of e.changedTouches) {
+                    if (input.joystickActive && touch.identifier === input.joystickId) {
+                        input.joystickActive = false;
+                        input.joystickId = null;
+                        input.joystickX = 0;
+                        input.joystickY = 0;
+                    }
+                    if (input.shootTouchActive && touch.identifier === input.shootTouchId) {
+                        input.shootTouchActive = false;
+                        input.shootTouchId = null;
+                    }
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('touchcancel', (e) => {
+                input.joystickActive = false;
+                input.joystickId = null;
+                input.joystickX = 0;
+                input.joystickY = 0;
+                input.shootTouchActive = false;
+                input.shootTouchId = null;
+            });
+
+            // Mouse click for desktop (also allows shooting via click)
+            canvas.addEventListener('click', (e) => {
+                initAudio();
+                if (gameState === STATE.MENU) { initGame(); return; }
+                if (gameState === STATE.GAME_OVER) {
+                    score = 0;
+                    lives = 3;
+                    resetAll();
+                    gameState = STATE.PLAYING;
+                    sfxWhistle();
+                    return;
+                }
+                const coords = getCanvasCoords({ clientX: e.clientX, clientY: e.clientY });
+                if (coords.x >= VIRTUAL_WIDTH / 2 && gameState === STATE.PLAYING && player.hasBall && !ball.active &&
+                    player.y <= SHOOTING_ZONE_Y) {
+                    shoot();
+                }
+            });
+
+            // --- Start ---
+            resetAll();
+            gameState = STATE.MENU;
+            lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+
+            console.log('⚽ Messi vs Poland - Ready!');
+            console.log('🕹️  Desktop: Arrow keys/WASD + Space to shoot');
+            console.log('📱  Mobile: Left side joystick + Right side shoot');
+            console.log('❤️  3 Lives | Score as many as you can!');
+        })();
+    </script>
+</body>
+</html>
