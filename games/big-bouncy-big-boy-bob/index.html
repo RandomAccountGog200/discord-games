@@ -1,0 +1,1341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Big Bouncy Big Boy Bob!</title>
+    <style>
+        :root {
+            --bg: #1a1a2e;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Segoe UI', 'Arial', sans-serif;
+            touch-action: manipulation;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            position: relative;
+        }
+        canvas {
+            display: block;
+            border-radius: 12px;
+            box-shadow: 0 0 40px rgba(255, 140, 60, 0.3), 0 0 80px rgba(255, 100, 40, 0.15);
+            max-width: 100vw;
+            max-height: 100vh;
+            aspect-ratio: 9 / 16;
+            object-fit: contain;
+        }
+        #ui-overlay {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            pointer-events: none;
+            z-index: 10;
+            text-align: center;
+        }
+        #game-title {
+            font-size: clamp(14px, 3vw, 20px);
+            font-weight: 900;
+            color: #fff;
+            text-shadow: 0 2px 8px rgba(255, 120, 40, 0.7);
+            letter-spacing: 1px;
+            margin: 0;
+        }
+        @media (max-width: 500px) {
+            canvas {
+                border-radius: 0;
+                box-shadow: none;
+                width: 100vw;
+                height: 100vh;
+                max-height: 100vh;
+                aspect-ratio: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <div id="ui-overlay">
+        <p id="game-title">🟠 BIG BOUNCY BIG BOY BOB 🟠</p>
+    </div>
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+            const titleEl = document.getElementById('game-title');
+
+            // --- Canvas sizing ---
+            function resizeCanvas() {
+                const maxW = 480;
+                const maxH = Math.min(window.innerHeight, 900);
+                const ratio = 9 / 16;
+                let w, h;
+                if (window.innerWidth <= 500) {
+                    w = window.innerWidth;
+                    h = window.innerHeight;
+                } else {
+                    w = Math.min(maxW, window.innerWidth * 0.85);
+                    h = w / ratio;
+                    if (h > maxH) {
+                        h = maxH;
+                        w = h * ratio;
+                    }
+                }
+                canvas.width = Math.floor(w);
+                canvas.height = Math.floor(h);
+            }
+            resizeCanvas();
+            window.addEventListener('resize', () => {
+                resizeCanvas();
+                if (gameState === 'title') initTitleScreen();
+            });
+
+            // --- Audio system ---
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    try {
+                        audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                    } catch (e) {
+                        audioCtx = null;
+                    }
+                }
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            }
+
+            function playSound(freq, duration, type = 'sine', vol = 0.15, slideTo = null, slideStart = 0) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (slideTo !== null && slideStart > 0) {
+                        osc.frequency.linearRampToValueAtTime(slideTo, t + slideStart);
+                    }
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) {
+                    // Silently fail if audio context is unavailable
+                }
+            }
+
+            function sfxBounce() {
+                playSound(180, 0.25, 'sine', 0.18, 300, 0.08);
+                setTimeout(() => playSound(90, 0.15, 'triangle', 0.1), 40);
+            }
+
+            function sfxSpring() {
+                playSound(220, 0.35, 'sine', 0.22, 500, 0.12);
+                setTimeout(() => playSound(160, 0.2, 'triangle', 0.12), 50);
+                setTimeout(() => playSound(330, 0.18, 'sine', 0.1), 80);
+            }
+
+            function sfxFragile() {
+                playSound(60, 0.3, 'sawtooth', 0.14, 20, 0.2);
+                playSound(40, 0.25, 'triangle', 0.1);
+            }
+
+            function sfxCoin() {
+                playSound(880, 0.2, 'sine', 0.16, 1200, 0.1);
+                setTimeout(() => playSound(1100, 0.18, 'sine', 0.13, 1400, 0.08), 60);
+            }
+
+            function sfxGameOver() {
+                playSound(150, 0.5, 'sawtooth', 0.2, 30, 0.4);
+                setTimeout(() => playSound(80, 0.6, 'triangle', 0.15, 20, 0.5), 200);
+            }
+
+            function sfxWallBounce() {
+                playSound(200, 0.12, 'sine', 0.08, 260, 0.06);
+            }
+
+            // --- Game state ---
+            let gameState = 'title'; // 'title', 'playing', 'over'
+            let score = 0;
+            let highScore = 0;
+            let bestHeight = 0;
+            let comboCount = 0;
+            let lastPlatformBounced = null;
+            let screenShake = 0;
+            let shakeX = 0;
+            let shakeY = 0;
+
+            // --- Input ---
+            const keys = {};
+            let touchLeft = false;
+            let touchRight = false;
+            let touchActive = false;
+
+            window.addEventListener('keydown', e => {
+                keys[e.key] = true;
+                if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'a' || e.key === 'd') {
+                    e.preventDefault();
+                }
+                if (gameState === 'title' && (e.key === ' ' || e.key === 'ArrowUp')) {
+                    initAudio();
+                    startGame();
+                }
+                if (gameState === 'over' && (e.key === ' ' || e.key === 'ArrowUp' || e.key === 'r')) {
+                    initAudio();
+                    startGame();
+                }
+            });
+            window.addEventListener('keyup', e => {
+                keys[e.key] = false;
+            });
+
+            canvas.addEventListener('touchstart', e => {
+                e.preventDefault();
+                initAudio();
+                touchActive = true;
+                if (gameState === 'title') {
+                    startGame();
+                    return;
+                }
+                if (gameState === 'over') {
+                    startGame();
+                    return;
+                }
+                updateTouchInput(e);
+            }, { passive: false });
+
+            canvas.addEventListener('touchmove', e => {
+                e.preventDefault();
+                updateTouchInput(e);
+            }, { passive: false });
+
+            canvas.addEventListener('touchend', e => {
+                e.preventDefault();
+                touchLeft = false;
+                touchRight = false;
+                touchActive = false;
+            }, { passive: false });
+
+            canvas.addEventListener('touchcancel', () => {
+                touchLeft = false;
+                touchRight = false;
+                touchActive = false;
+            });
+
+            canvas.addEventListener('click', () => {
+                initAudio();
+                if (gameState === 'title') startGame();
+                else if (gameState === 'over') startGame();
+            });
+
+            function updateTouchInput(e) {
+                const rect = canvas.getBoundingClientRect();
+                touchLeft = false;
+                touchRight = false;
+                for (let i = 0; i < e.touches.length; i++) {
+                    const tx = e.touches[i].clientX - rect.left;
+                    const relX = tx / rect.width;
+                    if (relX < 0.4) touchLeft = true;
+                    else if (relX > 0.6) touchRight = true;
+                }
+            }
+
+            function getInputX() {
+                let dir = 0;
+                if (keys['ArrowLeft'] || keys['a'] || keys['A']) dir = -1;
+                if (keys['ArrowRight'] || keys['d'] || keys['D']) dir += 1;
+                if (touchLeft) dir = -1;
+                if (touchRight) dir += 1;
+                return Math.max(-1, Math.min(1, dir));
+            }
+
+            // --- Bob ---
+            const bob = {
+                x: 0,
+                y: 0,
+                vx: 0,
+                vy: 0,
+                radius: 35,
+                baseRadius: 35,
+                squishX: 1,
+                squishY: 1,
+                targetSquishX: 1,
+                targetSquishY: 1,
+                eyeScale: 1,
+                trailPositions: [],
+                facingRight: true,
+                blinkTimer: 0,
+                blinkState: false,
+                mouthCurve: 0,
+            };
+
+            function resetBob() {
+                bob.x = canvas.width / 2;
+                bob.y = canvas.height * 0.65;
+                bob.vx = 0;
+                bob.vy = 0;
+                bob.squishX = 1;
+                bob.squishY = 1;
+                bob.targetSquishX = 1;
+                bob.targetSquishY = 1;
+                bob.eyeScale = 1;
+                bob.trailPositions = [];
+                bob.blinkTimer = Math.random() * 120;
+                bob.blinkState = false;
+                bob.mouthCurve = 0;
+                bob.radius = Math.round(canvas.width * 0.088);
+                bob.baseRadius = bob.radius;
+                if (bob.radius < 28) bob.radius = 28;
+                if (bob.radius > 48) bob.radius = 48;
+                bob.baseRadius = bob.radius;
+            }
+
+            // --- Platforms ---
+            let platforms = [];
+            const platformTypes = {
+                normal: { color: '#4ecb71', bounceMul: 1.0, name: 'normal', glowColor: '#6eff90' },
+                spring: { color: '#ff9f43', bounceMul: 1.7, name: 'spring', glowColor: '#ffbe76' },
+                fragile: { color: '#a0a0a0', bounceMul: 0.8, name: 'fragile', glowColor: '#cccccc', breaks: true },
+                moving: { color: '#54a0ff', bounceMul: 1.05, name: 'moving', glowColor: '#7fbeff', moves: true },
+            };
+
+            function createPlatform(x, y, type = 'normal') {
+                const w = type === 'spring' ? canvas.width * 0.2 : canvas.width * 0.22;
+                const h = Math.round(canvas.width * 0.032);
+                return {
+                    x: x,
+                    y: y,
+                    width: Math.round(w),
+                    height: Math.max(h, 10),
+                    type: type,
+                    broken: false,
+                    moveDir: Math.random() > 0.5 ? 1 : -1,
+                    moveSpeed: 1.2 + Math.random() * 2.5,
+                    moveRange: 60 + Math.random() * 100,
+                    originX: x,
+                    sparkTimer: 0,
+                };
+            }
+
+            function generateInitialPlatforms() {
+                platforms = [];
+                const startY = canvas.height * 0.75;
+                // Big starting platform right under Bob
+                const startPlat = createPlatform(canvas.width / 2, startY, 'normal');
+                startPlat.width = canvas.width * 0.5;
+                startPlat.x = canvas.width / 2;
+                platforms.push(startPlat);
+
+                // Generate platforms upward
+                for (let i = 1; i < 30; i++) {
+                    const y = startY - i * (canvas.height * 0.14);
+                    if (y < -200) break;
+                    const margin = canvas.width * 0.12;
+                    const x = margin + Math.random() * (canvas.width - margin * 2);
+                    let type = 'normal';
+                    const r = Math.random();
+                    if (r < 0.08 && i > 2) type = 'spring';
+                    else if (r < 0.2 && i > 1) type = 'fragile';
+                    else if (r < 0.35 && i > 2) type = 'moving';
+                    const plat = createPlatform(x, y, type);
+                    if (type === 'moving') plat.originX = x;
+                    platforms.push(plat);
+                }
+            }
+
+            function getHighestPlatformY() {
+                if (platforms.length === 0) return canvas.height;
+                let minY = Infinity;
+                for (const p of platforms) {
+                    if (p.y < minY) minY = p.y;
+                }
+                return minY;
+            }
+
+            function ensurePlatformsAbove(cameraTop) {
+                const highestY = getHighestPlatformY();
+                if (highestY > cameraTop - canvas.height * 0.2) {
+                    // Need more platforms above
+                    const numToAdd = 5;
+                    let genY = highestY - canvas.height * 0.13;
+                    for (let i = 0; i < numToAdd; i++) {
+                        genY -= canvas.height * 0.13 + Math.random() * canvas.height * 0.05;
+                        if (genY < -canvas.height * 2) break;
+                        const margin = canvas.width * 0.1;
+                        const x = margin + Math.random() * (canvas.width - margin * 2);
+                        let type = 'normal';
+                        const r = Math.random();
+                        if (r < 0.07) type = 'spring';
+                        else if (r < 0.18) type = 'fragile';
+                        else if (r < 0.32) type = 'moving';
+                        const plat = createPlatform(x, genY, type);
+                        if (type === 'moving') plat.originX = x;
+                        platforms.push(plat);
+                    }
+                }
+                // Remove platforms far below
+                platforms = platforms.filter(p => p.y < cameraTop + canvas.height * 1.8);
+            }
+
+            // --- Coins ---
+            let coins = [];
+
+            function spawnCoin(x, y) {
+                coins.push({
+                    x: x,
+                    y: y,
+                    radius: Math.round(canvas.width * 0.028),
+                    collected: false,
+                    sparkTimer: 0,
+                    floatOffset: Math.random() * Math.PI * 2,
+                });
+            }
+
+            function ensureCoinsAround(cameraTop) {
+                // Remove collected or far-off coins
+                coins = coins.filter(c => !c.collected && c.y < cameraTop + canvas.height * 1.5 && c.y > cameraTop - canvas
+                    .height * 3);
+                // Spawn new coins near platforms
+                if (coins.length < 15) {
+                    for (const p of platforms) {
+                        if (p.y < cameraTop - canvas.height * 0.1 && p.y > cameraTop - canvas.height * 2.5) {
+                            if (Math.random() < 0.35 && !p.broken) {
+                                const cx = p.x + (Math.random() - 0.5) * p.width * 1.2;
+                                const cy = p.y - 40 - Math.random() * 55;
+                                // Check not too close to existing coins
+                                let tooClose = false;
+                                for (const c of coins) {
+                                    if (!c.collected && Math.hypot(cx - c.x, cy - c.y) < 35) {
+                                        tooClose = true;
+                                        break;
+                                    }
+                                }
+                                if (!tooClose && cy > cameraTop - canvas.height * 3) {
+                                    spawnCoin(cx, cy);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // --- Particles ---
+            let particles = [];
+
+            function spawnParticles(x, y, count, color, spread = 3, life = 25) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 1 + Math.random() * spread;
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - Math.random() * 4,
+                        life: life + Math.random() * 15,
+                        maxLife: life + 15,
+                        color: color,
+                        radius: 1.5 + Math.random() * 3.5,
+                    });
+                }
+            }
+
+            function updateParticles() {
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += 0.15;
+                    p.life--;
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+            }
+
+            function drawParticles(ctx, camY) {
+                for (const p of particles) {
+                    const alpha = p.life / p.maxLife;
+                    const screenY = p.y - camY + canvas.height * 0.55;
+                    if (screenY < -50 || screenY > canvas.height + 50) continue;
+                    ctx.fillStyle = p.color.replace('1)', `${alpha})`).replace('rgb',
+                        'rgba');
+                    ctx.beginPath();
+                    ctx.arc(p.x, screenY, p.radius * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            // --- Background stars ---
+            let bgStars = [];
+
+            function generateStars() {
+                bgStars = [];
+                for (let i = 0; i < 80; i++) {
+                    bgStars.push({
+                        x: Math.random() * canvas.width,
+                        y: Math.random() * canvas.height * 3 - canvas.height,
+                        size: 0.5 + Math.random() * 2,
+                        twinkle: Math.random() * Math.PI * 2,
+                        speed: 0.5 + Math.random() * 2,
+                    });
+                }
+            }
+
+            // --- Camera ---
+            let cameraY = 0; // Tracks how high we've scrolled (world Y where screen center is)
+            let targetCameraY = 0;
+
+            function resetCamera() {
+                cameraY = canvas.height * 0.55;
+                targetCameraY = cameraY;
+            }
+
+            // --- Game functions ---
+            function initTitleScreen() {
+                resetBob();
+                bob.y = canvas.height * 0.6;
+                bob.x = canvas.width / 2;
+                bob.vy = -8;
+                bob.vx = 1.5;
+                resetCamera();
+                generateInitialPlatforms();
+                coins = [];
+                particles = [];
+                generateStars();
+                score = 0;
+                comboCount = 0;
+                lastPlatformBounced = null;
+                screenShake = 0;
+                bestHeight = highScore;
+            }
+
+            function startGame() {
+                initAudio();
+                gameState = 'playing';
+                score = 0;
+                comboCount = 0;
+                lastPlatformBounced = null;
+                screenShake = 0;
+                bestHeight = highScore;
+                resetBob();
+                resetCamera();
+                platforms = [];
+                coins = [];
+                particles = [];
+                generateInitialPlatforms();
+                generateStars();
+                // Give Bob an initial bounce
+                bob.vy = -14;
+                bob.y = canvas.height * 0.7;
+                const startPlat = createPlatform(canvas.width / 2, canvas.height * 0.75, 'normal');
+                startPlat.width = canvas.width * 0.5;
+                startPlat.x = canvas.width / 2;
+                platforms.push(startPlat);
+                titleEl.style.opacity = '0.3';
+                titleEl.textContent = '🟠 BOUNCE! 🟠';
+            }
+
+            function endGame() {
+                gameState = 'over';
+                sfxGameOver();
+                screenShake = 25;
+                if (score > highScore) {
+                    highScore = score;
+                }
+                bestHeight = Math.max(bestHeight, score);
+                spawnParticles(bob.x, bob.y, 40, 'rgb(255,150,80)', 6, 35);
+                spawnParticles(bob.x, bob.y, 25, 'rgb(255,200,150)', 4, 30);
+                titleEl.style.opacity = '1';
+                titleEl.textContent = '💔 GAME OVER — TAP TO RETRY 💔';
+                bob.mouthCurve = -0.6;
+                bob.eyeScale = 1.4;
+            }
+
+            function bounceBob(platform, bounceMultiplier = 1.0) {
+                const baseBounce = 14 + (canvas.width * 0.008);
+                bob.vy = -(baseBounce * bounceMultiplier);
+                bob.y = platform.y - bob.radius;
+                // Squish effect
+                bob.targetSquishX = 1.35;
+                bob.targetSquishY = 0.55;
+                bob.eyeScale = 0.6;
+                bob.mouthCurve = 0.4;
+                // Screen shake
+                screenShake = Math.max(screenShake, 4 * bounceMultiplier);
+                // Particles
+                const pColor = platform.type === 'spring' ? 'rgb(255,200,100)' :
+                    platform.type === 'fragile' ? 'rgb(180,180,180)' : 'rgb(120,255,160)';
+                const pCount = platform.type === 'spring' ? 25 : 12;
+                spawnParticles(bob.x, bob.y + bob.radius, pCount, pColor, 4, 22);
+                // Combo
+                if (lastPlatformBounced !== platform) {
+                    comboCount++;
+                    score += Math.floor(10 * comboCount * bounceMultiplier);
+                    if (comboCount > 1 && comboCount % 5 === 0) {
+                        spawnParticles(bob.x, bob.y, 20, 'rgb(255,255,180)', 5, 30);
+                    }
+                }
+                lastPlatformBounced = platform;
+                // Sound
+                if (platform.type === 'spring') sfxSpring();
+                else if (platform.type === 'fragile') sfxFragile();
+                else sfxBounce();
+                // Handle fragile
+                if (platform.type === 'fragile' && !platform.broken) {
+                    platform.broken = true;
+                    platform.sparkTimer = 20;
+                    spawnParticles(platform.x, platform.y, 30, 'rgb(160,160,160)', 5, 28);
+                    screenShake = Math.max(screenShake, 7);
+                }
+            }
+
+            function update(dt) {
+                if (gameState !== 'playing') {
+                    // Still update particles and Bob's idle animation on title/over screens
+                    updateParticles();
+                    if (gameState === 'title') {
+                        // Bob gently bounces in place on title
+                        bob.vy += 0.5;
+                        bob.y += bob.vy;
+                        bob.x += bob.vx;
+                        if (bob.x - bob.radius < 0 || bob.x + bob.radius > canvas.width) {
+                            bob.vx *= -1;
+                            bob.x = Math.max(bob.radius, Math.min(canvas.width - bob.radius, bob.x));
+                        }
+                        const floorY = canvas.height * 0.75;
+                        if (bob.y + bob.radius >= floorY && bob.vy > 0) {
+                            bob.y = floorY - bob.radius;
+                            bob.vy = -10;
+                            bob.targetSquishX = 1.3;
+                            bob.targetSquishY = 0.6;
+                            bob.eyeScale = 0.7;
+                            sfxBounce();
+                            spawnParticles(bob.x, floorY, 10, 'rgb(120,255,160)', 3, 18);
+                        }
+                        if (bob.y < canvas.height * 0.2) bob.vy = Math.abs(bob.vy);
+                    }
+                    // Animate squish recovery
+                    bob.squishX += (bob.targetSquishX - bob.squishX) * 0.2;
+                    bob.squishY += (bob.targetSquishY - bob.squishY) * 0.2;
+                    if (Math.abs(bob.squishX - 1) < 0.01) {
+                        bob.squishX = 1;
+                        bob.squishY = 1;
+                        bob.targetSquishX = 1;
+                        bob.targetSquishY = 1;
+                    }
+                    bob.eyeScale += (1 - bob.eyeScale) * 0.15;
+                    bob.mouthCurve += (0 - bob.mouthCurve) * 0.15;
+                    if (screenShake > 0) screenShake *= 0.85;
+                    if (screenShake < 0.3) screenShake = 0;
+                    return;
+                }
+
+                const inputX = getInputX();
+                const moveSpeed = 5.5 + (canvas.width * 0.004);
+
+                // Apply horizontal input
+                bob.vx += inputX * moveSpeed * 0.4;
+                bob.vx *= 0.88;
+                if (Math.abs(bob.vx) > moveSpeed * 1.3) bob.vx = Math.sign(bob.vx) * moveSpeed * 1.3;
+                if (Math.abs(inputX) < 0.1 && Math.abs(bob.vx) < 0.5) bob.vx *= 0.7;
+
+                // Apply gravity
+                const gravity = 0.55;
+                bob.vy += gravity;
+                if (bob.vy > 20) bob.vy = 20;
+
+                // Move Bob
+                bob.x += bob.vx;
+                bob.y += bob.vy;
+
+                // Wall bouncing
+                if (bob.x - bob.radius < 0) {
+                    bob.x = bob.radius;
+                    bob.vx = Math.abs(bob.vx) * 0.7;
+                    sfxWallBounce();
+                    spawnParticles(0, bob.y, 8, 'rgb(200,200,255)', 3, 15);
+                    screenShake = Math.max(screenShake, 2);
+                }
+                if (bob.x + bob.radius > canvas.width) {
+                    bob.x = canvas.width - bob.radius;
+                    bob.vx = -Math.abs(bob.vx) * 0.7;
+                    sfxWallBounce();
+                    spawnParticles(canvas.width, bob.y, 8, 'rgb(200,200,255)', 3, 15);
+                    screenShake = Math.max(screenShake, 2);
+                }
+
+                // Track facing direction
+                if (Math.abs(bob.vx) > 0.3) bob.facingRight = bob.vx > 0;
+
+                // Platform collision (only when falling)
+                if (bob.vy > 0) {
+                    for (const p of platforms) {
+                        if (p.broken) continue;
+                        const platTop = p.y;
+                        const bobBottom = bob.y + bob.radius;
+                        const prevBobBottom = bobBottom - bob.vy;
+                        if (prevBobBottom <= platTop + 3 && bobBottom >= platTop - 4 &&
+                            bob.x + bob.radius * 0.7 > p.x - p.width / 2 &&
+                            bob.x - bob.radius * 0.7 < p.x + p.width / 2) {
+                            const bounceMul = platformTypes[p.type].bounceMul;
+                            bounceBob(p, bounceMul);
+                            if (p.type === 'fragile' && p.broken) {
+                                // Platform breaks
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                // Coin collection
+                for (const c of coins) {
+                    if (!c.collected && Math.hypot(bob.x - c.x, bob.y - c.y) < bob.radius + c.radius + 8) {
+                        c.collected = true;
+                        sfxCoin();
+                        score += 25;
+                        spawnParticles(c.x, c.y, 12, 'rgb(255,220,80)', 3, 20);
+                        c.sparkTimer = 15;
+                    }
+                }
+
+                // Update camera
+                const screenCenterY = cameraY;
+                const bobScreenY = bob.y;
+                if (bobScreenY < screenCenterY - canvas.height * 0.2) {
+                    targetCameraY = bobScreenY + canvas.height * 0.2;
+                }
+                if (bobScreenY > screenCenterY + canvas.height * 0.35) {
+                    targetCameraY = bobScreenY - canvas.height * 0.35;
+                }
+                cameraY += (targetCameraY - cameraY) * 0.12;
+
+                // Score based on height
+                const heightScore = Math.max(0, Math.floor((canvas.height * 0.75 - bob.y) / 10));
+                if (heightScore > score && bob.vy < 0) {
+                    score = heightScore;
+                }
+                if (score > highScore) highScore = score;
+
+                // Ensure platforms and coins
+                ensurePlatformsAbove(cameraY);
+                ensureCoinsAround(cameraY);
+
+                // Update moving platforms
+                for (const p of platforms) {
+                    if (p.type === 'moving' && !p.broken) {
+                        p.x += p.moveDir * p.moveSpeed;
+                        if (Math.abs(p.x - p.originX) > p.moveRange) {
+                            p.moveDir *= -1;
+                        }
+                    }
+                    if (p.sparkTimer > 0) p.sparkTimer--;
+                }
+
+                // Update coins
+                coins = coins.filter(c => !c.collected || c.sparkTimer > 0);
+                for (const c of coins) {
+                    if (c.sparkTimer > 0) c.sparkTimer--;
+                }
+
+                // Update particles
+                updateParticles();
+
+                // Update squish animation
+                bob.squishX += (bob.targetSquishX - bob.squishX) * 0.25;
+                bob.squishY += (bob.targetSquishY - bob.squishY) * 0.25;
+                if (Math.abs(bob.squishX - 1) < 0.015 && bob.targetSquishX === 1) {
+                    bob.squishX = 1;
+                    bob.squishY = 1;
+                }
+                bob.targetSquishX += (1 - bob.targetSquishX) * 0.3;
+                bob.targetSquishY += (1 - bob.targetSquishY) * 0.3;
+                bob.eyeScale += (1 - bob.eyeScale) * 0.2;
+                bob.mouthCurve += (0 - bob.mouthCurve) * 0.2;
+
+                // Trail
+                if (Math.abs(bob.vy) > 3 || Math.abs(bob.vx) > 2) {
+                    bob.trailPositions.push({ x: bob.x, y: bob.y, life: 12, r: bob.radius * 0.7 });
+                }
+                for (let i = bob.trailPositions.length - 1; i >= 0; i--) {
+                    bob.trailPositions[i].life--;
+                    if (bob.trailPositions[i].life <= 0) bob.trailPositions.splice(i, 1);
+                }
+
+                // Blink timer
+                bob.blinkTimer--;
+                if (bob.blinkTimer <= 0) {
+                    bob.blinkState = true;
+                    bob.blinkTimer = 5 + Math.random() * 8;
+                    setTimeout(() => { bob.blinkState = false;
+                        bob.blinkTimer = 90 + Math.random() * 200; }, 80);
+                }
+
+                // Screen shake decay
+                if (screenShake > 0) {
+                    shakeX = (Math.random() - 0.5) * screenShake * 2;
+                    shakeY = (Math.random() - 0.5) * screenShake * 2;
+                    screenShake *= 0.82;
+                    if (screenShake < 0.3) {
+                        screenShake = 0;
+                        shakeX = 0;
+                        shakeY = 0;
+                    }
+                }
+
+                // Game over check
+                if (bob.y > cameraY + canvas.height * 0.9) {
+                    endGame();
+                }
+            }
+
+            function drawBob(ctx, camY) {
+                const screenX = bob.x;
+                const screenY = bob.y - camY + canvas.height * 0.55;
+
+                // Trail
+                for (const t of bob.trailPositions) {
+                    const tScreenY = t.y - camY + canvas.height * 0.55;
+                    const alpha = t.life / 12;
+                    const r = t.r * alpha;
+                    ctx.fillStyle = `rgba(255,180,130,${alpha * 0.4})`;
+                    ctx.beginPath();
+                    ctx.arc(t.x, tScreenY, r, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                ctx.save();
+                ctx.translate(screenX, screenY);
+                ctx.scale(bob.squishX, bob.squishY);
+
+                const r = bob.radius;
+
+                // Body shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                ctx.beginPath();
+                ctx.arc(3, 5, r, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body gradient
+                const bodyGrad = ctx.createRadialGradient(-r * 0.25, -r * 0.3, r * 0.1, 0, 0, r);
+                bodyGrad.addColorStop(0, '#ffe0c0');
+                bodyGrad.addColorStop(0.4, '#ffb074');
+                bodyGrad.addColorStop(0.85, '#e8783c');
+                bodyGrad.addColorStop(1, '#c05528');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.arc(0, 0, r, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Highlight
+                const hlGrad = ctx.createRadialGradient(-r * 0.3, -r * 0.35, r * 0.05, -r * 0.15, -r * 0.15, r * 0.55);
+                hlGrad.addColorStop(0, 'rgba(255,255,255,0.7)');
+                hlGrad.addColorStop(1, 'rgba(255,255,255,0)');
+                ctx.fillStyle = hlGrad;
+                ctx.beginPath();
+                ctx.arc(0, 0, r, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Eyes
+                const eyeY = -r * 0.2;
+                const eyeSpacing = r * 0.38;
+                const eyeR = r * 0.22 * bob.eyeScale;
+
+                // Eye whites
+                for (let sx = -1; sx <= 1; sx += 2) {
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(sx * eyeSpacing, eyeY, eyeR, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#5a3020';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    // Pupil
+                    const pupilX = sx * eyeSpacing + (bob.vx * 0.35);
+                    const pupilY = eyeY + Math.max(-3, Math.min(3, bob.vy * 0.4));
+                    const pupilR = eyeR * 0.55;
+                    ctx.fillStyle = '#1a0800';
+                    ctx.beginPath();
+                    ctx.arc(pupilX, pupilY, pupilR, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Pupil highlight
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(pupilX - pupilR * 0.3, pupilY - pupilR * 0.35, pupilR * 0.35, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Blink
+                if (bob.blinkState) {
+                    ctx.strokeStyle = '#5a3020';
+                    ctx.lineWidth = 3;
+                    for (let sx = -1; sx <= 1; sx += 2) {
+                        ctx.beginPath();
+                        ctx.moveTo(sx * eyeSpacing - eyeR, eyeY);
+                        ctx.lineTo(sx * eyeSpacing + eyeR, eyeY);
+                        ctx.stroke();
+                    }
+                }
+
+                // Mouth
+                const mouthY = r * 0.25;
+                const mouthW = r * 0.45;
+                ctx.strokeStyle = '#5a3020';
+                ctx.lineWidth = 2.5;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                if (bob.mouthCurve > 0.05) {
+                    // Happy
+                    ctx.arc(0, mouthY, mouthW, 0.2, Math.PI - 0.2);
+                } else if (bob.mouthCurve < -0.05) {
+                    // Sad
+                    ctx.arc(0, mouthY + mouthW * 0.7, mouthW, Math.PI + 0.3, -0.3);
+                } else {
+                    // Neutral slight smile
+                    ctx.arc(0, mouthY, mouthW, 0.15, Math.PI - 0.15);
+                }
+                ctx.stroke();
+
+                // Cheeks
+                for (let sx = -1; sx <= 1; sx += 2) {
+                    const cheekX = sx * r * 0.6;
+                    const cheekY = mouthY - r * 0.08;
+                    const cheekR = r * 0.18;
+                    ctx.fillStyle = 'rgba(255,150,130,0.5)';
+                    ctx.beginPath();
+                    ctx.arc(cheekX, cheekY, cheekR, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                ctx.restore();
+
+                // "BOB" name tag floating above
+                const nameY = screenY - r - 18;
+                ctx.fillStyle = 'rgba(255,255,255,0.85)';
+                ctx.font = `bold ${Math.round(r*0.4)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText('BOB', screenX, nameY);
+                ctx.fillStyle = 'rgba(0,0,0,0.15)';
+                ctx.fillText('BOB', screenX + 1, nameY + 1);
+                ctx.fillStyle = 'rgba(255,255,255,0.85)';
+                ctx.fillText('BOB', screenX, nameY);
+            }
+
+            function drawPlatform(ctx, p, camY) {
+                if (p.broken && p.sparkTimer <= 0) return;
+                const screenY = p.y - camY + canvas.height * 0.55;
+                if (screenY < -40 || screenY > canvas.height + 40) return;
+
+                const halfW = p.width / 2;
+                const h = p.height;
+                const x = p.x;
+
+                ctx.save();
+
+                if (p.broken && p.sparkTimer > 0) {
+                    // Shattering animation
+                    const alpha = p.sparkTimer / 20;
+                    ctx.globalAlpha = alpha;
+                    for (let i = 0; i < 6; i++) {
+                        const sx = x + (Math.random() - 0.5) * p.width * 1.5;
+                        const sy = screenY + (Math.random() - 0.5) * h * 3;
+                        ctx.fillStyle = '#999';
+                        ctx.fillRect(sx - 8, sy - 3, 16, 6);
+                    }
+                    ctx.restore();
+                    return;
+                }
+
+                const typeInfo = platformTypes[p.type];
+
+                // Platform glow
+                const glowGrad = ctx.createLinearGradient(x, screenY - h, x, screenY + h * 3);
+                glowGrad.addColorStop(0, typeInfo.glowColor);
+                glowGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = glowGrad;
+                ctx.fillRect(x - halfW - 6, screenY - h - 4, p.width + 12, h + 14);
+
+                // Platform body
+                const bodyGrad = ctx.createLinearGradient(x, screenY - h, x, screenY);
+                bodyGrad.addColorStop(0, typeInfo.color);
+                bodyGrad.addColorStop(1, '#333');
+                ctx.fillStyle = bodyGrad;
+                roundRect(ctx, x - halfW, screenY - h, p.width, h, h * 0.4);
+                ctx.fill();
+
+                // Highlight on top
+                ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                roundRect(ctx, x - halfW + 4, screenY - h, p.width - 8, h * 0.45, h * 0.3);
+                ctx.fill();
+
+                // Spring icon
+                if (p.type === 'spring') {
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    const sy = screenY - h - 4;
+                    const coilH = h * 2.5;
+                    const coilW = p.width * 0.25;
+                    ctx.moveTo(x - coilW, sy);
+                    ctx.lineTo(x - coilW, sy - coilH * 0.6);
+                    for (let i = 0; i < 3; i++) {
+                        const cy = sy - coilH * 0.6 - i * coilH * 0.35;
+                        ctx.lineTo(x + coilW, cy - coilH * 0.15);
+                        ctx.lineTo(x - coilW, cy - coilH * 0.3);
+                    }
+                    ctx.lineTo(x + coilW, sy - coilH * 1.7);
+                    ctx.stroke();
+                }
+
+                // Fragile cracks
+                if (p.type === 'fragile' && !p.broken) {
+                    ctx.strokeStyle = 'rgba(60,60,60,0.7)';
+                    ctx.lineWidth = 1.2;
+                    ctx.beginPath();
+                    ctx.moveTo(x - halfW * 0.5, screenY - h);
+                    ctx.lineTo(x - halfW * 0.1, screenY - h * 0.4);
+                    ctx.lineTo(x + halfW * 0.2, screenY - h * 0.7);
+                    ctx.lineTo(x + halfW * 0.6, screenY - h * 0.2);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(x + halfW * 0.3, screenY - h);
+                    ctx.lineTo(x + halfW * 0.5, screenY - h * 0.6);
+                    ctx.stroke();
+                }
+
+                // Moving platform indicator
+                if (p.type === 'moving' && !p.broken) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                    const arrowY = screenY - h - 10;
+                    const arrowX = x;
+                    ctx.beginPath();
+                    ctx.moveTo(arrowX, arrowY - 8);
+                    ctx.lineTo(arrowX - 7, arrowY + 4);
+                    ctx.lineTo(arrowX + 7, arrowY + 4);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+
+                ctx.restore();
+            }
+
+            function drawCoin(ctx, c, camY) {
+                if (c.collected && c.sparkTimer <= 0) return;
+                const screenY = c.y - camY + canvas.height * 0.55;
+                if (screenY < -30 || screenY > canvas.height + 30) return;
+
+                const alpha = c.collected ? c.sparkTimer / 15 : 1;
+                const r = c.radius;
+                const floatY = Math.sin(Date.now() * 0.004 + c.floatOffset) * 6;
+
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.translate(c.x, screenY + floatY);
+
+                // Glow
+                const glowGrad = ctx.createRadialGradient(0, 0, r * 0.3, 0, 0, r * 1.8);
+                glowGrad.addColorStop(0, 'rgba(255,220,80,0.7)');
+                glowGrad.addColorStop(1, 'rgba(255,180,40,0)');
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(0, 0, r * 1.8, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Coin body
+                const coinGrad = ctx.createRadialGradient(-r * 0.2, -r * 0.2, r * 0.05, 0, 0, r);
+                coinGrad.addColorStop(0, '#ffe880');
+                coinGrad.addColorStop(0.5, '#f0b830');
+                coinGrad.addColorStop(1, '#c08010');
+                ctx.fillStyle = coinGrad;
+                ctx.beginPath();
+                ctx.arc(0, 0, r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(180,120,20,0.8)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // $ symbol
+                ctx.fillStyle = 'rgba(140,80,10,0.8)';
+                ctx.font = `bold ${Math.round(r*1.1)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('$', 0, 1);
+
+                ctx.restore();
+            }
+
+            function roundRect(ctx, x, y, w, h, r) {
+                ctx.beginPath();
+                ctx.moveTo(x + r, y);
+                ctx.lineTo(x + w - r, y);
+                ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+                ctx.lineTo(x + w, y + h - r);
+                ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+                ctx.lineTo(x + r, y + h);
+                ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+                ctx.lineTo(x, y + r);
+                ctx.quadraticCurveTo(x, y, x + r, y);
+                ctx.closePath();
+            }
+
+            function drawBackground(ctx, camY) {
+                // Sky gradient based on height
+                const heightFactor = Math.max(0, Math.min(1, (canvas.height * 0.75 - camY) / 3000));
+                const r1 = Math.floor(100 + heightFactor * 30);
+                const g1 = Math.floor(180 + heightFactor * 30);
+                const b1 = Math.floor(240 - heightFactor * 60);
+                const r2 = Math.floor(20 + heightFactor * 40);
+                const g2 = Math.floor(30 + heightFactor * 30);
+                const b2 = Math.floor(60 + heightFactor * 60);
+
+                const skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+                skyGrad.addColorStop(0, `rgb(${r2},${g2},${b2})`);
+                skyGrad.addColorStop(0.4, `rgb(${r1},${g1},${b1})`);
+                skyGrad.addColorStop(1, `rgb(${Math.floor(r1*0.6)},${Math.floor(g1*0.7)},${Math.floor(b1*0.8)})`);
+                ctx.fillStyle = skyGrad;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Stars at high altitude
+                if (heightFactor > 0.3) {
+                    const starAlpha = (heightFactor - 0.3) / 0.7;
+                    for (const star of bgStars) {
+                        const starScreenY = star.y - camY * 0.3 + canvas.height * 0.55;
+                        const wrappedY = ((starScreenY % (canvas.height * 1.5)) + canvas.height * 1.5) % (canvas.height * 1.5);
+                        if (wrappedY < canvas.height && wrappedY > 0) {
+                            const twinkle = 0.5 + 0.5 * Math.sin(Date.now() * 0.003 * star.speed + star.twinkle);
+                            ctx.fillStyle = `rgba(255,255,255,${starAlpha * twinkle * 0.9})`;
+                            ctx.beginPath();
+                            ctx.arc(star.x, wrappedY, star.size * twinkle, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                    }
+                }
+
+                // Clouds
+                const cloudBaseY = canvas.height * 0.55 - camY * 0.2;
+                for (let i = -2; i < 6; i++) {
+                    const cloudY = cloudBaseY + i * canvas.height * 0.4 + (i * 73) % canvas.height;
+                    const wrappedY = ((cloudY % (canvas.height * 2)) + canvas.height * 2) % (canvas.height * 2) - canvas
+                    .height * 0.5;
+                    if (wrappedY > -100 && wrappedY < canvas.height + 100) {
+                        const cloudX = ((i * 197 + 50) % canvas.width);
+                        const cloudAlpha = 0.25 + 0.1 * Math.sin(i * 2.7);
+                        drawCloud(ctx, cloudX, wrappedY, 40 + (i % 3) * 20, cloudAlpha);
+                    }
+                }
+            }
+
+            function drawCloud(ctx, cx, cy, size, alpha) {
+                ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+                ctx.beginPath();
+                ctx.arc(cx, cy, size * 0.6, 0, Math.PI * 2);
+                ctx.arc(cx - size * 0.45, cy + size * 0.1, size * 0.45, 0, Math.PI * 2);
+                ctx.arc(cx + size * 0.5, cy + size * 0.05, size * 0.5, 0, Math.PI * 2);
+                ctx.arc(cx + size * 0.15, cy - size * 0.25, size * 0.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            function drawUI(ctx) {
+                // Score
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                roundRect(ctx, 10, 8, 160, 50, 12);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+                ctx.lineWidth = 2;
+                roundRect(ctx, 10, 8, 160, 50, 12);
+                ctx.stroke();
+
+                ctx.fillStyle = '#fff';
+                ctx.font = `bold ${Math.round(canvas.width*0.035)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.textAlign = 'left';
+                ctx.fillText(`🌟 ${Math.floor(score)}`, 24, 34);
+                ctx.font = `${Math.round(canvas.width*0.025)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.fillText(`Best: ${Math.floor(highScore)}`, 24, 54);
+
+                // Combo
+                if (comboCount > 1 && gameState === 'playing') {
+                    const comboAlpha = Math.min(1, comboCount / 20);
+                    ctx.fillStyle = `rgba(255,200,60,${comboAlpha})`;
+                    ctx.font = `bold ${Math.round(canvas.width*0.04)}px 'Segoe UI', Arial, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`${comboCount}x COMBO!`, canvas.width / 2, canvas.height - 60);
+                }
+
+                // Mobile controls hint
+                if (gameState === 'playing' && ('ontouchstart' in window || navigator.maxTouchPoints > 0)) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+                    ctx.font = `${Math.round(canvas.width*0.028)}px 'Segoe UI', Arial, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText('👆 Left side = Move Left | Right side = Move Right', canvas.width / 2, canvas.height - 18);
+                }
+
+                // Game over overlay
+                if (gameState === 'over') {
+                    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    ctx.fillStyle = '#fff';
+                    ctx.font = `bold ${Math.round(canvas.width*0.07)}px 'Segoe UI', Arial, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText('GAME OVER', canvas.width / 2, canvas.height * 0.35);
+
+                    ctx.fillStyle = '#ffcc80';
+                    ctx.font = `bold ${Math.round(canvas.width*0.05)}px 'Segoe UI', Arial, sans-serif`;
+                    ctx.fillText(`Score: ${Math.floor(score)}`, canvas.width / 2, canvas.height * 0.46);
+                    ctx.fillText(`Best: ${Math.floor(highScore)}`, canvas.width / 2, canvas.height * 0.53);
+
+                    ctx.fillStyle = '#fff';
+                    ctx.font = `${Math.round(canvas.width*0.035)}px 'Segoe UI', Arial, sans-serif`;
+                    const pulse = 0.7 + 0.3 * Math.sin(Date.now() * 0.005);
+                    ctx.globalAlpha = pulse;
+                    ctx.fillText('Tap or press Space to bounce again!', canvas.width / 2, canvas.height * 0.65);
+                    ctx.globalAlpha = 1;
+                }
+
+                // Title screen
+                if (gameState === 'title') {
+                    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    ctx.fillStyle = '#fff';
+                    ctx.font = `bold ${Math.round(canvas.width*0.065)}px 'Segoe UI', Arial, sans-serif`;
+                    ctx.textAlign = 'center';
+                    const titlePulse = 0.85 + 0.15 * Math.sin(Date.now() * 0.004);
+                    ctx.fillText('BIG BOUNCY', canvas.width / 2, canvas.height * 0.3);
+                    ctx.fillText('BIG BOY BOB', canvas.width / 2, canvas.height * 0.38);
+
+                    ctx.fillStyle = '#ffcc80';
+                    ctx.font = `${Math.round(canvas.width*0.04)}px 'Segoe UI', Arial, sans-serif`;
+                    const pulse2 = 0.6 + 0.4 * Math.sin(Date.now() * 0.006);
+                    ctx.globalAlpha = pulse2;
+                    ctx.fillText('Tap to Play!', canvas.width / 2, canvas.height * 0.5);
+                    ctx.globalAlpha = 1;
+
+                    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                    ctx.font = `${Math.round(canvas.width*0.028)}px 'Segoe UI', Arial, sans-serif`;
+                    ctx.fillText('🕹️ Arrow Keys or Touch to move', canvas.width / 2, canvas.height * 0.6);
+                    ctx.fillText('🦘 Bounce on platforms to go higher!', canvas.width / 2, canvas.height * 0.66);
+                    ctx.fillText('💚 Green = Normal | 🧡 Orange = Super Bounce', canvas.width / 2, canvas.height * 0.72);
+                    ctx.fillText('🩶 Gray = Fragile | 💙 Blue = Moving', canvas.width / 2, canvas.height * 0.78);
+                }
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                drawBackground(ctx, cameraY);
+
+                // Draw platforms
+                for (const p of platforms) {
+                    drawPlatform(ctx, p, cameraY);
+                }
+
+                // Draw coins
+                for (const c of coins) {
+                    if (!c.collected || c.sparkTimer > 0) drawCoin(ctx, c, cameraY);
+                }
+
+                // Draw particles behind Bob
+                drawParticles(ctx, cameraY);
+
+                // Draw Bob
+                drawBob(ctx, cameraY);
+
+                ctx.restore();
+
+                // Draw UI (not affected by shake)
+                drawUI(ctx);
+            }
+
+            function gameLoop(timestamp) {
+                const dt = Math.min(32, 16); // Cap delta time
+
+                update(dt);
+                render();
+
+                // Update title text during gameplay
+                if (gameState === 'playing') {
+                    if (Math.floor(score / 100) > Math.floor((score - 1) / 100) && score > 50) {
+                        titleEl.textContent = '🟠 BOUNCE! 🟠';
+                        titleEl.style.opacity = '0.5';
+                        setTimeout(() => { titleEl.style.opacity = '0.25'; }, 600);
+                    }
+                }
+
+                requestAnimationFrame(gameLoop);
+            }
+
+            // --- Initialize ---
+            function init() {
+                resizeCanvas();
+                resetBob();
+                resetCamera();
+                generateInitialPlatforms();
+                generateStars();
+                coins = [];
+                particles = [];
+                score = 0;
+                highScore = parseInt(localStorage.getItem('bobHighScore') || '0');
+                bestHeight = highScore;
+                gameState = 'title';
+                titleEl.style.opacity = '1';
+                titleEl.textContent = '🟠 BIG BOUNCY BIG BOY BOB 🟠';
+                screenShake = 0;
+                shakeX = 0;
+                shakeY = 0;
+                comboCount = 0;
+                lastPlatformBounced = null;
+                bob.y = canvas.height * 0.6;
+                bob.vy = -8;
+                bob.vx = 1.5;
+            }
+
+            // Save high score periodically
+            setInterval(() => {
+                if (highScore > 0) {
+                    try {
+                        localStorage.setItem('bobHighScore', Math.floor(highScore));
+                    } catch (e) { /* ignore */ }
+                }
+            }, 2000);
+
+            init();
+            requestAnimationFrame(gameLoop);
+
+            // Handle window resize
+            window.addEventListener('resize', () => {
+                resizeCanvas();
+                if (gameState === 'title') {
+                    init();
+                }
+                generateStars();
+            });
+
+            console.log('🟠 Big Bouncy Big Boy Bob is ready!');
+            console.log('Tap the screen or press Space to start bouncing!');
+            console.log('Use Arrow Keys or touch left/right sides to move.');
+            console.log('Bob loves bouncing - help him go as high as possible!');
+        })();
+    </script>
+</body>
+</html>
