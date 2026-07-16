@@ -412,5 +412,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T05:21:01.355Z",
     "updatedAt": "2026-07-16T05:21:01.355Z"
+  },
+  {
+    "slug": "fart-blaster",
+    "title": "💨 Fart Blaster",
+    "description": "fart images",
+    "creator": "burger778",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T05:21:17.410Z",
+    "updatedAt": "2026-07-16T05:21:17.410Z"
   }
 ]
