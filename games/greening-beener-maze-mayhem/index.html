@@ -1,0 +1,1319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Greening Beener - Maze Mayhem</title>
+    <style>
+        :root {
+            --bg: #0a0a0a;
+            --surface: #111;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: var(--bg);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: 'Segoe UI', 'Arial', sans-serif;
+            overflow: hidden;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        #game-container {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0;
+        }
+        canvas {
+            display: block;
+            border-radius: 16px;
+            box-shadow: 0 0 60px rgba(0, 255, 80, 0.25), 0 0 120px rgba(0, 200, 60, 0.12);
+            max-width: 95vw;
+            max-height: 75vh;
+            image-rendering: auto;
+        }
+        #touch-controls {
+            display: none;
+            position: relative;
+            width: 280px;
+            height: 200px;
+            margin-top: 10px;
+        }
+        .touch-btn {
+            position: absolute;
+            width: 70px;
+            height: 70px;
+            background: rgba(30, 30, 30, 0.85);
+            border: 2px solid rgba(0, 255, 80, 0.5);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            color: #0f0;
+            cursor: pointer;
+            transition: all 0.1s;
+            -webkit-tap-highlight-color: transparent;
+            box-shadow: 0 0 20px rgba(0, 255, 80, 0.2);
+        }
+        .touch-btn:active {
+            background: rgba(0, 255, 80, 0.35);
+            border-color: #0f0;
+            box-shadow: 0 0 35px rgba(0, 255, 80, 0.5);
+            transform: scale(0.92);
+        }
+        #btn-up {
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        #btn-down {
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        #btn-left {
+            top: 50%;
+            left: 0;
+            transform: translateY(-50%);
+        }
+        #btn-right {
+            top: 50%;
+            right: 0;
+            transform: translateY(-50%);
+        }
+        @media (max-width: 650px) or (hover: none) {
+            #touch-controls {
+                display: block;
+            }
+            canvas {
+                max-width: 98vw;
+                max-height: 55vh;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <div id="touch-controls">
+            <button class="touch-btn" id="btn-up">▲</button>
+            <button class="touch-btn" id="btn-down">▼</button>
+            <button class="touch-btn" id="btn-left">◀</button>
+            <button class="touch-btn" id="btn-right">▶</button>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            // --- Canvas size ---
+            const COLS = 15;
+            const ROWS = 11;
+            const CELL = 40;
+            const MAZE_W = COLS * CELL;
+            const MAZE_H = ROWS * CELL;
+            const HUD_H = 60;
+            const CANVAS_W = MAZE_W;
+            const CANVAS_H = MAZE_H + HUD_H;
+            canvas.width = CANVAS_W;
+            canvas.height = CANVAS_H;
+
+            // --- Audio Engine ---
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playTone(freq, duration, type = 'square', vol = 0.08, glideTo = null) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (glideTo) osc.frequency.linearRampToValueAtTime(glideTo, t + duration);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) {}
+            }
+
+            function sfxChomp() { playTone(220, 0.06, 'square', 0.06);
+                playTone(330, 0.05, 'square', 0.04); }
+
+            function sfxPowerPellet() { playTone(200, 0.35, 'sawtooth', 0.1, 800); }
+
+            function sfxGhostEaten() { playTone(600, 0.08, 'square', 0.09);
+                playTone(900, 0.1, 'square', 0.08); }
+
+            function sfxDeath() { playTone(300, 0.2, 'sawtooth', 0.1, 60);
+                playTone(150, 0.3, 'triangle', 0.08, 30); }
+
+            function sfxLevelUp() {
+                playTone(400, 0.1, 'square', 0.07);
+                setTimeout(() => playTone(500, 0.1, 'square', 0.07), 100);
+                setTimeout(() => playTone(700, 0.15, 'square', 0.09), 200);
+            }
+
+            // --- Maze Data ---
+            // 0=dot, 1=wall, 2=empty(ghost house), 3=power pellet
+            const mazeTemplate = [
+                [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1],
+                [1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 1],
+                [1, 3, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 3, 1],
+                [1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1],
+                [1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1],
+                [1, 0, 1, 0, 1, 1, 1, 2, 2, 1, 1, 1, 0, 1, 1],
+                [1, 0, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1],
+                [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1],
+                [1, 3, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 3, 1],
+                [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+            ];
+
+            let maze = [];
+            let totalDots = 0;
+            let dotsRemaining = 0;
+
+            function resetMaze() {
+                maze = mazeTemplate.map(row => [...row]);
+                totalDots = 0;
+                for (let r = 0; r < ROWS; r++)
+                    for (let c = 0; c < COLS; c++)
+                        if (maze[r][c] === 0 || maze[r][c] === 3) totalDots++;
+                dotsRemaining = totalDots;
+            }
+
+            function getCell(r, c) {
+                if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return 1;
+                return maze[r][c];
+            }
+
+            function isWall(r, c) { return getCell(r, c) === 1; }
+
+            function isWallOrGhostHouse(r, c) {
+                const cell = getCell(r, c);
+                return cell === 1 || cell === 2;
+            }
+
+            // --- Game State ---
+            const STATE = { MENU: 0, PLAYING: 1, DYING: 2, GAMEOVER: 3, LEVELCOMPLETE: 4 };
+            let gameState = STATE.MENU;
+            let score = 0;
+            let lives = 3;
+            let level = 1;
+            let powerMode = false;
+            let powerTimer = 0;
+            const POWER_DURATION = 420; // frames (~7 seconds at 60fps)
+            let powerFlash = false;
+            let ghostsEatenThisPower = 0;
+            let dyingTimer = 0;
+            const DYING_DURATION = 60;
+            let levelCompleteTimer = 0;
+            const LEVEL_COMPLETE_DURATION = 120;
+            let frameCount = 0;
+            let ghostEatScore = 200;
+
+            // --- Player ---
+            let player = {
+                col: 7,
+                row: 9,
+                x: 0,
+                y: 0,
+                dirX: 0,
+                dirY: 0,
+                nextDirX: 0,
+                nextDirY: 0,
+                speed: 0.13, // cells per frame
+                mouthAngle: 0,
+                mouthOpen: true,
+                mouthTimer: 0,
+            };
+
+            function resetPlayer() {
+                player.col = 7;
+                player.row = 9;
+                player.x = player.col * CELL + CELL / 2;
+                player.y = player.row * CELL + CELL / 2;
+                player.dirX = 0;
+                player.dirY = -1;
+                player.nextDirX = 0;
+                player.nextDirY = -1;
+                player.mouthAngle = 0;
+                player.mouthOpen = true;
+                player.mouthTimer = 0;
+            }
+
+            // --- Ghosts ---
+            const GHOST_COLORS = ['#ff4444', '#ff88cc', '#ff9944'];
+            const GHOST_NAMES = ['Blinky', 'Pinky', 'Clyde'];
+            const GHOST_SCATTER_TARGETS = [
+                { col: COLS - 2, row: 1 },
+                { col: 1, row: 1 },
+                { col: COLS - 2, row: ROWS - 2 },
+            ];
+
+            let ghosts = [];
+
+            function createGhost(index) {
+                const homeCol = index === 0 ? 7 : (index === 1 ? 8 : 7);
+                const homeRow = index === 2 ? 5 : 6;
+                return {
+                    index: index,
+                    col: homeCol,
+                    row: homeRow,
+                    x: homeCol * CELL + CELL / 2,
+                    y: homeRow * CELL + CELL / 2,
+                    dirX: 0,
+                    dirY: -1,
+                    speed: 0.08 + level * 0.008,
+                    homeCol: homeCol,
+                    homeRow: homeRow,
+                    frightened: false,
+                    eaten: false,
+                    respawnTimer: 0,
+                    color: GHOST_COLORS[index],
+                    name: GHOST_NAMES[index],
+                    scatterTarget: GHOST_SCATTER_TARGETS[index],
+                };
+            }
+
+            function resetGhosts() {
+                ghosts = [];
+                for (let i = 0; i < 3; i++) {
+                    ghosts.push(createGhost(i));
+                }
+            }
+
+            // --- Particles ---
+            let particles = [];
+
+            function spawnParticles(x, y, color, count = 8) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 1.5 + Math.random() * 3;
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        life: 20 + Math.random() * 20,
+                        maxLife: 40,
+                        color: color,
+                        size: 2 + Math.random() * 3,
+                    });
+                }
+            }
+
+            function spawnFloatingText(x, y, text, color = '#fff') {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: 0,
+                    vy: -2.5,
+                    life: 40,
+                    maxLife: 40,
+                    color: color,
+                    size: 0,
+                    text: text,
+                    isText: true,
+                });
+            }
+
+            function updateParticles() {
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.life--;
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+            }
+
+            function drawParticles(ctx) {
+                for (const p of particles) {
+                    const alpha = Math.max(0, p.life / p.maxLife);
+                    if (p.isText) {
+                        ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+                        ctx.font = 'bold 14px "Segoe UI", Arial, sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(p.text, p.x, p.y);
+                    } else {
+                        ctx.fillStyle = p.color.replace(')', `,${alpha})`).replace('rgb',
+                            'rgba');
+                        if (p.color.startsWith('#')) {
+                            const hex = p.color;
+                            const r = parseInt(hex.slice(1, 3), 16);
+                            const g = parseInt(hex.slice(3, 5), 16);
+                            const b = parseInt(hex.slice(5, 7), 16);
+                            ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+                        }
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            // --- Input ---
+            const keys = {};
+            window.addEventListener('keydown', e => {
+                keys[e.key] = true;
+                initAudio();
+                if (gameState === STATE.MENU) startGame();
+                if (gameState === STATE.GAMEOVER && e.key === ' ') restartGame();
+                e.preventDefault();
+            });
+            window.addEventListener('keyup', e => { keys[e.key] = false;
+                e.preventDefault(); });
+
+            function handleDirectionInput(dx, dy) {
+                initAudio();
+                if (gameState === STATE.MENU) startGame();
+                if (gameState === STATE.GAMEOVER) { restartGame(); return; }
+                if (gameState !== STATE.PLAYING && gameState !== STATE.DYING) return;
+                player.nextDirX = dx;
+                player.nextDirY = dy;
+            }
+
+            // Touch buttons
+            document.getElementById('btn-up').addEventListener('pointerdown', (e) => { e.preventDefault();
+                handleDirectionInput(0, -1); });
+            document.getElementById('btn-down').addEventListener('pointerdown', (e) => { e.preventDefault();
+                handleDirectionInput(0, 1); });
+            document.getElementById('btn-left').addEventListener('pointerdown', (e) => { e.preventDefault();
+                handleDirectionInput(-1, 0); });
+            document.getElementById('btn-right').addEventListener('pointerdown', (e) => { e.preventDefault();
+                handleDirectionInput(1, 0); });
+
+            // Swipe on canvas
+            let touchStartX = 0,
+                touchStartY = 0;
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                initAudio();
+                if (gameState === STATE.MENU) startGame();
+                if (gameState === STATE.GAMEOVER) { restartGame(); return; }
+                touchStartX = e.touches[0].clientX;
+                touchStartY = e.touches[0].clientY;
+            }, { passive: false });
+            canvas.addEventListener('touchmove', (e) => { e.preventDefault(); }, { passive: false });
+            canvas.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                if (gameState !== STATE.PLAYING && gameState !== STATE.DYING) return;
+                const dx = (e.changedTouches[0]?.clientX || touchStartX) - touchStartX;
+                const dy = (e.changedTouches[0]?.clientY || touchStartY) - touchStartY;
+                const absDx = Math.abs(dx);
+                const absDy = Math.abs(dy);
+                if (Math.max(absDx, absDy) < 15) return;
+                if (absDx > absDy) {
+                    handleDirectionInput(dx > 0 ? 1 : -1, 0);
+                } else {
+                    handleDirectionInput(0, dy > 0 ? 1 : -1);
+                }
+            });
+            canvas.addEventListener('click', () => {
+                initAudio();
+                if (gameState === STATE.MENU) startGame();
+                if (gameState === STATE.GAMEOVER) restartGame();
+            });
+
+            // --- Collision & Movement Helpers ---
+            function isAtCellCenter(x, y) {
+                const cx = Math.round((x - CELL / 2) / CELL) * CELL + CELL / 2;
+                const cy = Math.round((y - CELL / 2) / CELL) * CELL + CELL / 2;
+                return Math.abs(x - cx) < 2 && Math.abs(y - cy) < 2;
+            }
+
+            function snapToCellCenter(x, y) {
+                return {
+                    x: Math.round((x - CELL / 2) / CELL) * CELL + CELL / 2,
+                    y: Math.round((y - CELL / 2) / CELL) * CELL + CELL / 2,
+                };
+            }
+
+            function canMoveInDirection(col, row, dx, dy) {
+                const nextCol = Math.round(col + dx);
+                const nextRow = Math.round(row + dy);
+                if (dx !== 0) {
+                    const checkCol = dx > 0 ? Math.floor(col + dx) : Math.ceil(col + dx);
+                    const checkRow = Math.round(row);
+                    return !isWallOrGhostHouse(checkRow, checkCol);
+                }
+                if (dy !== 0) {
+                    const checkRow = dy > 0 ? Math.floor(row + dy) : Math.ceil(row + dy);
+                    const checkCol = Math.round(col);
+                    return !isWallOrGhostHouse(checkRow, checkCol);
+                }
+                return true;
+            }
+
+            // --- Game Functions ---
+            function startGame() {
+                if (gameState === STATE.PLAYING) return;
+                initAudio();
+                score = 0;
+                lives = 3;
+                level = 1;
+                resetMaze();
+                resetPlayer();
+                resetGhosts();
+                particles = [];
+                powerMode = false;
+                powerTimer = 0;
+                ghostsEatenThisPower = 0;
+                ghostEatScore = 200;
+                gameState = STATE.PLAYING;
+                frameCount = 0;
+            }
+
+            function restartGame() {
+                startGame();
+            }
+
+            function killPlayer() {
+                if (gameState === STATE.DYING || gameState === STATE.GAMEOVER) return;
+                gameState = STATE.DYING;
+                dyingTimer = DYING_DURATION;
+                sfxDeath();
+                spawnParticles(player.x, player.y, '#ff3333', 20);
+                spawnParticles(player.x, player.y, '#ffaa00', 15);
+                lives--;
+                powerMode = false;
+                powerTimer = 0;
+                ghostsEatenThisPower = 0;
+                for (const ghost of ghosts) {
+                    ghost.frightened = false;
+                    ghost.eaten = false;
+                    ghost.respawnTimer = 0;
+                }
+            }
+
+            function eatGhost(ghost) {
+                ghost.eaten = true;
+                ghost.respawnTimer = 90;
+                ghost.frightened = false;
+                const bonus = ghostEatScore;
+                ghostEatScore *= 2;
+                score += bonus;
+                sfxGhostEaten();
+                spawnFloatingText(ghost.x, ghost.y, '+' + bonus, '#ffff44');
+                spawnParticles(ghost.x, ghost.y, '#ffffff', 12);
+                ghost.col = ghost.homeCol;
+                ghost.row = ghost.homeRow;
+                ghost.x = ghost.col * CELL + CELL / 2;
+                ghost.y = ghost.row * CELL + CELL / 2;
+                ghost.dirX = 0;
+                ghost.dirY = -1;
+            }
+
+            function completeLevel() {
+                gameState = STATE.LEVELCOMPLETE;
+                levelCompleteTimer = LEVEL_COMPLETE_DURATION;
+                sfxLevelUp();
+                spawnParticles(player.x, player.y, '#00ff55', 30);
+                spawnFloatingText(player.x, player.y - 20, 'LEVEL UP!', '#00ff88');
+                powerMode = false;
+                powerTimer = 0;
+                ghostsEatenThisPower = 0;
+                for (const ghost of ghosts) {
+                    ghost.frightened = false;
+                    ghost.eaten = false;
+                    ghost.respawnTimer = 0;
+                }
+            }
+
+            function advanceLevel() {
+                level++;
+                resetMaze();
+                resetPlayer();
+                resetGhosts();
+                for (const ghost of ghosts) {
+                    ghost.speed = 0.08 + level * 0.008;
+                }
+                particles = [];
+                powerMode = false;
+                powerTimer = 0;
+                ghostsEatenThisPower = 0;
+                ghostEatScore = 200;
+                gameState = STATE.PLAYING;
+            }
+
+            // --- Update ---
+            function updatePlayer() {
+                if (gameState !== STATE.PLAYING) return;
+
+                // Check queued direction
+                if (player.nextDirX !== 0 || player.nextDirY !== 0) {
+                    const snapped = snapToCellCenter(player.x, player.y);
+                    const col = (snapped.x - CELL / 2) / CELL;
+                    const row = (snapped.y - CELL / 2) / CELL;
+                    if (canMoveInDirection(col, row, player.nextDirX, player.nextDirY)) {
+                        player.dirX = player.nextDirX;
+                        player.dirY = player.nextDirY;
+                        player.x = snapped.x;
+                        player.y = snapped.y;
+                        player.col = col;
+                        player.row = row;
+                    }
+                }
+
+                // Move in current direction
+                const newX = player.x + player.dirX * player.speed * CELL;
+                const newY = player.y + player.dirY * player.speed * CELL;
+                const newCol = (newX - CELL / 2) / CELL;
+                const newRow = (newY - CELL / 2) / CELL;
+
+                let blocked = false;
+                if (player.dirX !== 0) {
+                    const checkCol = player.dirX > 0 ? Math.floor(newCol + 0.3) : Math.ceil(newCol - 0.3);
+                    const checkRow = Math.round(newRow);
+                    if (isWallOrGhostHouse(checkRow, checkCol)) {
+                        blocked = true;
+                        const snap = snapToCellCenter(player.x, player.y);
+                        player.x = snap.x;
+                        player.y = snap.y;
+                        player.col = (snap.x - CELL / 2) / CELL;
+                        player.row = (snap.y - CELL / 2) / CELL;
+                        if (player.dirX !== 0 && !canMoveInDirection(player.col, player.row, player.dirX, 0)) {
+                            player.dirX = 0;
+                        }
+                    }
+                }
+                if (player.dirY !== 0 && !blocked) {
+                    const checkRow = player.dirY > 0 ? Math.floor(newRow + 0.3) : Math.ceil(newRow - 0.3);
+                    const checkCol = Math.round(newCol);
+                    if (isWallOrGhostHouse(checkRow, checkCol)) {
+                        blocked = true;
+                        const snap = snapToCellCenter(player.x, player.y);
+                        player.x = snap.x;
+                        player.y = snap.y;
+                        player.col = (snap.x - CELL / 2) / CELL;
+                        player.row = (snap.y - CELL / 2) / CELL;
+                        if (player.dirY !== 0 && !canMoveInDirection(player.col, player.row, 0, player.dirY)) {
+                            player.dirY = 0;
+                        }
+                    }
+                }
+
+                if (!blocked) {
+                    player.x = newX;
+                    player.y = newY;
+                    player.col = newCol;
+                    player.row = newRow;
+                }
+
+                // Wrap around edges (optional Pacman feature)
+                if (player.x < -CELL / 2) player.x = MAZE_W + CELL / 2;
+                if (player.x > MAZE_W + CELL / 2) player.x = -CELL / 2;
+                if (player.y < -CELL / 2) player.y = MAZE_H + CELL / 2;
+                if (player.y > MAZE_H + CELL / 2) player.y = -CELL / 2;
+                player.col = (player.x - CELL / 2) / CELL;
+                player.row = (player.y - CELL / 2) / CELL;
+
+                // Mouth animation
+                player.mouthTimer++;
+                if (player.mouthTimer > 4) {
+                    player.mouthTimer = 0;
+                    player.mouthOpen = !player.mouthOpen;
+                }
+                player.mouthAngle = player.mouthOpen ? 0.35 : 0.05;
+
+                // Eat dots
+                const cr = Math.round(player.row);
+                const cc = Math.round(player.col);
+                if (cr >= 0 && cr < ROWS && cc >= 0 && cc < COLS) {
+                    const cell = maze[cr][cc];
+                    if (cell === 0) {
+                        maze[cr][cc] = 2; // eaten
+                        dotsRemaining--;
+                        score += 10;
+                        sfxChomp();
+                        spawnParticles(player.x, player.y, '#00ff55', 3);
+                    } else if (cell === 3) {
+                        maze[cr][cc] = 2;
+                        dotsRemaining--;
+                        score += 50;
+                        powerMode = true;
+                        powerTimer = POWER_DURATION;
+                        ghostsEatenThisPower = 0;
+                        ghostEatScore = 200;
+                        sfxPowerPellet();
+                        spawnParticles(player.x, player.y, '#00ffff', 15);
+                        for (const ghost of ghosts) {
+                            if (!ghost.eaten) {
+                                ghost.frightened = true;
+                                ghost.dirX *= -1;
+                                ghost.dirY *= -1;
+                            }
+                        }
+                    }
+                }
+
+                // Check level complete
+                if (dotsRemaining <= 0 && gameState === STATE.PLAYING) {
+                    completeLevel();
+                }
+            }
+
+            function updateGhost(ghost) {
+                if (gameState !== STATE.PLAYING && gameState !== STATE.DYING) return;
+
+                // Handle respawn timer
+                if (ghost.eaten) {
+                    ghost.respawnTimer--;
+                    if (ghost.respawnTimer <= 0) {
+                        ghost.eaten = false;
+                        ghost.col = ghost.homeCol;
+                        ghost.row = ghost.homeRow;
+                        ghost.x = ghost.col * CELL + CELL / 2;
+                        ghost.y = ghost.row * CELL + CELL / 2;
+                        ghost.dirX = 0;
+                        ghost.dirY = -1;
+                    }
+                    return;
+                }
+
+                const speed = ghost.frightened ? ghost.speed * 0.55 : ghost.speed;
+                const newX = ghost.x + ghost.dirX * speed * CELL;
+                const newY = ghost.y + ghost.dirY * speed * CELL;
+                const newCol = (newX - CELL / 2) / CELL;
+                const newRow = (newY - CELL / 2) / CELL;
+
+                let blocked = false;
+                if (ghost.dirX !== 0) {
+                    const checkCol = ghost.dirX > 0 ? Math.floor(newCol + 0.35) : Math.ceil(newCol - 0.35);
+                    const checkRow = Math.round(newRow);
+                    if (isWallOrGhostHouse(checkRow, checkCol) || (ghost.eaten && getCell(checkRow, checkCol) ===
+                            2 && checkRow === ghost.homeRow && checkCol === ghost.homeCol)) {
+                        blocked = true;
+                    } else if (isWallOrGhostHouse(checkRow, checkCol)) {
+                        blocked = true;
+                    }
+                }
+                if (ghost.dirY !== 0 && !blocked) {
+                    const checkRow = ghost.dirY > 0 ? Math.floor(newRow + 0.35) : Math.ceil(newRow - 0.35);
+                    const checkCol = Math.round(newCol);
+                    if (isWallOrGhostHouse(checkRow, checkCol)) {
+                        blocked = true;
+                    }
+                }
+
+                if (blocked) {
+                    const snap = snapToCellCenter(ghost.x, ghost.y);
+                    ghost.x = snap.x;
+                    ghost.y = snap.y;
+                    ghost.col = (snap.x - CELL / 2) / CELL;
+                    ghost.row = (snap.y - CELL / 2) / CELL;
+                    chooseGhostDirection(ghost);
+                } else {
+                    ghost.x = newX;
+                    ghost.y = newY;
+                    ghost.col = newCol;
+                    ghost.row = newRow;
+                }
+
+                // At intersection, possibly change direction
+                if (isAtCellCenter(ghost.x, ghost.y)) {
+                    const snap = snapToCellCenter(ghost.x, ghost.y);
+                    ghost.x = snap.x;
+                    ghost.y = snap.y;
+                    ghost.col = (snap.x - CELL / 2) / CELL;
+                    ghost.row = (snap.y - CELL / 2) / CELL;
+                    // 30% chance to re-evaluate at each intersection
+                    if (Math.random() < 0.35 || blocked) {
+                        chooseGhostDirection(ghost);
+                    }
+                }
+            }
+
+            function chooseGhostDirection(ghost) {
+                const cr = Math.round(ghost.col);
+                const rr = Math.round(ghost.row);
+                const possible = [];
+                const directions = [
+                    { dx: 0, dy: -1 },
+                    { dx: 0, dy: 1 },
+                    { dx: -1, dy: 0 },
+                    { dx: 1, dy: 0 },
+                ];
+                const reverseDir = { dx: -ghost.dirX, dy: -ghost.dirY };
+
+                for (const d of directions) {
+                    if (d.dx === reverseDir.dx && d.dy === reverseDir.dy) continue; // no reverse unless forced
+                    const nc = cr + d.dx;
+                    const nr = rr + d.dy;
+                    if (!isWallOrGhostHouse(nr, nc)) {
+                        possible.push(d);
+                    }
+                }
+
+                if (possible.length === 0) {
+                    // Must reverse
+                    const nc = cr + reverseDir.dx;
+                    const nr = rr + reverseDir.dy;
+                    if (!isWallOrGhostHouse(nr, nc)) {
+                        possible.push(reverseDir);
+                    } else {
+                        // Stuck, stay put
+                        ghost.dirX = 0;
+                        ghost.dirY = 0;
+                        return;
+                    }
+                }
+
+                if (ghost.frightened && !ghost.eaten) {
+                    // Random movement
+                    const pick = possible[Math.floor(Math.random() * possible.length)];
+                    ghost.dirX = pick.dx;
+                    ghost.dirY = pick.dy;
+                    return;
+                }
+
+                // Determine target
+                let targetCol, targetRow;
+                const scatterMode = frameCount % 420 < 280; // scatter for ~4.7s, chase for ~2.3s
+
+                if (ghost.eaten) {
+                    targetCol = ghost.homeCol;
+                    targetRow = ghost.homeRow;
+                } else if (scatterMode && !powerMode) {
+                    targetCol = ghost.scatterTarget.col;
+                    targetRow = ghost.scatterTarget.row;
+                } else {
+                    // Chase mode
+                    switch (ghost.index) {
+                        case 0: // Blinky - direct chase
+                            targetCol = Math.round(player.col);
+                            targetRow = Math.round(player.row);
+                            break;
+                        case 1: // Pinky - target ahead of player
+                            targetCol = Math.round(player.col + player.dirX * 3);
+                            targetRow = Math.round(player.row + player.dirY * 3);
+                            break;
+                        case 2: // Clyde - chase if far, scatter if close
+                            const dist = Math.abs(cr - Math.round(player.col)) + Math.abs(rr - Math.round(
+                                player.row));
+                            if (dist > 5) {
+                                targetCol = Math.round(player.col);
+                                targetRow = Math.round(player.row);
+                            } else {
+                                targetCol = ghost.scatterTarget.col;
+                                targetRow = ghost.scatterTarget.row;
+                            }
+                            break;
+                        default:
+                            targetCol = Math.round(player.col);
+                            targetRow = Math.round(player.row);
+                    }
+                }
+
+                // Clamp targets
+                targetCol = Math.max(0, Math.min(COLS - 1, targetCol));
+                targetRow = Math.max(0, Math.min(ROWS - 1, targetRow));
+
+                // Choose direction closest to target (Manhattan)
+                let bestDir = possible[0];
+                let bestDist = Infinity;
+                for (const d of possible) {
+                    const nc = cr + d.dx;
+                    const nr = rr + d.dy;
+                    const dist = Math.abs(nc - targetCol) + Math.abs(nr - targetRow);
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        bestDir = d;
+                    }
+                }
+                ghost.dirX = bestDir.dx;
+                ghost.dirY = bestDir.dy;
+            }
+
+            function checkCollisions() {
+                if (gameState !== STATE.PLAYING) return;
+                for (const ghost of ghosts) {
+                    if (ghost.eaten) continue;
+                    const dx = player.x - ghost.x;
+                    const dy = player.y - ghost.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < CELL * 0.7) {
+                        if (ghost.frightened && powerMode) {
+                            eatGhost(ghost);
+                        } else {
+                            killPlayer();
+                            return;
+                        }
+                    }
+                }
+            }
+
+            function update() {
+                frameCount++;
+                if (gameState === STATE.PLAYING) {
+                    updatePlayer();
+                    for (const ghost of ghosts) updateGhost(ghost);
+                    checkCollisions();
+                    // Power timer
+                    if (powerMode) {
+                        powerTimer--;
+                        powerFlash = powerTimer < 90 && Math.floor(powerTimer / 10) % 2 === 0;
+                        if (powerTimer <= 0) {
+                            powerMode = false;
+                            ghostsEatenThisPower = 0;
+                            ghostEatScore = 200;
+                            for (const ghost of ghosts) {
+                                ghost.frightened = false;
+                            }
+                        }
+                    }
+                }
+                if (gameState === STATE.DYING) {
+                    dyingTimer--;
+                    if (dyingTimer <= 0) {
+                        if (lives <= 0) {
+                            gameState = STATE.GAMEOVER;
+                        } else {
+                            resetPlayer();
+                            resetGhosts();
+                            powerMode = false;
+                            powerTimer = 0;
+                            ghostsEatenThisPower = 0;
+                            ghostEatScore = 200;
+                            gameState = STATE.PLAYING;
+                        }
+                    }
+                }
+                if (gameState === STATE.LEVELCOMPLETE) {
+                    levelCompleteTimer--;
+                    if (levelCompleteTimer <= 0) {
+                        advanceLevel();
+                    }
+                }
+                updateParticles();
+            }
+
+            // --- Render ---
+            function drawMaze(ctx) {
+                for (let r = 0; r < ROWS; r++) {
+                    for (let c = 0; c < COLS; c++) {
+                        const x = c * CELL;
+                        const y = r * CELL;
+                        const cell = maze[r][c];
+
+                        if (cell === 1) {
+                            // Wall
+                            const grad = ctx.createLinearGradient(x, y, x + CELL, y + CELL);
+                            grad.addColorStop(0, '#1a3a5c');
+                            grad.addColorStop(0.5, '#1e4470');
+                            grad.addColorStop(1, '#152d4a');
+                            ctx.fillStyle = grad;
+                            ctx.fillRect(x + 1, y + 1, CELL - 2, CELL - 2);
+                            // Inner highlight
+                            ctx.strokeStyle = 'rgba(100,160,220,0.35)';
+                            ctx.lineWidth = 1.5;
+                            ctx.strokeRect(x + 3, y + 3, CELL - 6, CELL - 6);
+                            // Subtle glow
+                            ctx.fillStyle = 'rgba(60,120,200,0.08)';
+                            ctx.fillRect(x, y, CELL, CELL);
+                        } else if (cell === 0) {
+                            // Dot
+                            ctx.fillStyle = '#ffeebb';
+                            ctx.beginPath();
+                            ctx.arc(x + CELL / 2, y + CELL / 2, 3.5, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.fillStyle = 'rgba(255,238,187,0.5)';
+                            ctx.beginPath();
+                            ctx.arc(x + CELL / 2, y + CELL / 2, 6, 0, Math.PI * 2);
+                            ctx.fill();
+                        } else if (cell === 3) {
+                            // Power pellet - pulsating
+                            const pulse = 1 + Math.sin(frameCount * 0.1) * 0.3;
+                            const r = 7 * pulse;
+                            const grad = ctx.createRadialGradient(x + CELL / 2, y + CELL / 2, r * 0.3, x + CELL / 2, y +
+                                CELL / 2, r);
+                            grad.addColorStop(0, '#ffffff');
+                            grad.addColorStop(0.5, '#ffdd44');
+                            grad.addColorStop(1, 'rgba(255,180,30,0)');
+                            ctx.fillStyle = grad;
+                            ctx.beginPath();
+                            ctx.arc(x + CELL / 2, y + CELL / 2, r + 3, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.fillStyle = '#ffeebb';
+                            ctx.beginPath();
+                            ctx.arc(x + CELL / 2, y + CELL / 2, r, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                    }
+                }
+            }
+
+            function drawPlayer(ctx) {
+                if (gameState === STATE.DYING && Math.floor(dyingTimer / 4) % 2 === 0) return;
+
+                const px = player.x;
+                const py = player.y;
+                const angle = Math.atan2(player.dirY, player.dirX);
+                const mouthAngle = player.mouthAngle;
+
+                // Glow
+                const glowGrad = ctx.createRadialGradient(px, py, CELL * 0.25, px, py, CELL * 0.9);
+                if (powerMode && powerFlash) {
+                    glowGrad.addColorStop(0, 'rgba(0,255,200,0.7)');
+                    glowGrad.addColorStop(1, 'rgba(0,255,80,0)');
+                } else {
+                    glowGrad.addColorStop(0, 'rgba(0,255,80,0.5)');
+                    glowGrad.addColorStop(1, 'rgba(0,180,40,0)');
+                }
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(px, py, CELL * 0.85, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body - green circle with mouth
+                const bodyGrad = ctx.createRadialGradient(px - 3, py - 4, CELL * 0.1, px, py, CELL * 0.45);
+                bodyGrad.addColorStop(0, '#5eff6e');
+                bodyGrad.addColorStop(0.7, '#1aaf30');
+                bodyGrad.addColorStop(1, '#0d6b1d');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                if (player.dirX === 0 && player.dirY === 0) {
+                    ctx.arc(px, py, CELL * 0.42, 0, Math.PI * 2);
+                } else {
+                    ctx.arc(px, py, CELL * 0.42, angle + mouthAngle, angle + Math.PI * 2 - mouthAngle);
+                    ctx.lineTo(px, py);
+                }
+                ctx.closePath();
+                ctx.fill();
+
+                // Darker outline
+                ctx.strokeStyle = '#0a4a15';
+                ctx.lineWidth = 1.8;
+                ctx.stroke();
+
+                // Eyes
+                const eyeOffsetX = Math.cos(angle) * 8;
+                const eyeOffsetY = Math.sin(angle) * 8;
+                const eyeX1 = px + Math.cos(angle - 0.8) * 12 - eyeOffsetX * 0.3;
+                const eyeY1 = py + Math.sin(angle - 0.8) * 12 - eyeOffsetY * 0.3;
+                const eyeX2 = px + Math.cos(angle + 0.8) * 12 - eyeOffsetX * 0.3;
+                const eyeY2 = py + Math.sin(angle + 0.8) * 12 - eyeOffsetY * 0.3;
+
+                // White of eyes
+                for (const [ex, ey] of [
+                        [eyeX1, eyeY1],
+                        [eyeX2, eyeY2]
+                    ]) {
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(ex, ey, 6.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Pupil
+                    ctx.fillStyle = '#111';
+                    ctx.beginPath();
+                    ctx.arc(ex - Math.cos(angle) * 1.5, ey - Math.sin(angle) * 1.5, 3.2, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Evil red glint
+                    ctx.fillStyle = '#ff2200';
+                    ctx.beginPath();
+                    ctx.arc(ex - Math.cos(angle) * 1.5, ey - Math.sin(angle) * 1.5, 1.5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Angry eyebrows
+                ctx.strokeStyle = '#0a3a0a';
+                ctx.lineWidth = 2.5;
+                for (const [ex, ey] of [
+                        [eyeX1, eyeY1],
+                        [eyeX2, eyeY2]
+                    ]) {
+                    ctx.beginPath();
+                    ctx.moveTo(ex - 6, ey - 6);
+                    ctx.lineTo(ex + 6, ey - 8);
+                    ctx.stroke();
+                }
+
+                // Small horns (evil)
+                const hornBaseAngle1 = angle - 1.2;
+                const hornBaseAngle2 = angle + 1.2;
+                for (const ha of [hornBaseAngle1, hornBaseAngle2]) {
+                    const hx = px + Math.cos(ha) * CELL * 0.38;
+                    const hy = py + Math.sin(ha) * CELL * 0.38;
+                    const htx = hx + Math.cos(ha - 0.4) * 8;
+                    const hty = hy + Math.sin(ha - 0.4) * 8;
+                    ctx.fillStyle = '#0d5a18';
+                    ctx.beginPath();
+                    ctx.moveTo(hx, hy);
+                    ctx.lineTo(htx, hty);
+                    ctx.lineTo(hx + Math.cos(ha + 0.5) * 5, hy + Math.sin(ha + 0.5) * 5);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+            }
+
+            function drawGhost(ctx, ghost) {
+                if (ghost.eaten && ghost.respawnTimer > 0 && Math.floor(ghost.respawnTimer / 6) % 2 === 0) return;
+
+                const gx = ghost.x;
+                const gy = ghost.y;
+                const r = CELL * 0.4;
+
+                let color = ghost.color;
+                if (ghost.frightened && powerMode) {
+                    color = powerFlash ? '#ffffff' : '#3344cc';
+                }
+
+                // Glow
+                const glowGrad = ctx.createRadialGradient(gx, gy, r * 0.5, gx, gy, r * 1.5);
+                glowGrad.addColorStop(0, color.replace(')', ',0.5)').replace('rgb', 'rgba'));
+                glowGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                if (color.startsWith('#')) {
+                    const rr = parseInt(color.slice(1, 3), 16);
+                    const gg = parseInt(color.slice(3, 5), 16);
+                    const bb = parseInt(color.slice(5, 7), 16);
+                    ctx.fillStyle = `rgba(${rr},${gg},${bb},0.35)`;
+                } else {
+                    ctx.fillStyle = glowGrad;
+                }
+                ctx.beginPath();
+                ctx.arc(gx, gy, r * 1.4, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.arc(gx, gy - 2, r, Math.PI, 0);
+                // Wavy bottom
+                const waveCount = 4;
+                const waveWidth = (r * 2) / waveCount;
+                const bottomY = gy + r - 2;
+                for (let i = 0; i < waveCount; i++) {
+                    const sx = gx - r + i * waveWidth;
+                    const waveY = bottomY + (i % 2 === 0 ? -6 : 2) * (1 + Math.sin(frameCount * 0.3 + i) * 0.4);
+                    ctx.lineTo(sx + waveWidth / 2, waveY);
+                }
+                ctx.lineTo(gx + r, gy - 2);
+                ctx.closePath();
+                ctx.fill();
+
+                // Outline
+                ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+                ctx.lineWidth = 1.2;
+                ctx.stroke();
+
+                // Eyes
+                const eyeY = gy - 5;
+                for (const side of [-1, 1]) {
+                    const ex = gx + side * 7;
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(ex, eyeY, 6, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#111';
+                    ctx.beginPath();
+                    ctx.arc(ex + side * 2, eyeY + 1, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Frightened face
+                if (ghost.frightened && powerMode) {
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 9px "Segoe UI", Arial, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('〰', gx, gy - 3);
+                }
+            }
+
+            function drawHUD(ctx) {
+                const hudY = MAZE_H;
+                // Background
+                const hudGrad = ctx.createLinearGradient(0, hudY, 0, hudY + HUD_H);
+                hudGrad.addColorStop(0, '#0d1117');
+                hudGrad.addColorStop(1, '#0a0e13');
+                ctx.fillStyle = hudGrad;
+                ctx.fillRect(0, hudY, CANVAS_W, HUD_H);
+                ctx.strokeStyle = 'rgba(0,255,80,0.3)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, hudY);
+                ctx.lineTo(CANVAS_W, hudY);
+                ctx.stroke();
+
+                // Score
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 18px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText(`SCORE: ${score}`, 14, hudY + 26);
+
+                // Lives
+                ctx.textAlign = 'right';
+                ctx.fillStyle = '#ffcc00';
+                ctx.fillText('LIVES: ', CANVAS_W - 110, hudY + 26);
+                for (let i = 0; i < lives; i++) {
+                    const lx = CANVAS_W - 30 + i * 28;
+                    const ly = hudY + 20;
+                    ctx.fillStyle = '#00ff55';
+                    ctx.beginPath();
+                    ctx.arc(lx, ly, 9, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#0a4a15';
+                    ctx.beginPath();
+                    ctx.arc(lx - 2, ly - 1, 3.5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Level
+                ctx.fillStyle = '#aaa';
+                ctx.font = '13px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(`LEVEL ${level}`, CANVAS_W / 2, hudY + 44);
+
+                // Power indicator
+                if (powerMode) {
+                    const remaining = powerTimer / POWER_DURATION;
+                    const barW = 120;
+                    const barH = 6;
+                    const barX = CANVAS_W / 2 - barW / 2;
+                    const barY = hudY + 8;
+                    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                    ctx.fillRect(barX, barY, barW, barH);
+                    const pwGrad = ctx.createLinearGradient(barX, barY, barX + barW * remaining, barY);
+                    pwGrad.addColorStop(0, '#00ffaa');
+                    pwGrad.addColorStop(1, '#00ccff');
+                    ctx.fillStyle = pwGrad;
+                    ctx.fillRect(barX, barY, barW * remaining, barH);
+                }
+            }
+
+            function drawOverlay(ctx) {
+                if (gameState === STATE.MENU) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+                    ctx.fillStyle = '#00ff55';
+                    ctx.font = 'bold 36px "Segoe UI", Arial, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('GREENING BEENER', CANVAS_W / 2, CANVAS_H / 2 - 50);
+                    ctx.fillStyle = '#ccffcc';
+                    ctx.font = '16px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText('The Evil Brother of IShowSpeed', CANVAS_W / 2, CANVAS_H / 2 - 18);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 20px "Segoe UI", Arial, sans-serif';
+                    const pulse = 1 + Math.sin(Date.now() * 0.004) * 0.2;
+                    ctx.fillText('TAP or PRESS ANY KEY TO START', CANVAS_W / 2, CANVAS_H / 2 + 35);
+                    ctx.fillStyle = '#aaa';
+                    ctx.font = '14px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText('Arrow Keys / WASD / Swipe to Move', CANVAS_W / 2, CANVAS_H / 2 + 62);
+                }
+                if (gameState === STATE.GAMEOVER) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+                    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+                    ctx.fillStyle = '#ff3333';
+                    ctx.font = 'bold 40px "Segoe UI", Arial, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('GAME OVER', CANVAS_W / 2, CANVAS_H / 2 - 25);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 18px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText(`Final Score: ${score}`, CANVAS_W / 2, CANVAS_H / 2 + 20);
+                    ctx.fillText('TAP or PRESS SPACE to Restart', CANVAS_W / 2, CANVAS_H / 2 + 50);
+                }
+                if (gameState === STATE.LEVELCOMPLETE) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+                    ctx.fillStyle = '#00ff88';
+                    ctx.font = 'bold 34px "Segoe UI", Arial, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('LEVEL COMPLETE!', CANVAS_W / 2, CANVAS_H / 2);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = '18px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText(`Score: ${score}  |  Level ${level + 1} incoming...`, CANVAS_W / 2, CANVAS_H / 2 + 35);
+                }
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+
+                // Background
+                const bgGrad = ctx.createLinearGradient(0, 0, 0, MAZE_H);
+                bgGrad.addColorStop(0, '#0a0f18');
+                bgGrad.addColorStop(1, '#0d1520');
+                ctx.fillStyle = bgGrad;
+                ctx.fillRect(0, 0, CANVAS_W, MAZE_H);
+
+                drawMaze(ctx);
+                for (const ghost of ghosts) drawGhost(ctx, ghost);
+                drawPlayer(ctx);
+                drawParticles(ctx);
+                drawHUD(ctx);
+                drawOverlay(ctx);
+
+                // Scanlines effect
+                ctx.fillStyle = 'rgba(0,0,0,0.03)';
+                for (let y = 0; y < CANVAS_H; y += 3) {
+                    ctx.fillRect(0, y, CANVAS_W, 1);
+                }
+            }
+
+            // --- Game Loop ---
+            function gameLoop() {
+                // Handle keyboard input for direction
+                if (gameState === STATE.PLAYING || gameState === STATE.DYING) {
+                    if (keys['ArrowUp'] || keys['w'] || keys['W']) handleDirectionInput(0, -1);
+                    else if (keys['ArrowDown'] || keys['s'] || keys['S']) handleDirectionInput(0, 1);
+                    else if (keys['ArrowLeft'] || keys['a'] || keys['A']) handleDirectionInput(-1, 0);
+                    else if (keys['ArrowRight'] || keys['d'] || keys['D']) handleDirectionInput(1, 0);
+                }
+                if (gameState === STATE.GAMEOVER && keys[' ']) restartGame();
+
+                update();
+                render();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // --- Initialize ---
+            function init() {
+                resetMaze();
+                resetPlayer();
+                resetGhosts();
+                particles = [];
+                score = 0;
+                lives = 3;
+                level = 1;
+                powerMode = false;
+                powerTimer = 0;
+                ghostsEatenThisPower = 0;
+                ghostEatScore = 200;
+                gameState = STATE.MENU;
+                frameCount = 0;
+            }
+
+            init();
+            gameLoop();
+
+            console.log('🟢 Greening Beener - Maze Mayhem ready!');
+            console.log('   Use Arrow Keys, WASD, or swipe to move.');
+            console.log('   Eat all dots to complete the level!');
+            console.log('   Power pellets let you eat ghosts!');
+        })();
+    </script>
+</body>
+</html>
