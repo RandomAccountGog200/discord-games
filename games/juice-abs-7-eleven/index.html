@@ -1,0 +1,1294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Juice Abs @ 7-Eleven</title>
+    <style>
+        :root {
+            --bg: #1a1a2e;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            touch-action: manipulation;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            font-family: 'Segoe UI', 'Arial', sans-serif;
+        }
+        #game-container {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        canvas {
+            display: block;
+            border-radius: 12px;
+            box-shadow: 0 0 40px rgba(255, 120, 0, 0.3), 0 0 80px rgba(0, 180, 80, 0.2);
+            max-height: 98vh;
+            max-width: 98vw;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="game"></canvas>
+    </div>
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+
+            // --- Audio ---
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playTone(freq, duration, type = 'triangle', vol = 0.1, freq2 = null) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (freq2) osc.frequency.linearRampToValueAtTime(freq2, t + duration);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) { /* silent */ }
+            }
+
+            function sfxCatch() { playTone(520, 0.08, 'square', 0.08, 780);
+                playTone(660, 0.06, 'triangle', 0.06, 880); }
+
+            function sfxBad() { playTone(80, 0.2, 'sawtooth', 0.07, 50);
+                playTone(60, 0.25, 'square', 0.05, 40); }
+
+            function sfxAbsFull() {
+                playTone(523, 0.07, 'triangle', 0.1, 659);
+                setTimeout(() => playTone(659, 0.07, 'triangle', 0.1, 784), 70);
+                setTimeout(() => playTone(784, 0.07, 'triangle', 0.1, 1047), 140);
+                setTimeout(() => playTone(1047, 0.12, 'triangle', 0.12, 1318), 210);
+            }
+
+            function sfxGameOver() {
+                playTone(400, 0.15, 'sawtooth', 0.08, 250);
+                setTimeout(() => playTone(300, 0.2, 'sawtooth', 0.07, 150), 160);
+                setTimeout(() => playTone(180, 0.35, 'square', 0.06, 80), 340);
+            }
+
+            // --- Canvas Sizing ---
+            const GAME_W = 480;
+            const GAME_H = 800;
+
+            function resize() {
+                const maxW = Math.min(window.innerWidth * 0.95, 500);
+                const maxH = Math.min(window.innerHeight * 0.95, 900);
+                const scale = Math.min(maxW / GAME_W, maxH / GAME_H);
+                canvas.width = GAME_W;
+                canvas.height = GAME_H;
+                canvas.style.width = (GAME_W * scale) + 'px';
+                canvas.style.height = (GAME_H * scale) + 'px';
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            // --- Game State ---
+            const STATE = { MENU: 0, PLAYING: 1, GAMEOVER: 2 };
+            let gameState = STATE.MENU;
+            let score = 0;
+            let highScore = parseInt(localStorage.getItem('juiceAbsHighScore') || '0');
+            let lives = 3;
+            let absMeter = 0;
+            const ABS_MAX = 6;
+            let absBonusActive = false;
+            let absBonusTimer = 0;
+            let absBonusDuration = 5; // seconds
+            let playerX = GAME_W / 2;
+            let playerY = GAME_H * 0.78;
+            let playerWidth = 48;
+            let playerHeight = 68;
+            let playerSpeed = 320;
+            let items = [];
+            let particles = [];
+            let spawnTimer = 0;
+            let spawnInterval = 0.7;
+            let baseSpawnInterval = 0.7;
+            let difficultyLevel = 1;
+            let shakeAmount = 0;
+            let comboCount = 0;
+            let comboTimer = 0;
+            let comboDisplay = '';
+            let lastCatchTime = 0;
+            const COMBO_WINDOW = 0.8;
+            let bgBobbing = 0;
+            let menuPulse = 0;
+
+            // --- Input ---
+            let keys = {};
+            let mouseX = null;
+            let mouseActive = false;
+            let touchX = null;
+            let touchActive = false;
+
+            window.addEventListener('keydown', e => {
+                keys[e.key] = true;
+                if (gameState === STATE.MENU && (e.key === ' ' || e.key === 'Enter' || e.key === 'ArrowUp')) {
+                    startGame();
+                }
+                if (gameState === STATE.GAMEOVER && (e.key === ' ' || e.key === 'Enter')) {
+                    restartGame();
+                }
+                initAudio();
+            });
+            window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+            canvas.addEventListener('mousemove', e => {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = GAME_W / rect.width;
+                mouseX = (e.clientX - rect.left) * scaleX;
+                mouseActive = true;
+                touchX = null;
+                touchActive = false;
+                initAudio();
+            });
+            canvas.addEventListener('mouseleave', () => { mouseActive = false;
+                mouseX = null; });
+            canvas.addEventListener('mousedown', e => {
+                initAudio();
+                if (gameState === STATE.MENU) startGame();
+                if (gameState === STATE.GAMEOVER) restartGame();
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = GAME_W / rect.width;
+                mouseX = (e.clientX - rect.left) * scaleX;
+                mouseActive = true;
+            });
+            canvas.addEventListener('mouseup', () => { mouseActive = false;
+                mouseX = null; });
+
+            canvas.addEventListener('touchstart', e => {
+                e.preventDefault();
+                initAudio();
+                if (gameState === STATE.MENU) startGame();
+                if (gameState === STATE.GAMEOVER) restartGame();
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = GAME_W / rect.width;
+                touchX = (e.touches[0].clientX - rect.left) * scaleX;
+                touchActive = true;
+                mouseX = null;
+                mouseActive = false;
+            }, { passive: false });
+            canvas.addEventListener('touchmove', e => {
+                e.preventDefault();
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = GAME_W / rect.width;
+                touchX = (e.touches[0].clientX - rect.left) * scaleX;
+                touchActive = true;
+            }, { passive: false });
+            canvas.addEventListener('touchend', e => {
+                e.preventDefault();
+                touchActive = false;
+                touchX = null;
+            }, { passive: false });
+            canvas.addEventListener('touchcancel', () => { touchActive = false;
+                touchX = null; });
+
+            // --- Game Functions ---
+            function startGame() {
+                initAudio();
+                gameState = STATE.PLAYING;
+                score = 0;
+                lives = 3;
+                absMeter = 0;
+                absBonusActive = false;
+                absBonusTimer = 0;
+                items = [];
+                particles = [];
+                spawnTimer = 0;
+                spawnInterval = baseSpawnInterval;
+                difficultyLevel = 1;
+                comboCount = 0;
+                comboTimer = 0;
+                comboDisplay = '';
+                shakeAmount = 0;
+                playerX = GAME_W / 2;
+                lastCatchTime = 0;
+            }
+
+            function restartGame() {
+                startGame();
+            }
+
+            function gameOver() {
+                gameState = STATE.GAMEOVER;
+                sfxGameOver();
+                if (score > highScore) {
+                    highScore = score;
+                    try { localStorage.setItem('juiceAbsHighScore', highScore); } catch (e) {}
+                }
+                absBonusActive = false;
+                absBonusTimer = 0;
+            }
+
+            function spawnItem() {
+                const isGood = Math.random() < (0.62 - difficultyLevel * 0.03);
+                const type = isGood ?
+                    ['orangeJuice', 'appleJuice', 'energyDrink', 'slurpee', 'proteinShake', 'greenJuice'][Math.floor(
+                        Math.random() * 6)] :
+                    ['donut', 'chips', 'candyBar', 'soda'][Math.floor(Math.random() * 4)];
+
+                const w = 34 + Math.random() * 16;
+                const h = 38 + Math.random() * 20;
+                const x = 30 + Math.random() * (GAME_W - 60);
+                const fallSpeed = 180 + difficultyLevel * 35 + Math.random() * 80;
+
+                items.push({
+                    type,
+                    isGood,
+                    x,
+                    y: -60 - Math.random() * 120,
+                    w,
+                    h,
+                    speed: fallSpeed,
+                    rotation: (Math.random() - 0.5) * 0.6,
+                    rotSpeed: (Math.random() - 0.5) * 3,
+                    wobble: Math.random() * Math.PI * 2,
+                    wobbleSpeed: 1 + Math.random() * 3,
+                    wobbleAmp: 15 + Math.random() * 25,
+                });
+            }
+
+            function spawnParticles(x, y, color, count = 18) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 80 + Math.random() * 250;
+                    particles.push({
+                        x,
+                        y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - Math.random() * 100,
+                        life: 0.35 + Math.random() * 0.55,
+                        maxLife: 0.35 + Math.random() * 0.55,
+                        color,
+                        radius: 2 + Math.random() * 5,
+                    });
+                }
+            }
+
+            function handleCatch(item) {
+                if (item.isGood) {
+                    const now = performance.now() / 1000;
+                    if (now - lastCatchTime < COMBO_WINDOW) {
+                        comboCount++;
+                        comboTimer = 1.2;
+                    } else {
+                        comboCount = 1;
+                        comboTimer = 1.2;
+                    }
+                    lastCatchTime = now;
+
+                    const basePoints = item.type === 'slurpee' ? 25 : item.type === 'energyDrink' ? 20 : 15;
+                    const bonus = absBonusActive ? 2 : 1;
+                    const comboBonus = Math.min(comboCount - 1, 8) * 5;
+                    const earned = (basePoints + comboBonus) * bonus;
+
+                    score += earned;
+                    absMeter = Math.min(absMeter + 1, ABS_MAX);
+                    sfxCatch();
+
+                    if (comboCount >= 3) {
+                        comboDisplay = comboCount + 'x COMBO!';
+                    } else if (comboCount >= 2) {
+                        comboDisplay = 'Nice!';
+                    }
+
+                    const colors = {
+                        orangeJuice: '#FF8C00',
+                        appleJuice: '#C8B400',
+                        energyDrink: '#00E676',
+                        slurpee: '#40C4FF',
+                        proteinShake: '#F5F5DC',
+                        greenJuice: '#69F0AE',
+                    };
+                    spawnParticles(item.x, item.y, colors[item.type] || '#FFD740', 20);
+
+                    if (absMeter >= ABS_MAX) {
+                        absBonusActive = true;
+                        absBonusTimer = absBonusDuration;
+                        absMeter = 0;
+                        sfxAbsFull();
+                        spawnParticles(playerX, playerY - playerHeight / 2, '#FFD700', 40);
+                        comboDisplay = 'JUICE ABS!!!';
+                        comboTimer = 2;
+                    }
+                } else {
+                    lives--;
+                    sfxBad();
+                    shakeAmount = 12;
+                    spawnParticles(item.x, item.y, '#FF4444', 15);
+                    comboCount = 0;
+                    comboTimer = 0;
+                    comboDisplay = '';
+                    absMeter = Math.max(0, absMeter - 1);
+                    if (lives <= 0) {
+                        gameOver();
+                    }
+                }
+            }
+
+            function update(dt) {
+                if (gameState !== STATE.PLAYING) return;
+                const realDt = Math.min(dt, 0.1);
+
+                // Difficulty
+                difficultyLevel = 1 + Math.floor(score / 200);
+                spawnInterval = Math.max(0.25, baseSpawnInterval - difficultyLevel * 0.04);
+
+                // Spawn
+                spawnTimer += realDt;
+                if (spawnTimer >= spawnInterval) {
+                    spawnTimer -= spawnInterval;
+                    spawnItem();
+                    if (Math.random() < 0.3 + difficultyLevel * 0.04) spawnItem();
+                }
+
+                // Player movement
+                let moveDir = 0;
+                if (keys['ArrowLeft'] || keys['a'] || keys['A']) moveDir = -1;
+                if (keys['ArrowRight'] || keys['d'] || keys['D']) moveDir = 1;
+
+                if (touchActive && touchX !== null) {
+                    const diff = touchX - playerX;
+                    if (Math.abs(diff) > 6) {
+                        moveDir = Math.sign(diff);
+                        const speedMult = Math.min(Math.abs(diff) / 60, 2.5);
+                        playerX += moveDir * playerSpeed * speedMult * realDt;
+                    }
+                } else if (mouseActive && mouseX !== null) {
+                    const diff = mouseX - playerX;
+                    if (Math.abs(diff) > 6) {
+                        moveDir = Math.sign(diff);
+                        const speedMult = Math.min(Math.abs(diff) / 60, 2.5);
+                        playerX += moveDir * playerSpeed * speedMult * realDt;
+                    }
+                } else if (moveDir !== 0) {
+                    playerX += moveDir * playerSpeed * realDt;
+                }
+
+                playerX = Math.max(playerWidth / 2 + 5, Math.min(GAME_W - playerWidth / 2 - 5, playerX));
+
+                // Update items
+                for (let i = items.length - 1; i >= 0; i--) {
+                    const item = items[i];
+                    item.y += item.speed * realDt;
+                    item.rotation += item.rotSpeed * realDt;
+                    item.wobble += item.wobbleSpeed * realDt;
+                    item.x += Math.sin(item.wobble) * item.wobbleAmp * realDt;
+
+                    // Keep in bounds horizontally
+                    item.x = Math.max(item.w / 2, Math.min(GAME_W - item.w / 2, item.x));
+
+                    // Collision with player
+                    const px = playerX;
+                    const py = playerY - playerHeight / 2;
+                    const pw = playerWidth;
+                    const ph = playerHeight;
+                    const ix = item.x;
+                    const iy = item.y;
+                    const iw = item.w;
+                    const ih = item.h;
+
+                    if (
+                        ix + iw / 2 > px - pw / 2 &&
+                        ix - iw / 2 < px + pw / 2 &&
+                        iy + ih / 2 > py - ph / 2 &&
+                        iy - ih / 2 < py + ph / 2
+                    ) {
+                        handleCatch(item);
+                        items.splice(i, 1);
+                        continue;
+                    }
+
+                    // Off screen
+                    if (item.y > GAME_H + 80) {
+                        if (item.isGood) {
+                            comboCount = 0;
+                            comboTimer = 0;
+                            comboDisplay = '';
+                        }
+                        items.splice(i, 1);
+                    }
+                }
+
+                // Update particles
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx * realDt;
+                    p.y += p.vy * realDt;
+                    p.vy += 300 * realDt;
+                    p.life -= realDt;
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+
+                // Combo timer
+                if (comboTimer > 0) {
+                    comboTimer -= realDt;
+                    if (comboTimer <= 0) {
+                        comboCount = 0;
+                        comboDisplay = '';
+                    }
+                }
+
+                // Abs bonus
+                if (absBonusActive) {
+                    absBonusTimer -= realDt;
+                    if (absBonusTimer <= 0) {
+                        absBonusActive = false;
+                        absBonusTimer = 0;
+                    }
+                }
+
+                // Shake decay
+                if (shakeAmount > 0) shakeAmount = Math.max(0, shakeAmount - realDt * 50);
+
+                // BG bobbing
+                bgBobbing += realDt * 0.8;
+            }
+
+            // --- Drawing ---
+            function drawBackground() {
+                // Ceiling
+                const ceilingGrad = ctx.createLinearGradient(0, 0, 0, GAME_H * 0.35);
+                ceilingGrad.addColorStop(0, '#E8E0D8');
+                ceilingGrad.addColorStop(0.4, '#F5F0EB');
+                ceilingGrad.addColorStop(1, '#DDD5CC');
+                ctx.fillStyle = ceilingGrad;
+                ctx.fillRect(0, 0, GAME_W, GAME_H * 0.42);
+
+                // Ceiling lights
+                for (let lx = 60; lx < GAME_W; lx += 100) {
+                    const lightGlow = ctx.createRadialGradient(lx, 30, 5, lx, 55, 80);
+                    lightGlow.addColorStop(0, 'rgba(255,255,240,0.9)');
+                    lightGlow.addColorStop(0.4, 'rgba(255,255,220,0.5)');
+                    lightGlow.addColorStop(1, 'rgba(255,255,200,0)');
+                    ctx.fillStyle = lightGlow;
+                    ctx.fillRect(lx - 90, 0, 180, 140);
+                    // Fixture
+                    ctx.fillStyle = '#FEFEFE';
+                    ctx.fillRect(lx - 28, 14, 56, 10);
+                    ctx.fillStyle = '#EEE';
+                    ctx.fillRect(lx - 32, 22, 64, 6);
+                    ctx.fillStyle = '#FFFBEA';
+                    ctx.fillRect(lx - 20, 18, 40, 4);
+                }
+
+                // 7-Eleven stripes zone
+                const stripeTop = GAME_H * 0.3;
+                const stripeH = GAME_H * 0.38;
+                const stripeColors = ['#007A33', '#FF6600', '#FFFFFF', '#007A33', '#FF6600', '#E31837', '#FFFFFF',
+                    '#007A33'
+                ];
+                const numStripes = stripeColors.length;
+                const eachH = stripeH / numStripes;
+                for (let i = 0; i < numStripes; i++) {
+                    const y = stripeTop + i * eachH;
+                    ctx.fillStyle = stripeColors[i];
+                    ctx.fillRect(0, y, GAME_W, eachH + 1);
+                }
+
+                // Subtle stripe shine
+                for (let i = 0; i < numStripes; i++) {
+                    const y = stripeTop + i * eachH;
+                    const shineGrad = ctx.createLinearGradient(0, y, 0, y + eachH);
+                    shineGrad.addColorStop(0, 'rgba(255,255,255,0.2)');
+                    shineGrad.addColorStop(0.5, 'rgba(255,255,255,0)');
+                    shineGrad.addColorStop(1, 'rgba(0,0,0,0.15)');
+                    ctx.fillStyle = shineGrad;
+                    ctx.fillRect(0, y, GAME_W, eachH);
+                }
+
+                // Shelf line
+                const shelfY = stripeTop + stripeH;
+                ctx.fillStyle = '#4A4A4A';
+                ctx.fillRect(0, shelfY - 3, GAME_W, 8);
+                ctx.fillStyle = '#5C5C5C';
+                ctx.fillRect(0, shelfY - 1, GAME_W, 3);
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(0, shelfY + 5);
+                ctx.lineTo(GAME_W, shelfY + 5);
+                ctx.stroke();
+
+                // Slurpee machine on the right
+                const slurpX = GAME_W - 80;
+                const slurpY = stripeTop + 15;
+                const slurpW = 65;
+                const slurpH = stripeH - 30;
+                // Machine body
+                const mGrad = ctx.createLinearGradient(slurpX, 0, slurpX + slurpW, 0);
+                mGrad.addColorStop(0, '#E0E0E0');
+                mGrad.addColorStop(0.5, '#FAFAFA');
+                mGrad.addColorStop(1, '#C0C0C0');
+                ctx.fillStyle = mGrad;
+                ctx.fillRect(slurpX, slurpY, slurpW, slurpH);
+                ctx.strokeStyle = '#888';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(slurpX, slurpY, slurpW, slurpH);
+                // Tanks
+                const tankColors = ['#FF4444', '#4488FF', '#44CC44'];
+                for (let t = 0; t < 3; t++) {
+                    const tx = slurpX + 8 + t * 18;
+                    const ty = slurpY + 10;
+                    ctx.fillStyle = tankColors[t];
+                    ctx.fillRect(tx, ty, 14, slurpH - 25);
+                    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                    ctx.fillRect(tx, ty, 14, 8);
+                    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                    ctx.fillRect(tx, ty + slurpH - 33, 14, 5);
+                }
+                // Nozzles
+                for (let t = 0; t < 3; t++) {
+                    const nx = slurpX + 15 + t * 18;
+                    ctx.fillStyle = '#333';
+                    ctx.fillRect(nx - 3, slurpY + slurpH - 14, 6, 12);
+                }
+                // "SLURPEE" label
+                ctx.fillStyle = '#FF4444';
+                ctx.font = 'bold 9px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('SLURPEE', slurpX + slurpW / 2, slurpY + slurpH - 2);
+
+                // 7-Eleven sign on left
+                const signX = 30;
+                const signY = stripeTop + 20;
+                const signW = 55;
+                const signH = 50;
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(signX, signY, signW, signH);
+                ctx.strokeStyle = '#007A33';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(signX, signY, signW, signH);
+                ctx.fillStyle = '#007A33';
+                ctx.font = 'bold 20px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('7', signX + signW / 2, signY + 22);
+                ctx.fillStyle = '#FF6600';
+                ctx.fillText('ELEVEN', signX + signW / 2, signY + 42);
+                ctx.font = 'bold 8px Arial';
+                ctx.fillText('ELEVEN', signX + signW / 2, signY + 42);
+
+                // Floor
+                const floorY = shelfY + 8;
+                const floorGrad = ctx.createLinearGradient(0, floorY, 0, GAME_H);
+                floorGrad.addColorStop(0, '#B8A898');
+                floorGrad.addColorStop(0.3, '#C8B8A8');
+                floorGrad.addColorStop(1, '#A09080');
+                ctx.fillStyle = floorGrad;
+                ctx.fillRect(0, floorY, GAME_W, GAME_H - floorY);
+
+                // Floor tiles
+                ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+                ctx.lineWidth = 1;
+                for (let ty = floorY; ty < GAME_H; ty += 40) {
+                    ctx.beginPath();
+                    ctx.moveTo(0, ty);
+                    ctx.lineTo(GAME_W, ty);
+                    ctx.stroke();
+                }
+                for (let tx = 0; tx < GAME_W; tx += 60) {
+                    ctx.beginPath();
+                    ctx.moveTo(tx, floorY);
+                    ctx.lineTo(tx, GAME_H);
+                    ctx.stroke();
+                }
+
+                // Floor shine
+                const shineY = floorY + 20;
+                const shineGrad = ctx.createLinearGradient(0, shineY, 0, shineY + 60);
+                shineGrad.addColorStop(0, 'rgba(255,255,255,0.1)');
+                shineGrad.addColorStop(0.5, 'rgba(255,255,255,0.05)');
+                shineGrad.addColorStop(1, 'rgba(255,255,255,0)');
+                ctx.fillStyle = shineGrad;
+                ctx.fillRect(0, shineY, GAME_W, 60);
+            }
+
+            function drawPlayer() {
+                const px = playerX;
+                const py = playerY;
+                const pw = playerWidth;
+                const ph = playerHeight;
+
+                ctx.save();
+                ctx.translate(px, py);
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.beginPath();
+                ctx.ellipse(0, ph / 2 - 4, pw / 2 + 2, 8, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Legs
+                const legSpread = 10;
+                ctx.fillStyle = '#3A3A50';
+                ctx.fillRect(-pw / 4 - legSpread, ph / 2 - 22, pw / 4, 22);
+                ctx.fillRect(pw / 4 + legSpread - pw / 4, ph / 2 - 22, pw / 4, 22);
+                // Shoes
+                ctx.fillStyle = '#222';
+                ctx.fillRect(-pw / 4 - legSpread - 3, ph / 2 - 6, pw / 4 + 6, 8);
+                ctx.fillRect(pw / 4 + legSpread - pw / 4 - 3, ph / 2 - 6, pw / 4 + 6, 8);
+
+                // Torso
+                const torsoTop = -ph / 2 + 10;
+                const torsoH = ph * 0.48;
+                const torsoW = pw * 0.85;
+                const torsoGrad = ctx.createLinearGradient(0, torsoTop, 0, torsoTop + torsoH);
+                const skinBase = '#F4C59A';
+                torsoGrad.addColorStop(0, '#F8D5B0');
+                torsoGrad.addColorStop(1, '#E8B880');
+                ctx.fillStyle = torsoGrad;
+                ctx.beginPath();
+                ctx.roundRect(-torsoW / 2, torsoTop, torsoW, torsoH, 10);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.roundRect(-torsoW / 2, torsoTop, torsoW, torsoH, 10);
+                ctx.stroke();
+
+                // Abs (6-pack)
+                const absCols = 2;
+                const absRows = 3;
+                const absW = torsoW * 0.32;
+                const absH = torsoH / absRows - 5;
+                const absStartY = torsoTop + 8;
+                const absGapX = torsoW * 0.08;
+
+                for (let row = 0; row < absRows; row++) {
+                    for (let col = 0; col < absCols; col++) {
+                        const ax = -absW - absGapX / 2 + col * (absW + absGapX);
+                        const ay = absStartY + row * (absH + 3);
+                        const glowAmount = (absMeter / ABS_MAX) * (0.4 + 0.6 * (row / (absRows - 1)));
+                        const bonusGlow = absBonusActive ? 0.5 + 0.5 * Math.sin(performance.now() / 1000 * 8) : 0;
+
+                        let abColor;
+                        if (absBonusActive && bonusGlow > 0.3) {
+                            abColor = `rgba(255,200,40,${0.5 + bonusGlow * 0.5})`;
+                        } else if (glowAmount > 0.15) {
+                            const g = Math.min(1, glowAmount + 0.2);
+                            abColor = `rgba(255,${200 - g * 60},${60 + g * 40},${0.35 + g * 0.55})`;
+                        } else {
+                            abColor = 'rgba(230,180,140,0.55)';
+                        }
+
+                        ctx.fillStyle = abColor;
+                        ctx.beginPath();
+                        ctx.roundRect(ax, ay, absW, absH, absW * 0.35);
+                        ctx.fill();
+                        ctx.strokeStyle = 'rgba(180,140,110,0.5)';
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.roundRect(ax, ay, absW, absH, absW * 0.35);
+                        ctx.stroke();
+                    }
+                }
+
+                // Abs glow effect when bonus active
+                if (absBonusActive) {
+                    const glowIntensity = 0.3 + 0.3 * Math.sin(performance.now() / 1000 * 8);
+                    const glowGrad = ctx.createRadialGradient(0, torsoTop + torsoH / 2, 5, 0, torsoTop + torsoH / 2, torsoW);
+                    glowGrad.addColorStop(0, `rgba(255,220,60,${glowIntensity})`);
+                    glowGrad.addColorStop(1, 'rgba(255,180,20,0)');
+                    ctx.fillStyle = glowGrad;
+                    ctx.fillRect(-torsoW, torsoTop - 10, torsoW * 2, torsoH + 20);
+                }
+
+                // Tank top straps
+                ctx.fillStyle = '#E0E0E0';
+                ctx.fillRect(-torsoW / 2 - 3, torsoTop - 2, torsoW + 6, 7);
+                ctx.fillStyle = '#D5D5D5';
+                ctx.fillRect(-torsoW / 2 - 1, torsoTop + 1, torsoW + 2, 3);
+
+                // Arms
+                ctx.fillStyle = '#F4C59A';
+                ctx.beginPath();
+                ctx.roundRect(-torsoW / 2 - 14, torsoTop + 6, 14, torsoH - 12, 7);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.roundRect(torsoW / 2, torsoTop + 6, 14, torsoH - 12, 7);
+                ctx.fill();
+
+                // Hands
+                ctx.fillStyle = '#F0B890';
+                ctx.beginPath();
+                ctx.arc(-torsoW / 2 - 7, torsoTop + torsoH - 6, 7, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(torsoW / 2 + 7, torsoTop + torsoH - 6, 7, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Head
+                const headY = torsoTop - 22;
+                const headR = pw * 0.38;
+                ctx.fillStyle = '#F4C59A';
+                ctx.beginPath();
+                ctx.arc(0, headY, headR, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(0, headY, headR, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Hair
+                ctx.fillStyle = '#2C1810';
+                ctx.beginPath();
+                ctx.arc(0, headY - headR * 0.3, headR * 1.05, Math.PI, Math.PI * 2);
+                ctx.fill();
+                ctx.fillRect(-headR * 1.05, headY - headR * 0.5, headR * 2.1, headR * 0.5);
+
+                // Eyes
+                ctx.fillStyle = '#FFF';
+                ctx.beginPath();
+                ctx.arc(-headR * 0.35, headY - headR * 0.1, headR * 0.3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(headR * 0.35, headY - headR * 0.1, headR * 0.3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#111';
+                ctx.beginPath();
+                ctx.arc(-headR * 0.32, headY - headR * 0.08, headR * 0.15, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(headR * 0.38, headY - headR * 0.08, headR * 0.15, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Smile
+                ctx.strokeStyle = '#8B5A3C';
+                ctx.lineWidth = 1.8;
+                ctx.beginPath();
+                ctx.arc(0, headY + headR * 0.05, headR * 0.4, 0.1 * Math.PI, 0.9 * Math.PI);
+                ctx.stroke();
+
+                // Headband
+                ctx.fillStyle = '#FF6600';
+                ctx.fillRect(-headR * 1.05, headY - headR * 0.55, headR * 2.1, headR * 0.25);
+                ctx.fillStyle = '#E31837';
+                ctx.fillRect(-headR * 1.05, headY - headR * 0.55, headR * 2.1, headR * 0.1);
+
+                ctx.restore();
+            }
+
+            function drawItem(item) {
+                ctx.save();
+                ctx.translate(item.x, item.y);
+                ctx.rotate(item.rotation);
+
+                const w = item.w;
+                const h = item.h;
+
+                switch (item.type) {
+                    case 'orangeJuice':
+                        ctx.fillStyle = '#FF8C00';
+                        ctx.fillRect(-w / 2, -h / 2, w, h);
+                        ctx.fillStyle = '#FFF';
+                        ctx.fillRect(-w / 2 + 4, -h / 2 + 4, w - 8, h * 0.3);
+                        ctx.fillStyle = '#E07800';
+                        ctx.fillRect(-w / 2, -h / 2, w, 6);
+                        ctx.fillStyle = '#111';
+                        ctx.font = 'bold 9px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('OJ', 0, h / 2 - 2);
+                        ctx.strokeStyle = '#B06000';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(-w / 2, -h / 2, w, h);
+                        break;
+                    case 'appleJuice':
+                        ctx.fillStyle = '#8BAA36';
+                        ctx.fillRect(-w / 2, -h / 2, w, h);
+                        ctx.fillStyle = '#C8D88E';
+                        ctx.fillRect(-w / 2 + 4, -h / 2 + 4, w - 8, h * 0.35);
+                        ctx.fillStyle = '#6B8A20';
+                        ctx.fillRect(-w / 2, -h / 2, w, 5);
+                        ctx.fillStyle = '#FFF';
+                        ctx.font = 'bold 8px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('AJ', 0, h / 2 - 2);
+                        ctx.strokeStyle = '#5A7020';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(-w / 2, -h / 2, w, h);
+                        break;
+                    case 'energyDrink':
+                        const eGrad = ctx.createLinearGradient(-w / 2, 0, w / 2, 0);
+                        eGrad.addColorStop(0, '#2E2E2E');
+                        eGrad.addColorStop(0.3, '#555');
+                        eGrad.addColorStop(0.5, '#888');
+                        eGrad.addColorStop(0.7, '#555');
+                        eGrad.addColorStop(1, '#2E2E2E');
+                        ctx.fillStyle = eGrad;
+                        ctx.beginPath();
+                        ctx.roundRect(-w / 2, -h / 2, w, h, 8);
+                        ctx.fill();
+                        ctx.fillStyle = '#00E676';
+                        ctx.fillRect(-w / 2 + 3, -h / 2 + h * 0.2, w - 6, h * 0.45);
+                        ctx.fillStyle = '#FFF';
+                        ctx.font = 'bold 7px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('NRG', 0, h * 0.1);
+                        ctx.strokeStyle = '#111';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.roundRect(-w / 2, -h / 2, w, h, 8);
+                        ctx.stroke();
+                        break;
+                    case 'slurpee':
+                        ctx.fillStyle = '#40C4FF';
+                        ctx.beginPath();
+                        ctx.roundRect(-w / 2, -h / 2 + 8, w, h - 8, 6);
+                        ctx.fill();
+                        ctx.fillStyle = '#80D8FF';
+                        ctx.beginPath();
+                        ctx.arc(0, -h / 2 + 10, w / 2 + 2, Math.PI, 0);
+                        ctx.fill();
+                        ctx.fillStyle = '#E040FB';
+                        ctx.beginPath();
+                        ctx.arc(0, -h / 2 + 10, w / 2 - 2, Math.PI, 0);
+                        ctx.fill();
+                        ctx.fillStyle = '#FFD54F';
+                        ctx.fillRect(-3, -h / 2 - 2, 6, 18);
+                        ctx.strokeStyle = '#0288D1';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.roundRect(-w / 2, -h / 2 + 8, w, h - 8, 6);
+                        ctx.stroke();
+                        break;
+                    case 'proteinShake':
+                        ctx.fillStyle = '#F5F5DC';
+                        ctx.fillRect(-w / 2, -h / 2, w, h);
+                        ctx.fillStyle = '#E8E8D0';
+                        ctx.fillRect(-w / 2 + 3, -h / 2 + h * 0.3, w - 6, h * 0.4);
+                        ctx.fillStyle = '#D4A574';
+                        ctx.fillRect(-w / 2, -h / 2, w, 7);
+                        ctx.fillStyle = '#555';
+                        ctx.font = 'bold 7px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('PRO', 0, h / 2 - 2);
+                        ctx.strokeStyle = '#B0A080';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(-w / 2, -h / 2, w, h);
+                        break;
+                    case 'greenJuice':
+                        ctx.fillStyle = '#69F0AE';
+                        ctx.fillRect(-w / 2, -h / 2, w, h);
+                        ctx.fillStyle = '#B9F6CA';
+                        ctx.fillRect(-w / 2 + 3, -h / 2 + 3, w - 6, h * 0.35);
+                        ctx.fillStyle = '#4CAF50';
+                        ctx.fillRect(-w / 2, -h / 2, w, 5);
+                        ctx.fillStyle = '#FFF';
+                        ctx.font = 'bold 8px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('GJ', 0, h / 2 - 2);
+                        ctx.strokeStyle = '#388E3C';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(-w / 2, -h / 2, w, h);
+                        break;
+                    case 'donut':
+                        ctx.fillStyle = '#C68E5B';
+                        ctx.beginPath();
+                        ctx.arc(0, 0, w / 2, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = '#FF8CA3';
+                        ctx.beginPath();
+                        ctx.arc(0, 0, w / 2 - 3, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = '#C68E5B';
+                        ctx.beginPath();
+                        ctx.arc(0, 0, w / 4, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = '#FFF';
+                        ctx.beginPath();
+                        ctx.arc(-w / 6, -w / 6, w / 8, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.strokeStyle = '#8B4513';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.arc(0, 0, w / 2, 0, Math.PI * 2);
+                        ctx.stroke();
+                        break;
+                    case 'chips':
+                        ctx.fillStyle = '#FFD740';
+                        ctx.beginPath();
+                        ctx.roundRect(-w / 2, -h / 2, w, h, 6);
+                        ctx.fill();
+                        ctx.fillStyle = '#FFC107';
+                        ctx.beginPath();
+                        ctx.roundRect(-w / 2 + 4, -h / 2 + 4, w - 8, h * 0.5, 4);
+                        ctx.fill();
+                        ctx.fillStyle = '#E53935';
+                        ctx.font = 'bold 9px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('CHIPS', 0, h / 4);
+                        ctx.strokeStyle = '#BF360C';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.roundRect(-w / 2, -h / 2, w, h, 6);
+                        ctx.stroke();
+                        break;
+                    case 'candyBar':
+                        ctx.fillStyle = '#6D4C41';
+                        ctx.fillRect(-w / 2, -h / 2, w, h);
+                        ctx.fillStyle = '#8D6E63';
+                        ctx.fillRect(-w / 2 + 3, -h / 2 + 3, w - 6, h * 0.35);
+                        ctx.fillStyle = '#FFAB40';
+                        ctx.fillRect(-w / 2, -h / 2, w, 5);
+                        ctx.fillStyle = '#FFF';
+                        ctx.font = 'bold 6px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('CANDY', 0, h / 4);
+                        ctx.strokeStyle = '#3E2723';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(-w / 2, -h / 2, w, h);
+                        break;
+                    case 'soda':
+                        const sGrad = ctx.createLinearGradient(-w / 2, 0, w / 2, 0);
+                        sGrad.addColorStop(0, '#C62828');
+                        sGrad.addColorStop(0.5, '#EF5350');
+                        sGrad.addColorStop(1, '#C62828');
+                        ctx.fillStyle = sGrad;
+                        ctx.beginPath();
+                        ctx.roundRect(-w / 2, -h / 2, w, h, 6);
+                        ctx.fill();
+                        ctx.fillStyle = '#FFF';
+                        ctx.fillRect(-w / 2 + 3, -h / 2 + h * 0.25, w - 6, h * 0.35);
+                        ctx.fillStyle = '#B71C1C';
+                        ctx.fillRect(-w / 2, -h / 2, w, 4);
+                        ctx.fillStyle = '#FFF';
+                        ctx.font = 'bold 8px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('SODA', 0, h * 0.05);
+                        ctx.strokeStyle = '#7F0000';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.roundRect(-w / 2, -h / 2, w, h, 6);
+                        ctx.stroke();
+                        break;
+                }
+                ctx.restore();
+            }
+
+            function drawParticles() {
+                for (const p of particles) {
+                    const alpha = p.life / p.maxLife;
+                    ctx.fillStyle = p.color.replace(')', `,${alpha})`).replace('rgb',
+                        'rgba');
+                    if (p.color.startsWith('#')) {
+                        const hex = p.color;
+                        const r = parseInt(hex.slice(1, 3), 16);
+                        const g = parseInt(hex.slice(3, 5), 16);
+                        const b = parseInt(hex.slice(5, 7), 16);
+                        ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+                    }
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.radius * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Glow
+                    ctx.fillStyle =
+                        `rgba(255,255,255,${alpha * 0.3})`;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.radius * alpha * 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function drawUI() {
+                // Score
+                ctx.fillStyle = '#FFF';
+                ctx.font = 'bold 18px Arial';
+                ctx.textAlign = 'left';
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.shadowBlur = 6;
+                ctx.fillText('Score: ' + Math.floor(score), 14, 32);
+                ctx.shadowBlur = 0;
+
+                // High score
+                ctx.fillStyle = '#FFD740';
+                ctx.font = 'bold 11px Arial';
+                ctx.textAlign = 'right';
+                ctx.fillText('Best: ' + highScore, GAME_W - 14, 28);
+
+                // Lives
+                for (let i = 0; i < lives; i++) {
+                    ctx.fillStyle = '#FF4444';
+                    ctx.font = '20px Arial';
+                    ctx.textAlign = 'left';
+                    ctx.fillText('❤', 14 + i * 26, 58);
+                }
+
+                // Abs meter
+                const meterX = 14;
+                const meterY = 68;
+                const meterW = 180;
+                const meterH = 16;
+                const segW = meterW / ABS_MAX - 4;
+
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.beginPath();
+                ctx.roundRect(meterX - 2, meterY - 2, meterW + 4, meterH + 4, 8);
+                ctx.fill();
+
+                for (let i = 0; i < ABS_MAX; i++) {
+                    const sx = meterX + i * (segW + 4);
+                    if (i < absMeter) {
+                        const glowPulse = absBonusActive ? 0.6 + 0.4 * Math.sin(performance.now() / 1000 * 6 + i) : 0.8;
+                        const gGrad = ctx.createLinearGradient(sx, meterY, sx, meterY + meterH);
+                        gGrad.addColorStop(0, `rgba(255,200,40,${glowPulse})`);
+                        gGrad.addColorStop(1, `rgba(255,140,0,${glowPulse})`);
+                        ctx.fillStyle = gGrad;
+                    } else {
+                        ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                    }
+                    ctx.beginPath();
+                    ctx.roundRect(sx, meterY, segW, meterH, 6);
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.roundRect(sx, meterY, segW, meterH, 6);
+                    ctx.stroke();
+                }
+                ctx.fillStyle = '#FFF';
+                ctx.font = 'bold 9px Arial';
+                ctx.textAlign = 'left';
+                ctx.fillText('JUICE ABS', meterX, meterY - 5);
+
+                // Abs bonus indicator
+                if (absBonusActive) {
+                    const bonusAlpha = 0.7 + 0.3 * Math.sin(performance.now() / 1000 * 6);
+                    ctx.fillStyle = `rgba(255,200,30,${bonusAlpha})`;
+                    ctx.font = 'bold 14px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('⚡ JUICE ABS ACTIVE! ⚡', GAME_W / 2, meterY + meterH + 18);
+                    const timeLeft = Math.ceil(absBonusTimer);
+                    ctx.fillText('(' + timeLeft + 's)', GAME_W / 2, meterY + meterH + 36);
+                }
+
+                // Combo display
+                if (comboDisplay && comboTimer > 0) {
+                    const comboAlpha = Math.min(1, comboTimer / 0.3);
+                    ctx.fillStyle = `rgba(255,255,100,${comboAlpha})`;
+                    ctx.font = 'bold 22px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(comboDisplay, GAME_W / 2, GAME_H * 0.65);
+                }
+
+                // Difficulty indicator
+                ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                ctx.font = '10px Arial';
+                ctx.textAlign = 'right';
+                ctx.fillText('Lvl ' + difficultyLevel, GAME_W - 14, 50);
+            }
+
+            function drawMenuOverlay() {
+                // Dim background
+                ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                ctx.fillRect(0, 0, GAME_W, GAME_H);
+
+                // Title card
+                const cardW = 380;
+                const cardH = 280;
+                const cardX = (GAME_W - cardW) / 2;
+                const cardY = GAME_H * 0.22;
+                const cardGrad = ctx.createLinearGradient(cardX, cardY, cardX, cardY + cardH);
+                cardGrad.addColorStop(0, 'rgba(0,122,51,0.95)');
+                cardGrad.addColorStop(0.5, 'rgba(0,100,40,0.95)');
+                cardGrad.addColorStop(1, 'rgba(0,70,30,0.95)');
+                ctx.fillStyle = cardGrad;
+                ctx.beginPath();
+                ctx.roundRect(cardX, cardY, cardW, cardH, 20);
+                ctx.fill();
+                ctx.strokeStyle = '#FF6600';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.roundRect(cardX, cardY, cardW, cardH, 20);
+                ctx.stroke();
+                ctx.strokeStyle = '#FFF';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.roundRect(cardX + 5, cardY + 5, cardW - 10, cardH - 10, 16);
+                ctx.stroke();
+
+                // Title
+                const titleY = cardY + 55;
+                ctx.fillStyle = '#FFF';
+                ctx.font = 'bold 36px Arial';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = 'rgba(255,100,0,0.7)';
+                ctx.shadowBlur = 15;
+                ctx.fillText('JUICE ABS', GAME_W / 2, titleY);
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#FF6600';
+                ctx.font = 'bold 28px Arial';
+                ctx.fillText('@ 7-ELEVEN', GAME_W / 2, titleY + 40);
+
+                // Subtitle
+                ctx.fillStyle = '#FFD740';
+                ctx.font = 'bold 15px Arial';
+                ctx.fillText('Catch juice • Build abs • Get swole', GAME_W / 2, titleY + 75);
+
+                // Instructions
+                const instY = cardY + 165;
+                ctx.fillStyle = '#FFF';
+                ctx.font = '15px Arial';
+                ctx.fillText('🕹 Arrow Keys or Touch/Mouse to move', GAME_W / 2, instY);
+                ctx.fillText('🧃 Catch JUICE & SLURPEES', GAME_W / 2, instY + 28);
+                ctx.fillText('🚫 Dodge junk food!', GAME_W / 2, instY + 52);
+
+                // Start prompt
+                const promptY = cardY + cardH + 50;
+                const pulse = 0.7 + 0.3 * Math.sin(menuPulse);
+                ctx.fillStyle = `rgba(255,255,255,${pulse})`;
+                ctx.font = 'bold 20px Arial';
+                ctx.fillText('TAP or PRESS SPACE to START', GAME_W / 2, promptY);
+
+                // High score
+                if (highScore > 0) {
+                    ctx.fillStyle = '#FFD740';
+                    ctx.font = 'bold 16px Arial';
+                    ctx.fillText('🏆 Best Score: ' + highScore, GAME_W / 2, promptY + 35);
+                }
+            }
+
+            function drawGameOverOverlay() {
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(0, 0, GAME_W, GAME_H);
+
+                const goCardW = 340;
+                const goCardH = 240;
+                const goCardX = (GAME_W - goCardW) / 2;
+                const goCardY = GAME_H * 0.28;
+                const goGrad = ctx.createLinearGradient(goCardX, goCardY, goCardX, goCardY + goCardH);
+                goGrad.addColorStop(0, 'rgba(180,20,20,0.95)');
+                goGrad.addColorStop(1, 'rgba(100,10,10,0.95)');
+                ctx.fillStyle = goGrad;
+                ctx.beginPath();
+                ctx.roundRect(goCardX, goCardY, goCardW, goCardH, 20);
+                ctx.fill();
+                ctx.strokeStyle = '#FF6600';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.roundRect(goCardX, goCardY, goCardW, goCardH, 20);
+                ctx.stroke();
+
+                ctx.fillStyle = '#FFF';
+                ctx.font = 'bold 32px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER', GAME_W / 2, goCardY + 55);
+                ctx.fillStyle = '#FFD740';
+                ctx.font = 'bold 20px Arial';
+                ctx.fillText('Score: ' + Math.floor(score), GAME_W / 2, goCardY + 90);
+                if (score >= highScore && score > 0) {
+                    ctx.fillStyle = '#FFD740';
+                    ctx.font = 'bold 18px Arial';
+                    ctx.fillText('🏆 NEW BEST! 🏆', GAME_W / 2, goCardY + 118);
+                }
+                ctx.fillStyle = '#FFF';
+                ctx.font = '15px Arial';
+                ctx.fillText('Best: ' + highScore, GAME_W / 2, goCardY + 145);
+
+                const pulse2 = 0.7 + 0.3 * Math.sin(menuPulse);
+                ctx.fillStyle = `rgba(255,255,255,${pulse2})`;
+                ctx.font = 'bold 18px Arial';
+                ctx.fillText('TAP or SPACE to retry', GAME_W / 2, goCardY + 190);
+            }
+
+            function drawGame(dt) {
+                ctx.clearRect(0, 0, GAME_W, GAME_H);
+
+                // Screen shake
+                let shakeX = 0;
+                let shakeY = 0;
+                if (shakeAmount > 0.5) {
+                    shakeX = (Math.random() - 0.5) * shakeAmount;
+                    shakeY = (Math.random() - 0.5) * shakeAmount;
+                }
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                drawBackground();
+
+                // Draw items
+                for (const item of items) {
+                    drawItem(item);
+                }
+
+                // Draw player
+                drawPlayer();
+
+                // Draw particles
+                drawParticles();
+
+                ctx.restore();
+
+                // UI (no shake)
+                drawUI();
+
+                // Overlays
+                if (gameState === STATE.MENU) drawMenuOverlay();
+                if (gameState === STATE.GAMEOVER) drawGameOverOverlay();
+            }
+
+            // --- Game Loop ---
+            let lastTime = performance.now();
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.15) dt = 0.15;
+                lastTime = timestamp;
+
+                menuPulse += dt * 2.5;
+
+                if (gameState === STATE.PLAYING) {
+                    update(dt);
+                }
+
+                drawGame(dt);
+
+                requestAnimationFrame(gameLoop);
+            }
+
+            // --- Initialize ---
+            resize();
+            requestAnimationFrame(gameLoop);
+
+            console.log('🥤 Juice Abs @ 7-Eleven ready!');
+            console.log('   Catch juice & Slurpees to build your JUICE ABS!');
+            console.log('   Dodge the junk food. Fill all 6 abs for BONUS mode!');
+            console.log('   Arrow keys or touch/mouse to move.');
+        })();
+    </script>
+</body>
+</html>
