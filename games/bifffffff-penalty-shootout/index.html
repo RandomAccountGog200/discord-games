@@ -429,14 +429,25 @@
                 // Accuracy penalty for high power
                 const geo = getGoalGeometry();
                 const accuracyOffset = power > 75 ? (power - 75) / 25 * geo.goalWidth * 0.06 * (Math.random() - 0.5) * 2 : 0;
-                const accuracyOffsetY = power > 75 ? (power - 75) / 25 * geo.goalHeight * 0.05 * (Math.random() - 0.5) * 2 :
-                0;
+                const accuracyOffsetY = power > 75 ? (power - 75) / 25 * geo.goalHeight * 0.05 * (Math.random() - 0.5) * 2 : 0;
                 ballTargetX += accuracyOffset;
                 ballTargetY += accuracyOffsetY;
                 ballTargetX = Math.max(geo.goalLeft + 2, Math.min(geo.goalRight - 2, ballTargetX));
                 ballTargetY = Math.max(geo.goalTop + 2, Math.min(geo.goalBottom - 2, ballTargetY));
                 ballSpeed = 0.4 + (power / 100) * 1.1;
+
                 playKick();
+
+                // --- NEW: full‑screen BIFFFFFFF! effect right when you shoot ---
+                playBIFFFFFFF();
+                biffEffect = {
+                    age: 0,
+                    duration: 1.2,
+                    x: W() / 2,
+                    y: H() / 2,
+                    fullScreen: true,        // flag to render as a screen‑covering overlay
+                    type: 'kick'
+                };
             }
 
             // --- Update ---
@@ -519,15 +530,19 @@
                             resultText = 'GOAL!';
                             resultColor = '#FFD700';
                             spawnGoalParticles(ballEndX, ballEndY);
+                            // Keep the classic celebration BIFF effect only if a goal is scored,
+                            // but we already shouted at kick – this one is extra hype.
                             biffEffect = {
                                 age: 0,
                                 duration: 1.4,
                                 x: W() / 2,
                                 y: H() / 2,
+                                fullScreen: false,
+                                type: 'goal'
                             };
                             shakeAmount = 14;
                             shakeDuration = 0.5;
-                            playBIFFFFFFF();
+                            playBIFFFFFFF();  // second BIFFFFFFF for a goal!
                         } else if (distToKeeper <= keeperReachRadius) {
                             saves++;
                             resultText = 'SAVED!';
@@ -1052,53 +1067,102 @@
                 if (!biffEffect) return;
                 const age = biffEffect.age;
                 const duration = biffEffect.duration;
-                const x = biffEffect.x;
-                const y = biffEffect.y;
                 const progress = age / duration;
-
-                // Scale: quick burst then settle
-                let scale;
-                if (progress < 0.15) {
-                    scale = easeOutCubic(progress / 0.15) * 2.5;
-                } else if (progress < 0.5) {
-                    scale = 2.5 - (progress - 0.15) / 0.35 * 1.5;
-                } else {
-                    scale = 1.0 - (progress - 0.5) / 0.5 * 0.6;
-                }
-                scale = Math.max(0.3, scale);
-
-                const alpha = progress < 0.7 ? 1 : 1 - (progress - 0.7) / 0.3;
+                const isFullScreen = biffEffect.fullScreen;
 
                 ctx.save();
-                ctx.globalAlpha = alpha;
-                ctx.translate(x, y);
-                ctx.scale(scale, scale);
 
-                // Shadow layers
-                ctx.fillStyle = '#000000';
-                ctx.font = `bold ${Math.max(28, W() * 0.09)}px "Arial Black", Impact, sans-serif`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                for (let i = 3; i >= 0; i--) {
-                    ctx.fillText('BIFFFFFFF!', i * 2, i * 2);
+                if (isFullScreen) {
+                    // Draw dark overlay covering whole screen
+                    const alphaOverlay = Math.min(1, progress < 0.2 ? progress / 0.2 : 1 - (progress - 0.2) / 0.8);
+                    ctx.globalAlpha = alphaOverlay * 0.85;
+                    ctx.fillStyle = '#000000';
+                    ctx.fillRect(0, 0, W(), H());
+
+                    // Huge text scaling
+                    let scale;
+                    if (progress < 0.1) {
+                        scale = easeOutCubic(progress / 0.1) * 2.8;
+                    } else if (progress < 0.6) {
+                        scale = 2.8 - (progress - 0.1) / 0.5 * 1.8;
+                    } else {
+                        scale = 1.0 - (progress - 0.6) / 0.4 * 0.6;
+                    }
+                    scale = Math.max(0.3, scale);
+
+                    ctx.translate(W() / 2, H() / 2);
+                    ctx.scale(scale, scale);
+
+                    // Draw text with strong glow
+                    ctx.font = `bold ${Math.max(40, W() * 0.14)}px "Arial Black", Impact, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+
+                    // Text shadow layers
+                    ctx.fillStyle = '#000000';
+                    for (let i = 4; i >= 0; i--) {
+                        ctx.fillText('BIFFFFFFF!', i * 2, i * 2);
+                    }
+
+                    const textGrad = ctx.createLinearGradient(0, -60, 0, 60);
+                    textGrad.addColorStop(0, '#ffffff');
+                    textGrad.addColorStop(0.4, '#ffff88');
+                    textGrad.addColorStop(0.6, '#ffdd44');
+                    textGrad.addColorStop(1, '#ffaa00');
+                    ctx.fillStyle = textGrad;
+                    ctx.fillText('BIFFFFFFF!', 0, 0);
+
+                    ctx.shadowColor = 'rgba(255,200,0,0.9)';
+                    ctx.shadowBlur = 50 * scale;
+                    ctx.fillStyle = 'rgba(255,255,200,0.6)';
+                    ctx.fillText('BIFFFFFFF!', 0, 0);
+                    ctx.shadowColor = 'transparent';
+                    ctx.shadowBlur = 0;
+
+                } else {
+                    // Original floating effect (goal celebration)
+                    const x = biffEffect.x;
+                    const y = biffEffect.y;
+
+                    let scale;
+                    if (progress < 0.15) {
+                        scale = easeOutCubic(progress / 0.15) * 2.5;
+                    } else if (progress < 0.5) {
+                        scale = 2.5 - (progress - 0.15) / 0.35 * 1.5;
+                    } else {
+                        scale = 1.0 - (progress - 0.5) / 0.5 * 0.6;
+                    }
+                    scale = Math.max(0.3, scale);
+
+                    const alpha = progress < 0.7 ? 1 : 1 - (progress - 0.7) / 0.3;
+
+                    ctx.globalAlpha = alpha;
+                    ctx.translate(x, y);
+                    ctx.scale(scale, scale);
+
+                    ctx.font = `bold ${Math.max(28, W() * 0.09)}px "Arial Black", Impact, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    for (let i = 3; i >= 0; i--) {
+                        ctx.fillStyle = '#000000';
+                        ctx.fillText('BIFFFFFFF!', i * 2, i * 2);
+                    }
+
+                    const textGrad = ctx.createLinearGradient(0, -40, 0, 40);
+                    textGrad.addColorStop(0, '#ffffff');
+                    textGrad.addColorStop(0.4, '#ffff88');
+                    textGrad.addColorStop(0.6, '#ffdd44');
+                    textGrad.addColorStop(1, '#ffaa00');
+                    ctx.fillStyle = textGrad;
+                    ctx.fillText('BIFFFFFFF!', 0, 0);
+
+                    ctx.shadowColor = 'rgba(255,200,0,0.9)';
+                    ctx.shadowBlur = 30 * scale;
+                    ctx.fillStyle = 'rgba(255,255,200,0.5)';
+                    ctx.fillText('BIFFFFFFF!', 0, 0);
+                    ctx.shadowColor = 'transparent';
+                    ctx.shadowBlur = 0;
                 }
-
-                // Main text with gradient
-                const textGrad = ctx.createLinearGradient(0, -40, 0, 40);
-                textGrad.addColorStop(0, '#ffffff');
-                textGrad.addColorStop(0.4, '#ffff88');
-                textGrad.addColorStop(0.6, '#ffdd44');
-                textGrad.addColorStop(1, '#ffaa00');
-                ctx.fillStyle = textGrad;
-                ctx.fillText('BIFFFFFFF!', 0, 0);
-
-                // Glow
-                ctx.shadowColor = 'rgba(255,200,0,0.9)';
-                ctx.shadowBlur = 30 * scale;
-                ctx.fillStyle = 'rgba(255,255,200,0.5)';
-                ctx.fillText('BIFFFFFFF!', 0, 0);
-                ctx.shadowColor = 'transparent';
-                ctx.shadowBlur = 0;
 
                 ctx.restore();
             }
@@ -1250,7 +1314,10 @@
                 drawPowerMeter();
                 drawScoreboard();
                 drawParticles();
+
+                // Draw the BIFF effect (full‑screen on kick, floating on goal)
                 drawBIFFFFFFF();
+
                 drawResultText();
 
                 ctx.restore();
