@@ -1,0 +1,1596 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>🔷 Stealth Heist: Nightfall</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0a14;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Courier New', monospace;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #gameContainer {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            max-width: 800px;
+            max-height: 600px;
+            box-shadow: 0 0 60px rgba(100, 140, 255, 0.3), 0 0 120px rgba(0, 100, 255, 0.15);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            image-rendering: auto;
+        }
+        @media (max-width: 850px) {
+            #gameContainer {
+                max-width: 100vw;
+                max-height: 100vh;
+                border-radius: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+            const container = document.getElementById('gameContainer');
+
+            const INTERNAL_W = 800;
+            const INTERNAL_H = 600;
+            canvas.width = INTERNAL_W;
+            canvas.height = INTERNAL_H;
+
+            // --- Game State ---
+            const STATE = { TITLE: 'title', PLAYING: 'playing', LEVEL_COMPLETE: 'levelComplete', GAME_OVER: 'gameOver' };
+            let gameState = STATE.TITLE;
+            let currentLevel = 1;
+            let score = 0;
+            let bestScore = 0;
+            let levelScore = 0;
+            let timeRemaining = 90;
+            let timerInterval = null;
+            let detectionMeter = 0;
+            let detectionVisible = false;
+            let gameOverReason = '';
+            let levelTransitionTimer = 0;
+            let shakeAmount = 0;
+            let screenFlash = 0;
+
+            // --- Audio System ---
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playBeep(freq, duration, type = 'square', vol = 0.08, rampDown = true) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    gain.gain.setValueAtTime(vol, t);
+                    if (rampDown) {
+                        gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    } else {
+                        gain.gain.setValueAtTime(vol, t);
+                        gain.gain.setValueAtTime(0, t + duration);
+                    }
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration + 0.05);
+                } catch (e) { /* ignore */ }
+            }
+
+            function playCollectSound() {
+                playBeep(880, 0.08, 'sine', 0.1);
+                setTimeout(() => playBeep(1200, 0.1, 'sine', 0.08), 60);
+            }
+
+            function playAlarmSound() {
+                playBeep(200, 0.3, 'sawtooth', 0.06, false);
+                setTimeout(() => playBeep(250, 0.25, 'sawtooth', 0.05, false), 150);
+            }
+
+            function playGameOverSound() {
+                playBeep(80, 0.5, 'sawtooth', 0.12, false);
+                setTimeout(() => playBeep(55, 0.6, 'sawtooth', 0.1, false), 300);
+            }
+
+            function playLevelCompleteSound() {
+                playBeep(523, 0.12, 'sine', 0.08);
+                setTimeout(() => playBeep(659, 0.12, 'sine', 0.08), 100);
+                setTimeout(() => playBeep(784, 0.18, 'sine', 0.1), 200);
+                setTimeout(() => playBeep(1047, 0.25, 'sine', 0.12), 320);
+            }
+
+            function playLaserNearSound() {
+                playBeep(3000, 0.04, 'sine', 0.03);
+            }
+
+            // --- Input Handling ---
+            const keys = {};
+            let mousePos = { x: 0, y: 0 };
+            let mouseDown = false;
+            let touchActive = false;
+            let touchJoystickBase = null;
+            let touchJoystickThumb = null;
+            let touchStartTime = 0;
+
+            window.addEventListener('keydown', e => {
+                keys[e.key.toLowerCase()] = true;
+                if (e.key === ' ' || e.key === 'Enter') {
+                    e.preventDefault();
+                    handleActionPress();
+                }
+                if (e.key === 'r' || e.key === 'R') {
+                    if (gameState === STATE.GAME_OVER) restartGame();
+                }
+            });
+
+            window.addEventListener('keyup', e => {
+                keys[e.key.toLowerCase()] = false;
+            });
+
+            function getCanvasPos(clientX, clientY) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = INTERNAL_W / rect.width;
+                const scaleY = INTERNAL_H / rect.height;
+                return {
+                    x: (clientX - rect.left) * scaleX,
+                    y: (clientY - rect.top) * scaleY
+                };
+            }
+
+            canvas.addEventListener('mousedown', e => {
+                initAudio();
+                mouseDown = true;
+                const pos = getCanvasPos(e.clientX, e.clientY);
+                mousePos = pos;
+                handleActionPress();
+            });
+
+            canvas.addEventListener('mousemove', e => {
+                const pos = getCanvasPos(e.clientX, e.clientY);
+                mousePos = pos;
+            });
+
+            canvas.addEventListener('mouseup', () => { mouseDown = false; });
+
+            canvas.addEventListener('touchstart', e => {
+                e.preventDefault();
+                initAudio();
+                touchActive = true;
+                touchStartTime = Date.now();
+                const pos = getCanvasPos(e.touches[0].clientX, e.touches[0].clientY);
+                mousePos = pos;
+                if (pos.x < INTERNAL_W * 0.5) {
+                    touchJoystickBase = { x: pos.x, y: pos.y };
+                    touchJoystickThumb = { x: pos.x, y: pos.y };
+                }
+                if (gameState === STATE.TITLE) {
+                    handleActionPress();
+                }
+                if (gameState === STATE.GAME_OVER) {
+                    if (Date.now() - touchStartTime < 300) restartGame();
+                }
+                if (gameState === STATE.LEVEL_COMPLETE) {
+                    handleActionPress();
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('touchmove', e => {
+                e.preventDefault();
+                if (e.touches.length > 0) {
+                    const pos = getCanvasPos(e.touches[0].clientX, e.touches[0].clientY);
+                    mousePos = pos;
+                    if (touchJoystickBase) {
+                        touchJoystickThumb = { x: pos.x, y: pos.y };
+                    }
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('touchend', e => {
+                e.preventDefault();
+                touchActive = false;
+                touchJoystickBase = null;
+                touchJoystickThumb = null;
+                mouseDown = false;
+            }, { passive: false });
+
+            function handleActionPress() {
+                if (gameState === STATE.TITLE) {
+                    startGame();
+                } else if (gameState === STATE.LEVEL_COMPLETE) {
+                    if (levelTransitionTimer <= 0) {
+                        advanceLevel();
+                    }
+                } else if (gameState === STATE.GAME_OVER) {
+                    restartGame();
+                }
+            }
+
+            function getInputDirection() {
+                let dx = 0,
+                    dy = 0;
+                if (keys['arrowleft'] || keys['a']) dx -= 1;
+                if (keys['arrowright'] || keys['d']) dx += 1;
+                if (keys['arrowup'] || keys['w']) dy -= 1;
+                if (keys['arrowdown'] || keys['s']) dy += 1;
+
+                if (touchJoystickBase && touchJoystickThumb) {
+                    const jdx = touchJoystickThumb.x - touchJoystickBase.x;
+                    const jdy = touchJoystickThumb.y - touchJoystickBase.y;
+                    const dist = Math.sqrt(jdx * jdx + jdy * jdy);
+                    const maxDist = 50;
+                    if (dist > 8) {
+                        const scale = Math.min(dist, maxDist) / dist;
+                        dx += (jdx * scale) / maxDist;
+                        dy += (jdy * scale) / maxDist;
+                    }
+                }
+
+                const mag = Math.sqrt(dx * dx + dy * dy);
+                if (mag > 1) {
+                    dx /= mag;
+                    dy /= mag;
+                }
+                return { dx, dy };
+            }
+
+            // --- Particle System ---
+            let particles = [];
+
+            function spawnParticles(x, y, count, color, speed = 2, life = 30) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const spd = Math.random() * speed + speed * 0.3;
+                    particles.push({
+                        x,
+                        y,
+                        vx: Math.cos(angle) * spd,
+                        vy: Math.sin(angle) * spd,
+                        life,
+                        maxLife: life,
+                        color,
+                        size: Math.random() * 3 + 1.5
+                    });
+                }
+            }
+
+            function updateParticles() {
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.life--;
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+            }
+
+            function drawParticles(ctx) {
+                for (const p of particles) {
+                    const alpha = p.life / p.maxLife;
+                    ctx.fillStyle = p.color.replace('1)', `${alpha})`).replace('rgb',
+                        'rgba').replace(/rgba\((\d+),(\d+),(\d+)\)/, 'rgba($1,$2,$3');
+                    if (p.color.startsWith('#')) {
+                        ctx.globalAlpha = alpha;
+                        ctx.fillStyle = p.color;
+                    } else {
+                        ctx.fillStyle = p.color;
+                        ctx.globalAlpha = alpha;
+                    }
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+            }
+
+            // --- Map / Level Data ---
+            let walls = [];
+            let lasers = [];
+            let guards = [];
+            let lootItems = [];
+            let player = null;
+            let exitPos = { x: 0, y: 0, w: 40, h: 40 };
+            let keyItems = [];
+            let lockedDoors = [];
+
+            function buildLevel(levelNum) {
+                walls = [];
+                lasers = [];
+                guards = [];
+                lootItems = [];
+                keyItems = [];
+                lockedDoors = [];
+                particles = [];
+                detectionMeter = 0;
+                detectionVisible = false;
+                timeRemaining = Math.max(60, 100 - levelNum * 10);
+                levelScore = 0;
+                levelTransitionTimer = 30;
+                shakeAmount = 0;
+                screenFlash = 0;
+                gameOverReason = '';
+
+                const bw = 16;
+
+                // Outer walls
+                walls.push({ x: 0, y: 0, w: INTERNAL_W, h: bw }); // top
+                walls.push({ x: 0, y: INTERNAL_H - bw, w: INTERNAL_W, h: bw }); // bottom
+                walls.push({ x: 0, y: 0, w: bw, h: INTERNAL_H }); // left
+                walls.push({ x: INTERNAL_W - bw, y: 0, w: bw, h: INTERNAL_H }); // right
+
+                if (levelNum === 1) {
+                    // Interior walls - Level 1
+                    walls.push({ x: 220, y: bw, w: bw, h: 200 });
+                    walls.push({ x: 220, y: 300, w: bw, h: 200 });
+                    walls.push({ x: 440, y: 80, w: bw, h: 280 });
+                    walls.push({ x: 440, y: 420, w: bw, h: 164 });
+                    walls.push({ x: 600, y: bw, w: bw, h: 180 });
+                    walls.push({ x: 600, y: 280, w: bw, h: 180 });
+                    walls.push({ x: 220, y: 120, w: 220, h: bw });
+                    walls.push({ x: 440, y: 300, w: 160, h: bw });
+                    walls.push({ x: bw, y: 380, w: 204, h: bw });
+                    walls.push({ x: 440, y: 440, w: 160, h: bw });
+
+                    // Locked door
+                    lockedDoors.push({ x: 436, y: 355, w: bw + 8, h: 50, unlocked: false });
+
+                    // Key
+                    keyItems.push({ x: 120, y: 500, collected: false });
+
+                    // Lasers
+                    lasers.push({ x1: 236, y1: 200, x2: 236, y2: 300 });
+                    lasers.push({ x1: 600, y1: 180, x2: 600, y2: 280 });
+                    lasers.push({ x1: 440, y1: 80, x2: 600, y2: 80 });
+
+                    // Guards
+                    guards.push(createGuard(350, 180, [
+                        { x: 300, y: 180 }, { x: 420, y: 180 }
+                    ], 0));
+                    guards.push(createGuard(500, 350, [
+                        { x: 460, y: 320 }, { x: 580, y: 320 }, { x: 580, y: 400 }, { x: 460, y: 400 }
+                    ], 1));
+                    guards.push(createGuard(100, 250, [
+                        { x: 80, y: 200 }, { x: 200, y: 200 }, { x: 200, y: 350 }, { x: 80, y: 350 }
+                    ], 2));
+
+                    // Loot
+                    lootItems.push({ x: 330, y: 90, type: 'diamond', value: 500, collected: false });
+                    lootItems.push({ x: 520, y: 200, type: 'gold', value: 300, collected: false });
+                    lootItems.push({ x: 100, y: 140, type: 'cash', value: 100, collected: false });
+                    lootItems.push({ x: 300, y: 500, type: 'cash', value: 100, collected: false });
+                    lootItems.push({ x: 650, y: 350, type: 'gold', value: 300, collected: false });
+                    lootItems.push({ x: 700, y: 500, type: 'diamond', value: 500, collected: false });
+                    lootItems.push({ x: 160, y: 440, type: 'cash', value: 100, collected: false });
+
+                    // Player start
+                    player = createPlayer(60, 60);
+                    // Exit
+                    exitPos = { x: 720, y: 520, w: 40, h: 40 };
+                } else if (levelNum === 2) {
+                    // Level 2 - more complex
+                    walls.push({ x: 180, y: bw, w: bw, h: 160 });
+                    walls.push({ x: 180, y: 240, w: bw, h: 200 });
+                    walls.push({ x: 350, y: 60, w: bw, h: 300 });
+                    walls.push({ x: 350, y: 420, w: bw, h: 164 });
+                    walls.push({ x: 520, y: bw, w: bw, h: 220 });
+                    walls.push({ x: 520, y: 320, w: bw, h: 150 });
+                    walls.push({ x: 680, y: 150, w: bw, h: 300 });
+                    walls.push({ x: bw, y: 200, w: 164, h: bw });
+                    walls.push({ x: 180, y: 160, w: 170, h: bw });
+                    walls.push({ x: 350, y: 350, w: 170, h: bw });
+                    walls.push({ x: 520, y: 260, w: 160, h: bw });
+                    walls.push({ x: 350, y: 480, w: 330, h: bw });
+
+                    lockedDoors.push({ x: 346, y: 355, w: bw + 8, h: 50, unlocked: false });
+                    keyItems.push({ x: 700, y: 500, collected: false });
+
+                    lasers.push({ x1: 196, y1: 160, x2: 196, y2: 240 });
+                    lasers.push({ x1: 520, y1: 220, x2: 520, y2: 320 });
+                    lasers.push({ x1: 350, y1: 60, x2: 520, y2: 60 });
+                    lasers.push({ x1: 680, y1: 300, x2: 680, y2: 450 });
+
+                    guards.push(createGuard(280, 120, [
+                        { x: 200, y: 100 }, { x: 340, y: 100 }, { x: 340, y: 190 }, { x: 200, y: 190 }
+                    ], 0));
+                    guards.push(createGuard(450, 400, [
+                        { x: 370, y: 380 }, { x: 510, y: 380 }, { x: 510, y: 460 }, { x: 370, y: 460 }
+                    ], 1));
+                    guards.push(createGuard(600, 200, [
+                        { x: 540, y: 180 }, { x: 670, y: 180 }, { x: 670, y: 300 }, { x: 540, y: 300 }
+                    ], 2));
+                    guards.push(createGuard(100, 450, [
+                        { x: 60, y: 400 }, { x: 170, y: 400 }, { x: 170, y: 530 }, { x: 60, y: 530 }
+                    ], 3));
+
+                    lootItems.push({ x: 250, y: 80, type: 'diamond', value: 500, collected: false });
+                    lootItems.push({ x: 420, y: 140, type: 'gold', value: 300, collected: false });
+                    lootItems.push({ x: 600, y: 80, type: 'cash', value: 100, collected: false });
+                    lootItems.push({ x: 100, y: 320, type: 'gold', value: 300, collected: false });
+                    lootItems.push({ x: 250, y: 500, type: 'diamond', value: 500, collected: false });
+                    lootItems.push({ x: 600, y: 400, type: 'cash', value: 100, collected: false });
+                    lootItems.push({ x: 720, y: 350, type: 'gold', value: 300, collected: false });
+                    lootItems.push({ x: 450, y: 520, type: 'cash', value: 100, collected: false });
+
+                    player = createPlayer(50, 50);
+                    exitPos = { x: 720, y: 60, w: 40, h: 40 };
+                } else {
+                    // Level 3+ - hardest
+                    walls.push({ x: 160, y: bw, w: bw, h: 180 });
+                    walls.push({ x: 160, y: 260, w: bw, h: 220 });
+                    walls.push({ x: 320, y: 40, w: bw, h: 260 });
+                    walls.push({ x: 320, y: 360, w: bw, h: 150 });
+                    walls.push({ x: 480, y: bw, w: bw, h: 200 });
+                    walls.push({ x: 480, y: 300, w: bw, h: 200 });
+                    walls.push({ x: 640, y: 100, w: bw, h: 320 });
+                    walls.push({ x: bw, y: 180, w: 144, h: bw });
+                    walls.push({ x: 160, y: 140, w: 160, h: bw });
+                    walls.push({ x: 320, y: 280, w: 160, h: bw });
+                    walls.push({ x: 480, y: 240, w: 160, h: bw });
+                    walls.push({ x: 320, y: 440, w: 320, h: bw });
+                    walls.push({ x: 160, y: 500, w: 160, h: bw });
+
+                    lockedDoors.push({ x: 316, y: 295, w: bw + 8, h: 50, unlocked: false });
+                    lockedDoors.push({ x: 476, y: 195, w: bw + 8, h: 50, unlocked: false });
+                    keyItems.push({ x: 80, y: 500, collected: false });
+                    keyItems.push({ x: 700, y: 520, collected: false });
+
+                    lasers.push({ x1: 176, y1: 140, x2: 176, y2: 260 });
+                    lasers.push({ x1: 480, y1: 200, x2: 480, y2: 300 });
+                    lasers.push({ x1: 640, y1: 100, x2: 640, y2: 200 });
+                    lasers.push({ x1: 320, y1: 40, x2: 480, y2: 40 });
+                    lasers.push({ x1: 480, y1: 400, x2: 640, y2: 400 });
+
+                    guards.push(createGuard(250, 100, [
+                        { x: 180, y: 70 }, { x: 310, y: 70 }, { x: 310, y: 160 }, { x: 180, y: 160 }
+                    ], 0));
+                    guards.push(createGuard(420, 320, [
+                        { x: 340, y: 290 }, { x: 470, y: 290 }, { x: 470, y: 380 }, { x: 340, y: 380 }
+                    ], 1));
+                    guards.push(createGuard(560, 150, [
+                        { x: 500, y: 120 }, { x: 630, y: 120 }, { x: 630, y: 220 }, { x: 500, y: 220 }
+                    ], 2));
+                    guards.push(createGuard(200, 420, [
+                        { x: 100, y: 380 }, { x: 310, y: 380 }, { x: 310, y: 530 }, { x: 100, y: 530 }
+                    ], 3));
+                    guards.push(createGuard(600, 480, [
+                        { x: 500, y: 450 }, { x: 700, y: 450 }, { x: 700, y: 560 }, { x: 500, y: 560 }
+                    ], 4));
+
+                    lootItems.push({ x: 230, y: 55, type: 'diamond', value: 500, collected: false });
+                    lootItems.push({ x: 400, y: 120, type: 'gold', value: 300, collected: false });
+                    lootItems.push({ x: 560, y: 60, type: 'diamond', value: 500, collected: false });
+                    lootItems.push({ x: 80, y: 300, type: 'gold', value: 300, collected: false });
+                    lootItems.push({ x: 400, y: 500, type: 'diamond', value: 500, collected: false });
+                    lootItems.push({ x: 600, y: 350, type: 'cash', value: 100, collected: false });
+                    lootItems.push({ x: 700, y: 200, type: 'gold', value: 300, collected: false });
+                    lootItems.push({ x: 80, y: 100, type: 'cash', value: 100, collected: false });
+                    lootItems.push({ x: 550, y: 520, type: 'cash', value: 100, collected: false });
+
+                    player = createPlayer(40, 40);
+                    exitPos = { x: 720, y: 530, w: 40, h: 40 };
+                }
+            }
+
+            function createPlayer(x, y) {
+                return {
+                    x,
+                    y,
+                    w: 22,
+                    h: 22,
+                    speed: 2.8,
+                    keys: 0,
+                    trail: []
+                };
+            }
+
+            function createGuard(x, y, waypoints, id) {
+                return {
+                    x,
+                    y,
+                    w: 22,
+                    h: 22,
+                    speed: 1.2 + id * 0.2,
+                    waypoints,
+                    waypointIndex: 0,
+                    facingAngle: 0,
+                    detectionMeter: 0,
+                    alertLevel: 0,
+                    chasing: false,
+                    lastKnownPlayerPos: null,
+                    chaseTimer: 0,
+                    pauseTimer: 0,
+                    id
+                };
+            }
+
+            // --- Collision Detection ---
+            function rectsOverlap(a, b) {
+                return !(a.x + a.w <= b.x || a.x >= b.x + b.w || a.y + a.h <= b.y || a.y >= b.y + b.h);
+            }
+
+            function pointInRect(px, py, rect) {
+                return px >= rect.x && px <= rect.x + rect.w && py >= rect.y && py <= rect.y + rect.h;
+            }
+
+            function lineIntersectsRect(x1, y1, x2, y2, rect) {
+                // Check if line segment from (x1,y1) to (x2,y2) intersects rectangle
+                const steps = 20;
+                for (let i = 0; i <= steps; i++) {
+                    const t = i / steps;
+                    const sx = x1 + (x2 - x1) * t;
+                    const sy = y1 + (y2 - y1) * t;
+                    if (pointInRect(sx, sy, rect)) return true;
+                }
+                return false;
+            }
+
+            function playerCollidesWithWalls(px, py, pw, ph) {
+                const prect = { x: px, y: py, w: pw, h: ph };
+                for (const wall of walls) {
+                    if (rectsOverlap(prect, wall)) return true;
+                }
+                for (const door of lockedDoors) {
+                    if (!door.unlocked && rectsOverlap(prect, door)) return true;
+                }
+                return false;
+            }
+
+            function resolveWallCollision(entity, ew, eh) {
+                // Push entity out of walls
+                for (const wall of walls) {
+                    const ex = entity.x;
+                    const ey = entity.y;
+                    if (rectsOverlap({ x: ex, y: ey, w: ew, h: eh }, wall)) {
+                        // Calculate overlap on each axis
+                        const overlapLeft = (ex + ew) - wall.x;
+                        const overlapRight = (wall.x + wall.w) - ex;
+                        const overlapTop = (ey + eh) - wall.y;
+                        const overlapBottom = (wall.y + wall.h) - ey;
+
+                        const minOverlapX = Math.min(overlapLeft, overlapRight);
+                        const minOverlapY = Math.min(overlapTop, overlapBottom);
+
+                        if (minOverlapX < minOverlapY) {
+                            if (overlapLeft < overlapRight) {
+                                entity.x = wall.x - ew;
+                            } else {
+                                entity.x = wall.x + wall.w;
+                            }
+                        } else {
+                            if (overlapTop < overlapBottom) {
+                                entity.y = wall.y - eh;
+                            } else {
+                                entity.y = wall.y + wall.h;
+                            }
+                        }
+                    }
+                }
+                // Also resolve locked doors
+                for (const door of lockedDoors) {
+                    if (door.unlocked) continue;
+                    const ex = entity.x;
+                    const ey = entity.y;
+                    if (rectsOverlap({ x: ex, y: ey, w: ew, h: eh }, door)) {
+                        const overlapLeft = (ex + ew) - door.x;
+                        const overlapRight = (door.x + door.w) - ex;
+                        const overlapTop = (ey + eh) - door.y;
+                        const overlapBottom = (door.y + door.h) - ey;
+                        const minOverlapX = Math.min(overlapLeft, overlapRight);
+                        const minOverlapY = Math.min(overlapTop, overlapBottom);
+                        if (minOverlapX < minOverlapY) {
+                            if (overlapLeft < overlapRight) {
+                                entity.x = door.x - ew;
+                            } else {
+                                entity.x = door.x + door.w;
+                            }
+                        } else {
+                            if (overlapTop < overlapBottom) {
+                                entity.y = door.y - eh;
+                            } else {
+                                entity.y = door.y + door.h;
+                            }
+                        }
+                    }
+                }
+            }
+
+            function distanceToLaserSegment(px, py, x1, y1, x2, y2) {
+                const dx = x2 - x1;
+                const dy = y2 - y1;
+                const lenSq = dx * dx + dy * dy;
+                if (lenSq === 0) return Math.hypot(px - x1, py - y1);
+                let t = ((px - x1) * dx + (py - y1) * dy) / lenSq;
+                t = Math.max(0, Math.min(1, t));
+                const closestX = x1 + t * dx;
+                const closestY = y1 + t * dy;
+                return Math.hypot(px - closestX, py - closestY);
+            }
+
+            // --- Update Functions ---
+            function updatePlayer() {
+                if (!player) return;
+                const { dx, dy } = getInputDirection();
+                const speed = player.speed;
+                const nx = player.x + dx * speed;
+                const ny = player.y + dy * speed;
+
+                // Try move X then Y separately for smooth wall sliding
+                const testX = { x: nx, y: player.y, w: player.w, h: player.h };
+                let canMoveX = true;
+                for (const wall of walls) {
+                    if (rectsOverlap({ x: nx, y: player.y, w: player.w, h: player.h }, wall)) canMoveX = false;
+                }
+                for (const door of lockedDoors) {
+                    if (!door.unlocked && rectsOverlap({ x: nx, y: player.y, w: player.w, h: player.h }, door))
+                        canMoveX = false;
+                }
+                if (canMoveX) player.x = nx;
+
+                const testY = { x: player.x, y: ny, w: player.w, h: player.h };
+                let canMoveY = true;
+                for (const wall of walls) {
+                    if (rectsOverlap({ x: player.x, y: ny, w: player.w, h: player.h }, wall)) canMoveY = false;
+                }
+                for (const door of lockedDoors) {
+                    if (!door.unlocked && rectsOverlap({ x: player.x, y: ny, w: player.w, h: player.h }, door))
+                        canMoveY = false;
+                }
+                if (canMoveY) player.y = ny;
+
+                // Clamp to canvas
+                player.x = Math.max(2, Math.min(INTERNAL_W - player.w - 2, player.x));
+                player.y = Math.max(2, Math.min(INTERNAL_H - player.h - 2, player.y));
+
+                // Trail
+                if (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
+                    player.trail.push({ x: player.x + player.w / 2, y: player.y + player.h / 2, life: 18 });
+                    if (player.trail.length > 25) player.trail.shift();
+                }
+                for (const t of player.trail) t.life--;
+
+                // Check laser collision
+                for (const laser of lasers) {
+                    const dist = distanceToLaserSegment(
+                        player.x + player.w / 2, player.y + player.h / 2,
+                        laser.x1, laser.y1, laser.x2, laser.y2
+                    );
+                    if (dist < 7) {
+                        triggerGameOver('Tripped laser alarm!');
+                        return;
+                    }
+                    if (dist < 30 && Math.random() < 0.05) {
+                        playLaserNearSound();
+                    }
+                }
+
+                // Check loot collection
+                for (const loot of lootItems) {
+                    if (loot.collected) continue;
+                    const lx = loot.x;
+                    const ly = loot.y;
+                    const dist = Math.hypot(player.x + player.w / 2 - lx, player.y + player.h / 2 - ly);
+                    if (dist < 24) {
+                        loot.collected = true;
+                        levelScore += loot.value;
+                        score += loot.value;
+                        playCollectSound();
+                        spawnParticles(lx, ly, 15, loot.type === 'diamond' ? '#b8f0ff' : loot.type === 'gold' ?
+                            '#ffd700' : '#90ff90', 3, 28);
+                    }
+                }
+
+                // Check key collection
+                for (const key of keyItems) {
+                    if (key.collected) continue;
+                    const dist = Math.hypot(player.x + player.w / 2 - key.x, player.y + player.h / 2 - key.y);
+                    if (dist < 22) {
+                        key.collected = true;
+                        player.keys++;
+                        playCollectSound();
+                        spawnParticles(key.x, key.y, 10, '#ffff80', 2.5, 24);
+                    }
+                }
+
+                // Check locked door unlocking
+                for (const door of lockedDoors) {
+                    if (door.unlocked) continue;
+                    const dcx = door.x + door.w / 2;
+                    const dcy = door.y + door.h / 2;
+                    const dist = Math.hypot(player.x + player.w / 2 - dcx, player.y + player.h / 2 - dcy);
+                    if (dist < 35 && player.keys > 0) {
+                        door.unlocked = true;
+                        player.keys--;
+                        spawnParticles(dcx, dcy, 20, '#ffff80', 3, 30);
+                        playBeep(600, 0.15, 'triangle', 0.07);
+                    }
+                }
+
+                // Check exit
+                const exitRect = { x: exitPos.x, y: exitPos.y, w: exitPos.w, h: exitPos.h };
+                const playerRect = { x: player.x, y: player.y, w: player.w, h: player.h };
+                if (rectsOverlap(playerRect, exitRect)) {
+                    completeLevel();
+                }
+            }
+
+            function updateGuards() {
+                for (const guard of guards) {
+                    // Update facing angle based on movement direction or patrol
+                    if (guard.waypoints.length > 0) {
+                        const wp = guard.waypoints[guard.waypointIndex];
+                        const dx = wp.x - guard.x;
+                        const dy = wp.y - guard.y;
+                        guard.facingAngle = Math.atan2(dy, dx);
+                    }
+
+                    // Check if guard can see player
+                    const gcx = guard.x + guard.w / 2;
+                    const gcy = guard.y + guard.h / 2;
+                    const pcx = player.x + player.w / 2;
+                    const pcy = player.y + player.h / 2;
+                    const distToPlayer = Math.hypot(gcx - pcx, gcy - pcy);
+                    const visionRange = 200;
+                    const visionHalfAngle = Math.PI / 5.5; // ~33 degrees
+
+                    let canSeePlayer = false;
+                    if (distToPlayer < visionRange) {
+                        const angleToPlayer = Math.atan2(pcy - gcy, pcx - gcx);
+                        let angleDiff = angleToPlayer - guard.facingAngle;
+                        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                        if (Math.abs(angleDiff) < visionHalfAngle) {
+                            // Check line of sight
+                            let blocked = false;
+                            for (const wall of walls) {
+                                if (lineIntersectsRect(gcx, gcy, pcx, pcy, wall)) {
+                                    blocked = true;
+                                    break;
+                                }
+                            }
+                            if (!blocked) {
+                                canSeePlayer = true;
+                            }
+                        }
+                    }
+
+                    if (canSeePlayer) {
+                        guard.detectionMeter += 1.8;
+                        if (guard.detectionMeter > 100) guard.detectionMeter = 100;
+                        guard.lastKnownPlayerPos = { x: pcx, y: pcy };
+                        guard.chaseTimer = 60;
+                        if (guard.detectionMeter > 70) {
+                            guard.chasing = true;
+                        }
+                    } else {
+                        guard.detectionMeter -= 0.8;
+                        if (guard.detectionMeter < 0) guard.detectionMeter = 0;
+                        guard.chaseTimer--;
+                        if (guard.chaseTimer <= 0 && guard.detectionMeter < 25) {
+                            guard.chasing = false;
+                            guard.lastKnownPlayerPos = null;
+                        }
+                    }
+
+                    // Update global detection meter (max across all guards)
+                    const maxGuardDetection = Math.max(...guards.map(g => g.detectionMeter));
+                    detectionMeter = maxGuardDetection;
+                    detectionVisible = maxGuardDetection > 5;
+
+                    if (maxGuardDetection >= 100) {
+                        triggerGameOver('Spotted by a guard!');
+                        return;
+                    }
+
+                    // Move guard
+                    if (guard.chasing && guard.lastKnownPlayerPos && guard.detectionMeter > 40) {
+                        // Chase player
+                        const lkp = guard.lastKnownPlayerPos;
+                        const cdx = lkp.x - gcx;
+                        const cdy = lkp.y - gcy;
+                        const cdist = Math.hypot(cdx, cdy);
+                        if (cdist > 5) {
+                            const speed = guard.speed * 1.6;
+                            const nx = guard.x + (cdx / cdist) * speed;
+                            const ny = guard.y + (cdy / cdist) * speed;
+                            guard.x = nx;
+                            guard.y = ny;
+                            resolveWallCollision(guard, guard.w, guard.h);
+                            guard.facingAngle = Math.atan2(cdy, cdx);
+                        }
+                    } else {
+                        // Patrol
+                        if (guard.pauseTimer > 0) {
+                            guard.pauseTimer--;
+                        } else if (guard.waypoints.length > 0) {
+                            const wp = guard.waypoints[guard.waypointIndex];
+                            const wdx = wp.x - gcx;
+                            const wdy = wp.y - gcy;
+                            const wdist = Math.hypot(wdx, wdy);
+                            if (wdist < 4) {
+                                guard.waypointIndex = (guard.waypointIndex + 1) % guard.waypoints.length;
+                                guard.pauseTimer = 30 + Math.floor(Math.random() * 40);
+                            } else {
+                                const speed = guard.speed;
+                                guard.x += (wdx / wdist) * speed;
+                                guard.y += (wdy / wdist) * speed;
+                                resolveWallCollision(guard, guard.w, guard.h);
+                            }
+                        }
+                    }
+
+                    // Clamp guard position
+                    guard.x = Math.max(2, Math.min(INTERNAL_W - guard.w - 2, guard.x));
+                    guard.y = Math.max(2, Math.min(INTERNAL_H - guard.h - 2, guard.y));
+                }
+            }
+
+            function triggerGameOver(reason) {
+                gameState = STATE.GAME_OVER;
+                gameOverReason = reason;
+                shakeAmount = 20;
+                screenFlash = 1;
+                playGameOverSound();
+                spawnParticles(player.x + player.w / 2, player.y + player.h / 2, 40, '#ff4444', 5, 40);
+                if (bestScore < score) bestScore = score;
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+
+            function completeLevel() {
+                gameState = STATE.LEVEL_COMPLETE;
+                levelTransitionTimer = 50;
+                score += Math.floor(timeRemaining * 5);
+                levelScore += Math.floor(timeRemaining * 5);
+                if (bestScore < score) bestScore = score;
+                playLevelCompleteSound();
+                spawnParticles(player.x + player.w / 2, player.y + player.h / 2, 50, '#ffd700', 6, 50);
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+
+            function advanceLevel() {
+                currentLevel++;
+                if (currentLevel > 3) currentLevel = 3; // Loop level 3 with increased difficulty
+                buildLevel(currentLevel);
+                gameState = STATE.PLAYING;
+                startTimer();
+                detectionMeter = 0;
+                detectionVisible = false;
+            }
+
+            function startGame() {
+                initAudio();
+                currentLevel = 1;
+                score = 0;
+                bestScore = Math.max(bestScore, 0);
+                buildLevel(1);
+                gameState = STATE.PLAYING;
+                detectionMeter = 0;
+                detectionVisible = false;
+                startTimer();
+            }
+
+            function restartGame() {
+                initAudio();
+                currentLevel = 1;
+                score = 0;
+                buildLevel(1);
+                gameState = STATE.PLAYING;
+                detectionMeter = 0;
+                detectionVisible = false;
+                startTimer();
+            }
+
+            function startTimer() {
+                if (timerInterval) clearInterval(timerInterval);
+                timerInterval = setInterval(() => {
+                    if (gameState === STATE.PLAYING) {
+                        timeRemaining--;
+                        if (timeRemaining <= 0) {
+                            timeRemaining = 0;
+                            triggerGameOver('Time ran out! Police arrived!');
+                        }
+                    }
+                }, 1000);
+            }
+
+            // --- Rendering ---
+            function drawFloor() {
+                // Dark floor with subtle grid
+                ctx.fillStyle = '#1a1d2e';
+                ctx.fillRect(0, 0, INTERNAL_W, INTERNAL_H);
+
+                ctx.strokeStyle = '#222640';
+                ctx.lineWidth = 0.5;
+                const gridSize = 40;
+                for (let x = gridSize; x < INTERNAL_W; x += gridSize) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, 0);
+                    ctx.lineTo(x, INTERNAL_H);
+                    ctx.stroke();
+                }
+                for (let y = gridSize; y < INTERNAL_H; y += gridSize) {
+                    ctx.beginPath();
+                    ctx.moveTo(0, y);
+                    ctx.lineTo(INTERNAL_W, y);
+                    ctx.stroke();
+                }
+            }
+
+            function drawWalls() {
+                // Draw wall shadows first
+                for (const wall of walls) {
+                    ctx.fillStyle = '#0d0f1a';
+                    ctx.fillRect(wall.x + 3, wall.y + 3, wall.w, wall.h);
+                }
+                // Draw walls
+                for (const wall of walls) {
+                    // Main wall color
+                    const grad = ctx.createLinearGradient(wall.x, wall.y, wall.x, wall.y + wall.h);
+                    grad.addColorStop(0, '#3a3f5c');
+                    grad.addColorStop(0.5, '#2c3048');
+                    grad.addColorStop(1, '#1e2235');
+                    ctx.fillStyle = grad;
+                    ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
+
+                    // Top highlight
+                    ctx.fillStyle = '#555d80';
+                    ctx.fillRect(wall.x, wall.y, wall.w, 2);
+
+                    // Subtle inner border
+                    ctx.strokeStyle = '#1a1d30';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(wall.x + 1, wall.y + 1, wall.w - 2, wall.h - 2);
+                }
+
+                // Draw locked doors
+                for (const door of lockedDoors) {
+                    if (door.unlocked) {
+                        ctx.fillStyle = '#2a4a2a';
+                        ctx.fillRect(door.x, door.y, door.w, door.h);
+                        ctx.fillStyle = '#5aff5a';
+                        ctx.fillRect(door.x, door.y + door.h / 2 - 2, door.w, 4);
+                    } else {
+                        ctx.fillStyle = '#4a2a2a';
+                        ctx.fillRect(door.x, door.y, door.w, door.h);
+                        ctx.fillStyle = '#ff5555';
+                        ctx.fillRect(door.x, door.y + door.h / 2 - 2, door.w, 4);
+                        // Lock icon
+                        ctx.fillStyle = '#ff4444';
+                        ctx.beginPath();
+                        ctx.arc(door.x + door.w / 2, door.y + door.h / 2 - 6, 7, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = '#4a2a2a';
+                        ctx.fillRect(door.x + door.w / 2 - 3, door.y + door.h / 2 - 4, 6, 12);
+                    }
+                }
+            }
+
+            function drawLasers() {
+                for (const laser of lasers) {
+                    // Outer glow
+                    ctx.strokeStyle = 'rgba(255, 40, 40, 0.3)';
+                    ctx.lineWidth = 8;
+                    ctx.beginPath();
+                    ctx.moveTo(laser.x1, laser.y1);
+                    ctx.lineTo(laser.x2, laser.y2);
+                    ctx.stroke();
+
+                    // Inner glow
+                    ctx.strokeStyle = 'rgba(255, 100, 100, 0.6)';
+                    ctx.lineWidth = 4;
+                    ctx.beginPath();
+                    ctx.moveTo(laser.x1, laser.y1);
+                    ctx.lineTo(laser.x2, laser.y2);
+                    ctx.stroke();
+
+                    // Core
+                    ctx.strokeStyle = 'rgba(255, 200, 200, 0.9)';
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.moveTo(laser.x1, laser.y1);
+                    ctx.lineTo(laser.x2, laser.y2);
+                    ctx.stroke();
+
+                    // Endpoint glows
+                    for (const [ex, ey] of [
+                            [laser.x1, laser.y1],
+                            [laser.x2, laser.y2]
+                        ]) {
+                        const glow = ctx.createRadialGradient(ex, ey, 0, ex, ey, 8);
+                        glow.addColorStop(0, 'rgba(255, 150, 150, 0.9)');
+                        glow.addColorStop(0.5, 'rgba(255, 50, 50, 0.4)');
+                        glow.addColorStop(1, 'rgba(255, 0, 0, 0)');
+                        ctx.fillStyle = glow;
+                        ctx.beginPath();
+                        ctx.arc(ex, ey, 8, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            function drawLoot() {
+                for (const loot of lootItems) {
+                    if (loot.collected) continue;
+                    const pulse = Math.sin(Date.now() / 500 + loot.x) * 0.3 + 0.7;
+                    let color, glowColor;
+                    if (loot.type === 'diamond') {
+                        color = '#b8f0ff';
+                        glowColor = 'rgba(150, 220, 255, 0.7)';
+                    } else if (loot.type === 'gold') {
+                        color = '#ffd700';
+                        glowColor = 'rgba(255, 200, 50, 0.7)';
+                    } else {
+                        color = '#90ff90';
+                        glowColor = 'rgba(130, 255, 130, 0.7)';
+                    }
+
+                    // Glow
+                    const glow = ctx.createRadialGradient(loot.x, loot.y, 2, loot.x, loot.y, 16);
+                    glow.addColorStop(0, glowColor);
+                    glow.addColorStop(1, 'rgba(0,0,0,0)');
+                    ctx.fillStyle = glow;
+                    ctx.beginPath();
+                    ctx.arc(loot.x, loot.y, 16, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Icon
+                    ctx.fillStyle = color;
+                    ctx.globalAlpha = pulse;
+                    if (loot.type === 'diamond') {
+                        ctx.beginPath();
+                        ctx.moveTo(loot.x, loot.y - 8);
+                        ctx.lineTo(loot.x + 7, loot.y);
+                        ctx.lineTo(loot.x, loot.y + 8);
+                        ctx.lineTo(loot.x - 7, loot.y);
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 1;
+                        ctx.stroke();
+                    } else if (loot.type === 'gold') {
+                        ctx.beginPath();
+                        ctx.arc(loot.x, loot.y, 7, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 1;
+                        ctx.stroke();
+                        ctx.fillStyle = '#fff';
+                        ctx.fillRect(loot.x - 3, loot.y - 3, 6, 6);
+                    } else {
+                        ctx.fillRect(loot.x - 6, loot.y - 4, 12, 8);
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 1;
+                        ctx.strokeRect(loot.x - 6, loot.y - 4, 12, 8);
+                        ctx.fillStyle = '#fff';
+                        ctx.fillRect(loot.x - 1, loot.y - 2, 2, 4);
+                    }
+                    ctx.globalAlpha = 1;
+                }
+
+                // Draw keys
+                for (const key of keyItems) {
+                    if (key.collected) continue;
+                    const pulse = Math.sin(Date.now() / 400 + key.x) * 0.3 + 0.7;
+                    const glow = ctx.createRadialGradient(key.x, key.y, 1, key.x, key.y, 12);
+                    glow.addColorStop(0, 'rgba(255, 255, 150, 0.8)');
+                    glow.addColorStop(1, 'rgba(0,0,0,0)');
+                    ctx.fillStyle = glow;
+                    ctx.beginPath();
+                    ctx.arc(key.x, key.y, 12, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.fillStyle = '#ffe566';
+                    ctx.globalAlpha = pulse;
+                    ctx.beginPath();
+                    ctx.arc(key.x, key.y, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#1a1d2e';
+                    ctx.fillRect(key.x + 3, key.y - 1, 8, 2);
+                    ctx.globalAlpha = 1;
+                }
+            }
+
+            function drawGuards() {
+                for (const guard of guards) {
+                    const gcx = guard.x + guard.w / 2;
+                    const gcy = guard.y + guard.h / 2;
+
+                    // Vision cone
+                    const coneLength = 120;
+                    const coneHalfAngle = Math.PI / 5.5;
+                    const leftAngle = guard.facingAngle - coneHalfAngle;
+                    const rightAngle = guard.facingAngle + coneHalfAngle;
+
+                    let coneAlpha = 0.08;
+                    let coneColor = '255, 255, 200';
+                    if (guard.detectionMeter > 10) {
+                        coneAlpha = 0.08 + (guard.detectionMeter / 100) * 0.25;
+                        const r = Math.min(255, 200 + guard.detectionMeter * 1.5);
+                        const g = Math.max(50, 200 - guard.detectionMeter * 1.5);
+                        const b = Math.max(30, 150 - guard.detectionMeter * 2);
+                        coneColor = `${Math.floor(r)},${Math.floor(g)},${Math.floor(b)}`;
+                    }
+
+                    ctx.fillStyle = `rgba(${coneColor},${coneAlpha})`;
+                    ctx.beginPath();
+                    ctx.moveTo(gcx, gcy);
+                    ctx.arc(gcx, gcy, coneLength, leftAngle, rightAngle);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // Cone border
+                    ctx.strokeStyle = `rgba(${coneColor},${coneAlpha + 0.05})`;
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(gcx, gcy);
+                    ctx.arc(gcx, gcy, coneLength, leftAngle, rightAngle);
+                    ctx.closePath();
+                    ctx.stroke();
+
+                    // Guard body
+                    const bodyGrad = ctx.createRadialGradient(gcx, gcy, 2, gcx, gcy, guard.w / 2);
+                    bodyGrad.addColorStop(0, '#8899bb');
+                    bodyGrad.addColorStop(0.7, '#445566');
+                    bodyGrad.addColorStop(1, '#223344');
+                    ctx.fillStyle = bodyGrad;
+                    ctx.beginPath();
+                    ctx.arc(gcx, gcy, guard.w / 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#aabbcc';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    // Flashlight dot
+                    const flx = gcx + Math.cos(guard.facingAngle) * (guard.w / 2 + 3);
+                    const fly = gcy + Math.sin(guard.facingAngle) * (guard.w / 2 + 3);
+                    ctx.fillStyle = '#ffffcc';
+                    ctx.beginPath();
+                    ctx.arc(flx, fly, 3, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Detection indicator above guard
+                    if (guard.detectionMeter > 15) {
+                        const indicatorY = guard.y - 12;
+                        const indicatorW = 24;
+                        const indicatorH = 4;
+                        ctx.fillStyle = '#333';
+                        ctx.fillRect(guard.x + guard.w / 2 - indicatorW / 2, indicatorY, indicatorW, indicatorH);
+                        const fillW = (guard.detectionMeter / 100) * indicatorW;
+                        const detColor =
+                            `rgb(${Math.floor(255 * guard.detectionMeter/100)},${Math.floor(200*(1-guard.detectionMeter/100))},30)`;
+                        ctx.fillStyle = detColor;
+                        ctx.fillRect(guard.x + guard.w / 2 - indicatorW / 2, indicatorY, fillW, indicatorH);
+                    }
+                }
+            }
+
+            function drawPlayer() {
+                if (!player) return;
+
+                // Trail
+                for (const t of player.trail) {
+                    const alpha = t.life / 18;
+                    ctx.fillStyle = `rgba(180,200,255,${alpha * 0.35})`;
+                    ctx.beginPath();
+                    ctx.arc(t.x, t.y, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                const pcx = player.x + player.w / 2;
+                const pcy = player.y + player.h / 2;
+
+                // Player glow
+                const glow = ctx.createRadialGradient(pcx, pcy, 4, pcx, pcy, 18);
+                glow.addColorStop(0, 'rgba(180, 200, 255, 0.5)');
+                glow.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = glow;
+                ctx.beginPath();
+                ctx.arc(pcx, pcy, 18, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Player body
+                const bodyGrad = ctx.createRadialGradient(pcx, pcy, 3, pcx, pcy, player.w / 2);
+                bodyGrad.addColorStop(0, '#d0ddf8');
+                bodyGrad.addColorStop(0.6, '#556688');
+                bodyGrad.addColorStop(1, '#2a3350');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.arc(pcx, pcy, player.w / 2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#8899cc';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Eyes/mask
+                ctx.fillStyle = '#111';
+                ctx.beginPath();
+                ctx.arc(pcx - 3, pcy - 2, 3.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(pcx + 3, pcy - 2, 3.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(pcx - 2, pcy - 3, 1.2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(pcx + 4, pcy - 3, 1.2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            function drawExit() {
+                const pulse = Math.sin(Date.now() / 400) * 0.4 + 0.6;
+                const ex = exitPos.x + exitPos.w / 2;
+                const ey = exitPos.y + exitPos.h / 2;
+
+                // Outer glow
+                const glow = ctx.createRadialGradient(ex, ey, 5, ex, ey, 30);
+                glow.addColorStop(0, `rgba(100,255,150,${0.7*pulse})`);
+                glow.addColorStop(0.6, 'rgba(50,200,100,0.3)');
+                glow.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = glow;
+                ctx.fillRect(exitPos.x - 20, exitPos.y - 20, exitPos.w + 40, exitPos.h + 40);
+
+                // Exit marker
+                ctx.fillStyle = '#1a3a1a';
+                ctx.fillRect(exitPos.x, exitPos.y, exitPos.w, exitPos.h);
+                ctx.strokeStyle = `rgba(100,255,150,${0.8*pulse})`;
+                ctx.lineWidth = 3;
+                ctx.strokeRect(exitPos.x + 2, exitPos.y + 2, exitPos.w - 4, exitPos.h - 4);
+
+                // Arrow
+                ctx.fillStyle = '#5f5';
+                ctx.beginPath();
+                ctx.moveTo(ex - 8, ey - 3);
+                ctx.lineTo(ex + 4, ey - 3);
+                ctx.lineTo(ex + 4, ey - 8);
+                ctx.lineTo(ex + 10, ey);
+                ctx.lineTo(ex + 4, ey + 8);
+                ctx.lineTo(ex + 4, ey + 3);
+                ctx.lineTo(ex - 8, ey + 3);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            function drawUI() {
+                // Score
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 16px "Courier New", monospace';
+                ctx.textAlign = 'left';
+                ctx.fillText(`💰 $${score.toLocaleString()}`, 20, 30);
+                ctx.fillText(`🏆 Best: $${bestScore.toLocaleString()}`, 20, 52);
+
+                // Level
+                ctx.textAlign = 'right';
+                ctx.fillText(`Level ${currentLevel}`, INTERNAL_W - 20, 30);
+
+                // Timer
+                const timerColor = timeRemaining < 20 ? '#ff5555' : timeRemaining < 40 ? '#ffaa33' : '#ffffff';
+                ctx.fillStyle = timerColor;
+                ctx.fillText(`⏱ ${timeRemaining}s`, INTERNAL_W - 20, 52);
+
+                // Keys
+                if (player && player.keys > 0) {
+                    ctx.fillStyle = '#ffe566';
+                    ctx.textAlign = 'left';
+                    ctx.fillText(`🔑 Keys: ${player.keys}`, 20, 74);
+                }
+
+                // Detection meter
+                if (detectionVisible && detectionMeter > 3) {
+                    const meterX = INTERNAL_W / 2 - 60;
+                    const meterY = INTERNAL_H - 30;
+                    const meterW = 120;
+                    const meterH = 8;
+                    ctx.fillStyle = '#222';
+                    ctx.fillRect(meterX, meterY, meterW, meterH);
+                    const fillW = (detectionMeter / 100) * meterW;
+                    const r = Math.floor(255 * Math.min(1, detectionMeter / 70));
+                    const g = Math.floor(200 * (1 - Math.min(1, detectionMeter / 100)));
+                    ctx.fillStyle = `rgb(${r},${g},40)`;
+                    ctx.fillRect(meterX, meterY, fillW, meterH);
+                    ctx.strokeStyle = '#555';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(meterX, meterY, meterW, meterH);
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '10px "Courier New", monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('DETECTION', INTERNAL_W / 2, meterY - 4);
+                }
+
+                // Loot progress
+                const totalLoot = lootItems.length;
+                const collectedLoot = lootItems.filter(l => l.collected).length;
+                ctx.fillStyle = '#aaa';
+                ctx.textAlign = 'center';
+                ctx.font = '12px "Courier New", monospace';
+                ctx.fillText(`Loot: ${collectedLoot}/${totalLoot} | Level Score: $${levelScore.toLocaleString()}`,
+                    INTERNAL_W / 2, 30);
+            }
+
+            function drawTitleScreen() {
+                // Dark overlay
+                ctx.fillStyle = 'rgba(10,12,22,0.85)';
+                ctx.fillRect(0, 0, INTERNAL_W, INTERNAL_H);
+
+                // Title
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 44px "Courier New", monospace';
+                ctx.textAlign = 'center';
+                const titleY = INTERNAL_H / 2 - 60;
+                ctx.fillText('🔷 STEALTH HEIST', INTERNAL_W / 2, titleY);
+
+                ctx.fillStyle = '#8899cc';
+                ctx.font = 'bold 16px "Courier New", monospace';
+                ctx.fillText('N I G H T F A L L', INTERNAL_W / 2, titleY + 35);
+
+                // Instructions
+                ctx.fillStyle = '#ccd';
+                ctx.font = '15px "Courier New", monospace';
+                const instY = titleY + 80;
+                ctx.fillText('Navigate the building. Steal the valuables.', INTERNAL_W / 2, instY);
+                ctx.fillText('Avoid guards and laser traps. Reach the exit.', INTERNAL_W / 2, instY + 24);
+                ctx.fillText('🕹️  Arrow Keys / WASD to move', INTERNAL_W / 2, instY + 54);
+                ctx.fillText('📱  Left side drag on mobile', INTERNAL_W / 2, instY + 76);
+
+                // Start prompt
+                const pulse = Math.sin(Date.now() / 600) * 0.5 + 0.5;
+                ctx.fillStyle = `rgba(255,255,200,${0.7 + pulse * 0.3})`;
+                ctx.font = 'bold 18px "Courier New", monospace';
+                ctx.fillText('Press ENTER or Tap to Start', INTERNAL_W / 2, instY + 130);
+
+                // Best score
+                if (bestScore > 0) {
+                    ctx.fillStyle = '#ffd700';
+                    ctx.fillText(`Best Score: $${bestScore.toLocaleString()}`, INTERNAL_W / 2, instY + 165);
+                }
+            }
+
+            function drawGameOverScreen() {
+                ctx.fillStyle = 'rgba(20,0,0,0.8)';
+                ctx.fillRect(0, 0, INTERNAL_W, INTERNAL_H);
+
+                ctx.fillStyle = '#ff4444';
+                ctx.font = 'bold 38px "Courier New", monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText('🚨 CAUGHT! 🚨', INTERNAL_W / 2, INTERNAL_H / 2 - 40);
+
+                ctx.fillStyle = '#ff8888';
+                ctx.font = '16px "Courier New", monospace';
+                ctx.fillText(gameOverReason, INTERNAL_W / 2, INTERNAL_H / 2 + 5);
+
+                ctx.fillStyle = '#fff';
+                ctx.fillText(`Score: $${score.toLocaleString()}`, INTERNAL_W / 2, INTERNAL_H / 2 + 40);
+                ctx.fillText(`Best: $${bestScore.toLocaleString()}`, INTERNAL_W / 2, INTERNAL_H / 2 + 62);
+
+                const pulse = Math.sin(Date.now() / 500) * 0.5 + 0.5;
+                ctx.fillStyle = `rgba(255,200,200,${0.7+pulse*0.3})`;
+                ctx.font = 'bold 16px "Courier New", monospace';
+                ctx.fillText('Press R / ENTER / Tap to Retry', INTERNAL_W / 2, INTERNAL_H / 2 + 100);
+            }
+
+            function drawLevelCompleteScreen() {
+                ctx.fillStyle = 'rgba(0,15,5,0.8)';
+                ctx.fillRect(0, 0, INTERNAL_W, INTERNAL_H);
+
+                ctx.fillStyle = '#ffd700';
+                ctx.font = 'bold 38px "Courier New", monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText('✅ HEIST COMPLETE!', INTERNAL_W / 2, INTERNAL_H / 2 - 30);
+
+                ctx.fillStyle = '#fff';
+                ctx.font = '18px "Courier New", monospace';
+                ctx.fillText(`Level ${currentLevel} Clear!`, INTERNAL_W / 2, INTERNAL_H / 2 + 15);
+                ctx.fillText(`Level Score: $${levelScore.toLocaleString()}`, INTERNAL_W / 2, INTERNAL_H / 2 + 42);
+                ctx.fillText(`Total Score: $${score.toLocaleString()}`, INTERNAL_W / 2, INTERNAL_H / 2 + 66);
+
+                if (levelTransitionTimer < 30) {
+                    const pulse = Math.sin(Date.now() / 400) * 0.5 + 0.5;
+                    ctx.fillStyle = `rgba(255,255,200,${0.7+pulse*0.3})`;
+                    ctx.font = 'bold 16px "Courier New", monospace';
+                    ctx.fillText('Press ENTER / Tap for Next Level', INTERNAL_W / 2, INTERNAL_H / 2 + 100);
+                }
+            }
+
+            function drawVirtualJoystick() {
+                if (touchJoystickBase && touchJoystickThumb) {
+                    // Base
+                    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+                    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(touchJoystickBase.x, touchJoystickBase.y, 45, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // Thumb
+                    const jdx = touchJoystickThumb.x - touchJoystickBase.x;
+                    const jdy = touchJoystickThumb.y - touchJoystickBase.y;
+                    const jdist = Math.sqrt(jdx * jdx + jdy * jdy);
+                    const maxJDist = 40;
+                    let tx, ty;
+                    if (jdist > maxJDist) {
+                        tx = touchJoystickBase.x + (jdx / jdist) * maxJDist;
+                        ty = touchJoystickBase.y + (jdy / jdist) * maxJDist;
+                    } else {
+                        tx = touchJoystickThumb.x;
+                        ty = touchJoystickThumb.y;
+                    }
+                    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                    ctx.beginPath();
+                    ctx.arc(tx, ty, 20, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+                    ctx.stroke();
+                }
+            }
+
+            // --- Main Game Loop ---
+            function update() {
+                if (gameState === STATE.PLAYING) {
+                    updatePlayer();
+                    updateGuards();
+                    updateParticles();
+                    if (shakeAmount > 0) shakeAmount *= 0.85;
+                    if (shakeAmount < 0.3) shakeAmount = 0;
+                    if (screenFlash > 0) screenFlash *= 0.9;
+                    if (screenFlash < 0.01) screenFlash = 0;
+                }
+                if (gameState === STATE.LEVEL_COMPLETE) {
+                    levelTransitionTimer--;
+                    updateParticles();
+                    if (levelTransitionTimer < 0) levelTransitionTimer = 0;
+                }
+                if (gameState === STATE.GAME_OVER) {
+                    updateParticles();
+                    if (shakeAmount > 0) shakeAmount *= 0.85;
+                    if (shakeAmount < 0.3) shakeAmount = 0;
+                    if (screenFlash > 0) screenFlash *= 0.9;
+                    if (screenFlash < 0.01) screenFlash = 0;
+                }
+                // Update player trail even during gameplay
+                if (player && gameState === STATE.PLAYING) {
+                    for (let i = player.trail.length - 1; i >= 0; i--) {
+                        player.trail[i].life--;
+                        if (player.trail[i].life <= 0) player.trail.splice(i, 1);
+                    }
+                }
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, INTERNAL_W, INTERNAL_H);
+
+                // Apply shake
+                let shakeX = 0,
+                    shakeY = 0;
+                if (shakeAmount > 0.5) {
+                    shakeX = (Math.random() - 0.5) * shakeAmount;
+                    shakeY = (Math.random() - 0.5) * shakeAmount;
+                }
+
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                drawFloor();
+                drawLasers();
+                drawLoot();
+                drawExit();
+                drawWalls();
+                drawGuards();
+                if (player && gameState !== STATE.GAME_OVER) drawPlayer();
+                drawParticles(ctx);
+
+                ctx.restore();
+
+                // Screen flash (red for game over, gold for level complete)
+                if (screenFlash > 0.01) {
+                    if (gameState === STATE.GAME_OVER) {
+                        ctx.fillStyle = `rgba(255,30,30,${screenFlash*0.5})`;
+                    } else if (gameState === STATE.LEVEL_COMPLETE) {
+                        ctx.fillStyle = `rgba(255,215,0,${screenFlash*0.3})`;
+                    }
+                    ctx.fillRect(0, 0, INTERNAL_W, INTERNAL_H);
+                }
+
+                // Detection vignette
+                if (detectionMeter > 20 && gameState === STATE.PLAYING) {
+                    const alpha = (detectionMeter / 100) * 0.5;
+                    const vignette = ctx.createRadialGradient(INTERNAL_W / 2, INTERNAL_H / 2, INTERNAL_W * 0.45,
+                        INTERNAL_W / 2, INTERNAL_H / 2, INTERNAL_W * 0.75);
+                    vignette.addColorStop(0, 'rgba(0,0,0,0)');
+                    vignette.addColorStop(1, `rgba(255,20,20,${alpha})`);
+                    ctx.fillStyle = vignette;
+                    ctx.fillRect(0, 0, INTERNAL_W, INTERNAL_H);
+                }
+
+                drawUI();
+                drawVirtualJoystick();
+
+                // Overlay screens
+                if (gameState === STATE.TITLE) drawTitleScreen();
+                if (gameState === STATE.GAME_OVER) drawGameOverScreen();
+                if (gameState === STATE.LEVEL_COMPLETE) drawLevelCompleteScreen();
+
+                // Mobile hint
+                if (gameState === STATE.PLAYING && 'ontouchstart' in window && !touchActive) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                    ctx.font = '12px "Courier New", monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('Drag left side to move', INTERNAL_W / 2, INTERNAL_H - 8);
+                }
+            }
+
+            function gameLoop() {
+                update();
+                render();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // --- Start ---
+            buildLevel(1);
+            gameState = STATE.TITLE;
+            gameLoop();
+
+            // Handle window resize
+            function resizeCanvas() {
+                const containerW = container.clientWidth;
+                const containerH = container.clientHeight;
+                const aspect = INTERNAL_W / INTERNAL_H;
+                let w, h;
+                if (containerW / containerH > aspect) {
+                    h = containerH;
+                    w = h * aspect;
+                } else {
+                    w = containerW;
+                    h = w / aspect;
+                }
+                canvas.style.width = w + 'px';
+                canvas.style.height = h + 'px';
+            }
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+
+            console.log('🔷 Stealth Heist: Nightfall - Ready to play!');
+            console.log('   Use Arrow Keys/WASD or touch to move.');
+            console.log('   Collect loot, avoid guards & lasers, reach the exit!');
+        })();
+    </script>
+</body>
+</html>
