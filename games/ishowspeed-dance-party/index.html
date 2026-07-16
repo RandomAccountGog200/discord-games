@@ -1,0 +1,1369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>iShowSpeed Dance Party! 🔥</title>
+    <style>
+        :root {
+            --bg: #0a0a0f;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: var(--bg);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Segoe UI', 'Arial', sans-serif;
+            touch-action: manipulation;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            position: relative;
+        }
+        canvas {
+            display: block;
+            border-radius: 8px;
+            box-shadow: 0 0 60px rgba(255, 50, 100, 0.3), 0 0 120px rgba(100, 50, 255, 0.2);
+            max-width: 100vw;
+            max-height: 75vh;
+        }
+        #touch-controls {
+            position: fixed;
+            bottom: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+            z-index: 10;
+            padding: 8px 16px;
+            background: rgba(0, 0, 0, 0.55);
+            border-radius: 40px;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+        }
+        .touch-btn {
+            width: 58px;
+            height: 58px;
+            border-radius: 50%;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            background: rgba(30, 30, 50, 0.7);
+            color: #fff;
+            font-size: 26px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.1s;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+        .touch-btn:active {
+            background: rgba(255, 80, 120, 0.8);
+            border-color: #ff5090;
+            transform: scale(0.9);
+            box-shadow: 0 0 30px rgba(255, 80, 130, 0.7);
+        }
+        .touch-btn:nth-child(1) {
+            color: #5bc0ff;
+            border-color: #5bc0ff;
+        }
+        .touch-btn:nth-child(2) {
+            color: #5eff8a;
+            border-color: #5eff8a;
+        }
+        .touch-btn:nth-child(3) {
+            color: #ffe95b;
+            border-color: #ffe95b;
+        }
+        .touch-btn:nth-child(4) {
+            color: #ff5b7b;
+            border-color: #ff5b7b;
+        }
+        .touch-btn:nth-child(1):active {
+            background: rgba(90, 190, 255, 0.7);
+            box-shadow: 0 0 30px rgba(90, 190, 255, 0.8);
+        }
+        .touch-btn:nth-child(2):active {
+            background: rgba(90, 255, 140, 0.7);
+            box-shadow: 0 0 30px rgba(90, 255, 140, 0.8);
+        }
+        .touch-btn:nth-child(3):active {
+            background: rgba(255, 230, 90, 0.7);
+            box-shadow: 0 0 30px rgba(255, 230, 90, 0.8);
+        }
+        .touch-btn:nth-child(4):active {
+            background: rgba(255, 90, 120, 0.7);
+            box-shadow: 0 0 30px rgba(255, 90, 120, 0.8);
+        }
+        @media (min-width: 768px) {
+            #touch-controls {
+                opacity: 0.5;
+                bottom: 20px;
+                gap: 14px;
+            }
+            .touch-btn {
+                width: 50px;
+                height: 50px;
+                font-size: 22px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <div id="touch-controls">
+        <button class="touch-btn" data-lane="0">◀</button>
+        <button class="touch-btn" data-lane="1">▼</button>
+        <button class="touch-btn" data-lane="2">▲</button>
+        <button class="touch-btn" data-lane="3">▶</button>
+    </div>
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+
+            // --- Audio System ---
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    try {
+                        audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                    } catch (e) {
+                        audioCtx = null;
+                    }
+                }
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            }
+
+            function playTone(freq, duration, type = 'square', vol = 0.12, decay = true) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (decay) osc.frequency.exponentialRampToValueAtTime(freq * 0.3, t + duration);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) { /* silent */ }
+            }
+
+            function playKick() {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(150, t);
+                    osc.frequency.exponentialRampToValueAtTime(30, t + 0.18);
+                    gain.gain.setValueAtTime(0.35, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + 0.25);
+                } catch (e) { /* silent */ }
+            }
+
+            function playSnare() {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const bufferSize = audioCtx.sampleRate * 0.15;
+                    const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                    const data = buffer.getChannelData(0);
+                    for (let i = 0; i < bufferSize; i++) {
+                        data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (audioCtx.sampleRate * 0.04));
+                    }
+                    const noise = audioCtx.createBufferSource();
+                    noise.buffer = buffer;
+                    const gain = audioCtx.createGain();
+                    gain.gain.setValueAtTime(0.25, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+                    const filter = audioCtx.createBiquadFilter();
+                    filter.type = 'highpass';
+                    filter.frequency.setValueAtTime(1000, t);
+                    noise.connect(filter);
+                    filter.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    noise.start(t);
+                    noise.stop(t + 0.18);
+                } catch (e) { /* silent */ }
+            }
+
+            function playHit(lane) {
+                const freqs = [330, 262, 392, 440];
+                playTone(freqs[lane], 0.1, 'triangle', 0.18, true);
+            }
+
+            function playMiss() {
+                playTone(80, 0.3, 'sawtooth', 0.15, true);
+            }
+
+            function playComboRise() {
+                const notes = [440, 554, 659, 880];
+                notes.forEach((f, i) => {
+                    setTimeout(() => playTone(f, 0.12, 'triangle', 0.16, true), i * 50);
+                });
+            }
+
+            function playGameOver() {
+                const notes = [440, 349, 277, 220];
+                notes.forEach((f, i) => {
+                    setTimeout(() => playTone(f, 0.25, 'sawtooth', 0.13, true), i * 100);
+                });
+            }
+
+            // --- Canvas Sizing ---
+            function resizeCanvas() {
+                const w = Math.min(window.innerWidth, 900);
+                const h = Math.min(window.innerHeight * 0.75, 650);
+                canvas.width = w;
+                canvas.height = h;
+            }
+            resizeCanvas();
+            window.addEventListener('resize', () => {
+                resizeCanvas();
+            });
+
+            // --- Game State ---
+            const LANE_COLORS = ['#5bc0ff', '#5eff8a', '#ffe95b', '#ff5b7b'];
+            const LANE_GLOW = ['rgba(91,192,255,', 'rgba(94,255,138,', 'rgba(255,233,91,', 'rgba(255,91,123,'];
+            const ARROW_DIRS = ['◀', '▼', '▲', '▶'];
+            const LANE_KEYS = ['ArrowLeft', 'ArrowDown', 'ArrowUp', 'ArrowRight'];
+            const LANE_ALT_KEYS = ['KeyA', 'KeyS', 'KeyW', 'KeyD'];
+
+            let gameState = 'title'; // 'title' | 'playing' | 'gameover'
+            let score = 0;
+            let combo = 0;
+            let maxCombo = 0;
+            let misses = 0;
+            let maxMisses = 5;
+            let totalHits = 0;
+            let difficulty = 1;
+            let arrows = [];
+            let particles = [];
+            let shakeAmount = 0;
+            let elapsedTime = 0;
+            let lastTime = performance.now();
+            let beatTimer = 0;
+            let bpm = 128;
+            let beatInterval = 60 / bpm;
+            let lastBeatTime = -10;
+            let beatCount = 0;
+            let travelDuration = 2.2;
+            let characterPose = 0;
+            let poseTimer = 0;
+            let poseTarget = 0;
+            let flashAlpha = 0;
+            let comboText = '';
+            let comboTextTimer = 0;
+            let spotlightAngle = 0;
+            let discoRotation = 0;
+            let titlePulse = 0;
+
+            // --- Input State ---
+            let keysPressed = {};
+            let keyJustPressed = {};
+
+            function resetGame() {
+                score = 0;
+                combo = 0;
+                maxCombo = 0;
+                misses = 0;
+                totalHits = 0;
+                difficulty = 1;
+                arrows = [];
+                particles = [];
+                shakeAmount = 0;
+                elapsedTime = 0;
+                beatTimer = 0;
+                lastBeatTime = -10;
+                beatCount = 0;
+                travelDuration = 2.2;
+                characterPose = 0;
+                poseTimer = 0;
+                poseTarget = 0;
+                flashAlpha = 0;
+                comboText = '';
+                comboTextTimer = 0;
+                bpm = 128;
+                beatInterval = 60 / bpm;
+            }
+
+            // --- Particle System ---
+            function spawnParticles(x, y, count, color, spread = 3) {
+                for (let i = 0; i < count; i++) {
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: (Math.random() - 0.5) * spread * 2,
+                        vy: (Math.random() - 0.5) * spread * 2 - Math.random() * 6,
+                        life: 0.5 + Math.random() * 0.7,
+                        maxLife: 0.5 + Math.random() * 0.7,
+                        size: 2 + Math.random() * 5,
+                        color: color,
+                    });
+                }
+            }
+
+            function updateParticles(dt) {
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx * dt * 60;
+                    p.y += p.vy * dt * 60;
+                    p.vy += 0.15 * dt * 60;
+                    p.life -= dt;
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+            }
+
+            function drawParticles(ctx) {
+                for (const p of particles) {
+                    const alpha = p.life / p.maxLife;
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = p.color;
+                    ctx.shadowColor = p.color;
+                    ctx.shadowBlur = 8;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+            }
+
+            // --- Arrow Spawning ---
+            function getLaneX(lane) {
+                const totalLanes = 4;
+                const laneWidth = canvas.width * 0.14;
+                const startX = canvas.width * 0.18;
+                const gap = (canvas.width * 0.64 - laneWidth * totalLanes) / (totalLanes - 1);
+                return startX + lane * (laneWidth + gap);
+            }
+
+            function getTargetY() {
+                return canvas.height * 0.8;
+            }
+
+            function getSpawnY() {
+                return -60;
+            }
+
+            function spawnArrow(lane) {
+                const now = elapsedTime;
+                const targetTime = now + travelDuration;
+                arrows.push({
+                    lane: lane,
+                    spawnTime: now,
+                    targetTime: targetTime,
+                    hit: false,
+                    missed: false,
+                    color: LANE_COLORS[lane],
+                });
+            }
+
+            function processBeat() {
+                beatCount++;
+                // Play beat sounds
+                if (beatCount % 2 === 1) {
+                    playKick();
+                } else {
+                    playSnare();
+                }
+
+                // Spawn arrows based on difficulty
+                const spawnChance = Math.min(0.95, 0.3 + difficulty * 0.12);
+                const maxPerBeat = Math.min(3, 1 + Math.floor(difficulty / 2));
+
+                let spawnedThisBeat = 0;
+                const laneOrder = [0, 1, 2, 3].sort(() => Math.random() - 0.5);
+
+                for (const lane of laneOrder) {
+                    if (spawnedThisBeat >= maxPerBeat) break;
+                    if (Math.random() < spawnChance) {
+                        spawnArrow(lane);
+                        spawnedThisBeat++;
+                    }
+                }
+
+                // Ensure at least one arrow per beat at higher difficulties
+                if (spawnedThisBeat === 0 && difficulty >= 3 && Math.random() < 0.7) {
+                    spawnArrow(Math.floor(Math.random() * 4));
+                }
+            }
+
+            // --- Hit Detection ---
+            function checkHit(lane) {
+                const targetY = getTargetY();
+                let bestArrow = null;
+                let bestDist = Infinity;
+
+                for (const arrow of arrows) {
+                    if (arrow.lane === lane && !arrow.hit && !arrow.missed) {
+                        const progress = (elapsedTime - arrow.spawnTime) / (arrow.targetTime - arrow.spawnTime);
+                        const dist = Math.abs(progress - 1.0);
+                        if (dist < 0.28 && dist < bestDist) {
+                            bestDist = dist;
+                            bestArrow = arrow;
+                        }
+                    }
+                }
+
+                if (bestArrow) {
+                    bestArrow.hit = true;
+                    const progress = (elapsedTime - bestArrow.spawnTime) / (bestArrow.targetTime - bestArrow
+                    .spawnTime);
+                    const dist = Math.abs(progress - 1.0);
+
+                    let points = 0;
+                    let rating = '';
+                    if (dist < 0.08) {
+                        points = 150;
+                        rating = 'PERFECT!';
+                    } else if (dist < 0.16) {
+                        points = 100;
+                        rating = 'GREAT!';
+                    } else if (dist < 0.22) {
+                        points = 50;
+                        rating = 'GOOD';
+                    } else {
+                        points = 25;
+                        rating = 'OK';
+                    }
+
+                    combo++;
+                    if (combo > maxCombo) maxCombo = combo;
+                    totalHits++;
+                    score += points * (1 + Math.floor(combo / 10));
+
+                    // Combo milestones
+                    if (combo === 10) { comboText = 'NICE! 🔥';
+                        playComboRise(); } else if (combo === 25) { comboText = 'ON FIRE! 🚀';
+                        playComboRise(); } else if (combo === 50) { comboText = 'SPEED MODE! ⚡';
+                        playComboRise(); } else if (combo === 75) { comboText = 'GOD LIKE! 👑';
+                        playComboRise(); } else if (combo === 100) { comboText = 'LEGENDARY! 🌟';
+                        playComboRise(); } else if (combo > 0 && combo % 30 === 0) { comboText = combo + ' COMBO! 💥';
+                        playComboRise(); } else if (dist < 0.08 && combo > 5) {
+                        comboText = rating;
+                    }
+
+                    if (comboText) comboTextTimer = 1.2;
+
+                    // Spawn particles at target zone
+                    const lx = getLaneX(bestArrow.lane) + canvas.width * 0.07;
+                    const ty = getTargetY();
+                    spawnParticles(lx, ty, 12 + combo, bestArrow.color, 4);
+                    flashAlpha = 0.15 + Math.min(combo * 0.003, 0.3);
+                    shakeAmount = Math.max(shakeAmount, 2 + Math.min(combo * 0.4, 15));
+
+                    // Update character pose
+                    poseTarget = Math.floor(Math.random() * 5) + 1;
+                    poseTimer = 0.35;
+
+                    playHit(bestArrow.lane);
+
+                    // Difficulty scaling
+                    difficulty = 1 + Math.floor(totalHits / 18);
+                    travelDuration = Math.max(1.1, 2.2 - difficulty * 0.08);
+                    bpm = Math.min(175, 128 + difficulty * 4);
+                    beatInterval = 60 / bpm;
+
+                    return true;
+                }
+                return false;
+            }
+
+            function handleMiss(arrow) {
+                if (arrow.missed || arrow.hit) return;
+                arrow.missed = true;
+                misses++;
+                combo = 0;
+                comboText = 'MISS! 💔';
+                comboTextTimer = 0.8;
+                flashAlpha = 0.2;
+                shakeAmount = Math.max(shakeAmount, 4);
+                characterPose = 6;
+                poseTimer = 0.5;
+                playMiss();
+                if (misses >= maxMisses && gameState === 'playing') {
+                    endGame();
+                }
+            }
+
+            function endGame() {
+                gameState = 'gameover';
+                playGameOver();
+                // Big particle burst
+                for (let i = 0; i < 60; i++) {
+                    particles.push({
+                        x: canvas.width / 2,
+                        y: canvas.height / 2,
+                        vx: (Math.random() - 0.5) * 16,
+                        vy: (Math.random() - 0.5) * 16 - 4,
+                        life: 0.8 + Math.random() * 1.5,
+                        maxLife: 0.8 + Math.random() * 1.5,
+                        size: 3 + Math.random() * 8,
+                        color: ['#ff3050', '#ff8030', '#ffcc00', '#ff30cc'][Math.floor(Math.random() * 4)],
+                    });
+                }
+                shakeAmount = 20;
+            }
+
+            // --- Drawing Functions ---
+            function drawDiscoBall(ctx, cx, cy, radius) {
+                // Glow
+                const glowGrad = ctx.createRadialGradient(cx, cy, radius * 0.7, cx, cy, radius * 2.5);
+                glowGrad.addColorStop(0, 'rgba(255,255,255,0.6)');
+                glowGrad.addColorStop(0.5, 'rgba(255,200,255,0.15)');
+                glowGrad.addColorStop(1, 'rgba(255,100,200,0)');
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(cx, cy, radius * 2.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Ball
+                const ballGrad = ctx.createRadialGradient(cx - radius * 0.25, cy - radius * 0.3, radius * 0.1, cx, cy,
+                radius);
+                ballGrad.addColorStop(0, '#ffffff');
+                ballGrad.addColorStop(0.4, '#e8e8f0');
+                ballGrad.addColorStop(0.75, '#a0a0b8');
+                ballGrad.addColorStop(1, '#555570');
+                ctx.fillStyle = ballGrad;
+                ctx.beginPath();
+                ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Mirrors
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.rotate(discoRotation);
+                const mirrorCount = 18;
+                for (let i = 0; i < mirrorCount; i++) {
+                    const angle = (i / mirrorCount) * Math.PI * 2;
+                    const mx = Math.cos(angle) * radius * 0.72;
+                    const my = Math.sin(angle) * radius * 0.72;
+                    ctx.save();
+                    ctx.translate(mx, my);
+                    ctx.rotate(angle + Math.PI / 2);
+                    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+                    ctx.fillRect(-radius * 0.16, -radius * 0.24, radius * 0.32, radius * 0.48);
+                    ctx.strokeStyle = 'rgba(200,200,220,0.7)';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(-radius * 0.16, -radius * 0.24, radius * 0.32, radius * 0.48);
+                    ctx.restore();
+                }
+                // Inner ring
+                for (let i = 0; i < 10; i++) {
+                    const angle = (i / 10) * Math.PI * 2 + 0.3;
+                    const mx = Math.cos(angle) * radius * 0.35;
+                    const my = Math.sin(angle) * radius * 0.35;
+                    ctx.save();
+                    ctx.translate(mx, my);
+                    ctx.rotate(angle + Math.PI / 2);
+                    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                    ctx.fillRect(-radius * 0.1, -radius * 0.16, radius * 0.2, radius * 0.32);
+                    ctx.restore();
+                }
+                ctx.restore();
+            }
+
+            function drawSpotlights(ctx) {
+                const cx = canvas.width * 0.5;
+                const cy = canvas.height * 0.08;
+                for (let i = 0; i < 3; i++) {
+                    const angle = spotlightAngle + i * (Math.PI * 2 / 3);
+                    const sx = cx + Math.cos(angle) * canvas.width * 0.9;
+                    const sy = cy + Math.sin(angle) * canvas.height * 0.9;
+                    const grad = ctx.createLinearGradient(cx, cy, sx, sy);
+                    const colors = [
+                        'rgba(255,80,130,0.12)',
+                        'rgba(100,180,255,0.10)',
+                        'rgba(255,200,60,0.11)',
+                    ];
+                    grad.addColorStop(0, colors[i]);
+                    grad.addColorStop(1, 'rgba(0,0,0,0)');
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.moveTo(cx, cy);
+                    const spread = 0.4;
+                    const ax1 = sx + Math.cos(angle - spread) * canvas.width * 0.7;
+                    const ay1 = sy + Math.sin(angle - spread) * canvas.height * 0.7;
+                    const ax2 = sx + Math.cos(angle + spread) * canvas.width * 0.7;
+                    const ay2 = sy + Math.sin(angle + spread) * canvas.height * 0.7;
+                    ctx.lineTo(ax1, ay1);
+                    ctx.lineTo(ax2, ay2);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+            }
+
+            function drawDanceFloor(ctx) {
+                const floorY = canvas.height * 0.78;
+                const floorH = canvas.height * 0.22;
+                const grad = ctx.createLinearGradient(0, floorY, 0, canvas.height);
+                grad.addColorStop(0, 'rgba(20,15,30,0.85)');
+                grad.addColorStop(0.3, 'rgba(40,20,50,0.9)');
+                grad.addColorStop(1, 'rgba(10,5,15,0.95)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, floorY, canvas.width, floorH);
+
+                // Grid lines
+                ctx.strokeStyle = 'rgba(180,100,255,0.25)';
+                ctx.lineWidth = 1;
+                const gridSize = canvas.width / 20;
+                for (let x = 0; x < canvas.width; x += gridSize) {
+                    const sy = floorY;
+                    const ey = canvas.height;
+                    const perspective = (x - canvas.width / 2) / (canvas.width / 2);
+                    const sx = x;
+                    const ex = canvas.width / 2 + perspective * canvas.width * 0.5;
+                    ctx.beginPath();
+                    ctx.moveTo(sx, sy);
+                    ctx.lineTo(ex, ey);
+                    ctx.stroke();
+                }
+                for (let y = floorY; y < canvas.height; y += gridSize * 0.8) {
+                    const t = (y - floorY) / floorH;
+                    const spread = t * canvas.width * 0.45;
+                    ctx.beginPath();
+                    ctx.moveTo(canvas.width / 2 - spread, y);
+                    ctx.lineTo(canvas.width / 2 + spread, y);
+                    ctx.stroke();
+                }
+
+                // Glowing edge
+                const edgeGrad = ctx.createLinearGradient(0, floorY - 3, 0, floorY + 8);
+                edgeGrad.addColorStop(0, 'rgba(255,100,200,0.8)');
+                edgeGrad.addColorStop(1, 'rgba(255,50,150,0)');
+                ctx.fillStyle = edgeGrad;
+                ctx.fillRect(0, floorY - 3, canvas.width, 11);
+            }
+
+            function drawCharacter(ctx, cx, cy, scale) {
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.scale(scale, scale);
+
+                // Bounce offset
+                const bounce = Math.sin(elapsedTime * 8) * 5 * (poseTimer > 0 ? 1.5 : 0.6);
+                const bodyY = bounce;
+
+                // --- Legs ---
+                const legSpread = characterPose === 6 ? 25 : (poseTimer > 0.3 ? 18 : 8);
+                const legLength = 55;
+                const hipY = bodyY - 10;
+
+                // Left leg
+                ctx.fillStyle = '#2a2a35';
+                ctx.strokeStyle = '#1a1a22';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(-8, hipY);
+                ctx.lineTo(-legSpread, hipY + legLength);
+                ctx.lineTo(-legSpread + 7, hipY + legLength);
+                ctx.lineTo(2, hipY);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                // Left shoe
+                ctx.fillStyle = '#f0f0f0';
+                ctx.beginPath();
+                ctx.ellipse(-legSpread + 3, hipY + legLength + 3, 9, 5, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#ccc';
+                ctx.stroke();
+
+                // Right leg
+                ctx.fillStyle = '#2a2a35';
+                ctx.strokeStyle = '#1a1a22';
+                ctx.beginPath();
+                ctx.moveTo(6, hipY);
+                ctx.lineTo(legSpread, hipY + legLength);
+                ctx.lineTo(legSpread + 7, hipY + legLength);
+                ctx.lineTo(14, hipY);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                // Right shoe
+                ctx.fillStyle = '#f0f0f0';
+                ctx.beginPath();
+                ctx.ellipse(legSpread + 4, hipY + legLength + 3, 9, 5, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#ccc';
+                ctx.stroke();
+
+                // --- Body / Torso ---
+                const torsoTop = hipY - 50;
+                const torsoLean = characterPose === 6 ? 15 : (poseTimer > 0.25 ? Math.sin(elapsedTime * 14) * 8 : 0);
+                ctx.fillStyle = '#e63946';
+                ctx.strokeStyle = '#b02a35';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(-16 + torsoLean, torsoTop);
+                ctx.lineTo(18 + torsoLean, torsoTop);
+                ctx.lineTo(12, hipY);
+                ctx.lineTo(-10, hipY);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+
+                // Jersey number/design
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 16px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('7', torsoLean + 1, torsoTop + 28);
+
+                // --- Arms ---
+                const shoulderY = torsoTop + 5;
+                const armLength = 48;
+                let leftArmAngle, rightArmAngle;
+
+                if (characterPose === 6) {
+                    leftArmAngle = -1.6;
+                    rightArmAngle = -1.6;
+                } else if (poseTimer > 0.2) {
+                    const waveSpeed = elapsedTime * 18;
+                    leftArmAngle = -0.6 + Math.sin(waveSpeed) * 1.3;
+                    rightArmAngle = -0.6 + Math.cos(waveSpeed) * 1.3;
+                } else {
+                    leftArmAngle = -0.4 + Math.sin(elapsedTime * 4) * 0.3;
+                    rightArmAngle = -0.4 + Math.cos(elapsedTime * 4) * 0.3;
+                }
+
+                // Left arm
+                const lEx = torsoLean - 8 + Math.cos(leftArmAngle) * armLength;
+                const lEy = shoulderY + Math.sin(leftArmAngle) * armLength;
+                ctx.strokeStyle = '#c68642';
+                ctx.lineWidth = 9;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(torsoLean - 8, shoulderY);
+                ctx.lineTo(lEx, lEy);
+                ctx.stroke();
+                // Hand
+                ctx.fillStyle = '#c68642';
+                ctx.beginPath();
+                ctx.arc(lEx, lEy, 6, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Right arm
+                const rEx = torsoLean + 10 + Math.cos(rightArmAngle) * armLength;
+                const rEy = shoulderY + Math.sin(rightArmAngle) * armLength;
+                ctx.strokeStyle = '#c68642';
+                ctx.lineWidth = 9;
+                ctx.beginPath();
+                ctx.moveTo(torsoLean + 10, shoulderY);
+                ctx.lineTo(rEx, rEy);
+                ctx.stroke();
+                ctx.fillStyle = '#c68642';
+                ctx.beginPath();
+                ctx.arc(rEx, rEy, 6, 0, Math.PI * 2);
+                ctx.fill();
+
+                // --- Head ---
+                const headY = torsoTop - 28;
+                const headRadius = 22;
+
+                // Neck
+                ctx.fillStyle = '#b87a4a';
+                ctx.fillRect(torsoLean - 4, torsoTop - 8, 10, 10);
+
+                // Head
+                ctx.fillStyle = '#c68642';
+                ctx.strokeStyle = '#9a5f30';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(torsoLean + 1, headY, headRadius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+
+                // Hair
+                ctx.fillStyle = '#1a1a1a';
+                ctx.beginPath();
+                ctx.arc(torsoLean + 1, headY - 4, headRadius + 3, Math.PI, Math.PI * 2);
+                ctx.fill();
+                // Hair texture lines
+                ctx.fillStyle = '#2a2a2a';
+                for (let i = -3; i <= 3; i++) {
+                    ctx.beginPath();
+                    ctx.arc(torsoLean + 1 + i * 5, headY - 10, headRadius * 0.6, Math.PI * 0.85, Math.PI * 1.4);
+                    ctx.fill();
+                }
+                // Fade sides
+                ctx.fillStyle = '#0d0d0d';
+                ctx.beginPath();
+                ctx.arc(torsoLean - headRadius + 2, headY + 5, headRadius * 0.55, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(torsoLean + headRadius - 2, headY + 5, headRadius * 0.55, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Headband
+                ctx.strokeStyle = '#ff2040';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.arc(torsoLean + 1, headY - 8, headRadius + 1, Math.PI * 0.92, Math.PI * 2.08);
+                ctx.stroke();
+                // Headband tail
+                ctx.strokeStyle = '#ff2040';
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                ctx.moveTo(torsoLean + headRadius - 3, headY - 12);
+                ctx.quadraticCurveTo(torsoLean + headRadius + 12, headY - 18, torsoLean + headRadius + 16, headY - 8);
+                ctx.stroke();
+
+                // Eyes
+                const eyeY = headY - 4;
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(torsoLean - 6, eyeY, 7, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(torsoLean + 8, eyeY, 7, 0, Math.PI * 2);
+                ctx.fill();
+                // Pupils
+                ctx.fillStyle = '#111';
+                ctx.beginPath();
+                ctx.arc(torsoLean - 5, eyeY, 3.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(torsoLean + 9, eyeY, 3.5, 0, Math.PI * 2);
+                ctx.fill();
+                // Eye shine
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(torsoLean - 3, eyeY - 2, 1.8, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(torsoLean + 11, eyeY - 2, 1.8, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Eyebrows
+                ctx.strokeStyle = '#1a1a1a';
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                ctx.moveTo(torsoLean - 12, eyeY - 9);
+                ctx.lineTo(torsoLean - 1, eyeY - 7);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(torsoLean + 3, eyeY - 7);
+                ctx.lineTo(torsoLean + 14, eyeY - 9);
+                ctx.stroke();
+
+                // Mouth
+                const mouthY = headY + 12;
+                if (characterPose === 6) {
+                    ctx.strokeStyle = '#5a3020';
+                    ctx.lineWidth = 2.5;
+                    ctx.beginPath();
+                    ctx.arc(torsoLean + 1, mouthY + 2, 8, Math.PI * 0.15, Math.PI * 0.85);
+                    ctx.stroke();
+                } else if (poseTimer > 0.2 && combo > 15) {
+                    ctx.fillStyle = '#3a1010';
+                    ctx.beginPath();
+                    ctx.ellipse(torsoLean + 1, mouthY, 10, 7, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#ff6060';
+                    ctx.beginPath();
+                    ctx.ellipse(torsoLean + 1, mouthY - 1, 7, 4, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                } else {
+                    ctx.strokeStyle = '#5a3020';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(torsoLean + 1, mouthY - 1, 7, 0.1, Math.PI - 0.1);
+                    ctx.stroke();
+                }
+
+                ctx.restore();
+            }
+
+            function drawArrowShape(ctx, x, y, size, lane, alpha = 1) {
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.translate(x, y);
+
+                // Glow
+                const glowGrad = ctx.createRadialGradient(0, 0, size * 0.3, 0, 0, size * 1.6);
+                glowGrad.addColorStop(0, LANE_GLOW[lane] + '0.7)');
+                glowGrad.addColorStop(1, LANE_GLOW[lane] + '0)');
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(0, 0, size * 1.6, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Arrow body
+                const arrowSize = size;
+                ctx.fillStyle = LANE_COLORS[lane];
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+
+                if (lane === 0) {
+                    ctx.moveTo(arrowSize * 0.8, -arrowSize * 0.7);
+                    ctx.lineTo(-arrowSize * 0.5, 0);
+                    ctx.lineTo(arrowSize * 0.8, arrowSize * 0.7);
+                    ctx.lineTo(arrowSize * 0.8, arrowSize * 0.2);
+                    ctx.lineTo(arrowSize * 1.2, arrowSize * 0.2);
+                    ctx.lineTo(arrowSize * 1.2, -arrowSize * 0.2);
+                    ctx.lineTo(arrowSize * 0.8, -arrowSize * 0.2);
+                    ctx.closePath();
+                } else if (lane === 1) {
+                    ctx.moveTo(-arrowSize * 0.7, -arrowSize * 0.8);
+                    ctx.lineTo(arrowSize * 0.7, -arrowSize * 0.8);
+                    ctx.lineTo(0, arrowSize * 0.5);
+                    ctx.closePath();
+                    ctx.moveTo(-arrowSize * 0.2, -arrowSize * 1.2);
+                    ctx.lineTo(arrowSize * 0.2, -arrowSize * 1.2);
+                    ctx.lineTo(arrowSize * 0.2, -arrowSize * 0.5);
+                    ctx.lineTo(-arrowSize * 0.2, -arrowSize * 0.5);
+                    ctx.closePath();
+                } else if (lane === 2) {
+                    ctx.moveTo(-arrowSize * 0.7, arrowSize * 0.8);
+                    ctx.lineTo(arrowSize * 0.7, arrowSize * 0.8);
+                    ctx.lineTo(0, -arrowSize * 0.5);
+                    ctx.closePath();
+                    ctx.moveTo(-arrowSize * 0.2, arrowSize * 1.2);
+                    ctx.lineTo(arrowSize * 0.2, arrowSize * 1.2);
+                    ctx.lineTo(arrowSize * 0.2, arrowSize * 0.5);
+                    ctx.lineTo(-arrowSize * 0.2, arrowSize * 0.5);
+                    ctx.closePath();
+                } else if (lane === 3) {
+                    ctx.moveTo(-arrowSize * 0.8, -arrowSize * 0.7);
+                    ctx.lineTo(arrowSize * 0.5, 0);
+                    ctx.lineTo(-arrowSize * 0.8, arrowSize * 0.7);
+                    ctx.lineTo(-arrowSize * 0.8, arrowSize * 0.2);
+                    ctx.lineTo(-arrowSize * 1.2, arrowSize * 0.2);
+                    ctx.lineTo(-arrowSize * 1.2, -arrowSize * 0.2);
+                    ctx.lineTo(-arrowSize * 0.8, -arrowSize * 0.2);
+                    ctx.closePath();
+                }
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.restore();
+            }
+
+            function drawTargetZone(ctx, x, y, size, lane, pulseAmount) {
+                ctx.save();
+                const glowGrad = ctx.createRadialGradient(x, y, size * 0.5, x, y, size * 1.4 + pulseAmount * 10);
+                glowGrad.addColorStop(0, LANE_GLOW[lane] + '0.5)');
+                glowGrad.addColorStop(1, LANE_GLOW[lane] + '0)');
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(x, y, size * 1.4 + pulseAmount * 10, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Ring
+                ctx.strokeStyle = LANE_GLOW[lane] + '0.9)';
+                ctx.lineWidth = 3 + pulseAmount;
+                ctx.beginPath();
+                ctx.arc(x, y, size + pulseAmount * 2, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.arc(x, y, size - 1, 0, Math.PI * 2);
+                ctx.stroke();
+
+                ctx.restore();
+            }
+
+            // --- Main Render ---
+            function render() {
+                const now = performance.now();
+                let dt = (now - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.2) dt = 0.2;
+                lastTime = now;
+
+                if (gameState === 'playing') {
+                    elapsedTime += dt;
+                    beatTimer += dt;
+
+                    // Check for beats
+                    if (beatTimer - lastBeatTime >= beatInterval) {
+                        lastBeatTime = beatTimer;
+                        processBeat();
+                    }
+
+                    // Update pose timer
+                    if (poseTimer > 0) {
+                        poseTimer -= dt;
+                        if (poseTimer <= 0) {
+                            poseTimer = 0;
+                            characterPose = 0;
+                            poseTarget = 0;
+                        }
+                    }
+
+                    // Update combo text timer
+                    if (comboTextTimer > 0) {
+                        comboTextTimer -= dt;
+                        if (comboTextTimer <= 0) {
+                            comboTextTimer = 0;
+                            comboText = '';
+                        }
+                    }
+
+                    // Update flash
+                    if (flashAlpha > 0) flashAlpha = Math.max(0, flashAlpha - dt * 1.5);
+
+                    // Update shake
+                    if (shakeAmount > 0) shakeAmount = Math.max(0, shakeAmount - dt * 30);
+
+                    // Check for missed arrows
+                    for (const arrow of arrows) {
+                        if (!arrow.hit && !arrow.missed && elapsedTime > arrow.targetTime + 0.22) {
+                            handleMiss(arrow);
+                        }
+                    }
+
+                    // Remove old arrows
+                    arrows = arrows.filter(a => {
+                        if (a.hit || a.missed) {
+                            return elapsedTime < a.targetTime + 0.6;
+                        }
+                        return elapsedTime < a.targetTime + 0.35;
+                    });
+
+                    // Update difficulty
+                    difficulty = 1 + Math.floor(totalHits / 18);
+                    travelDuration = Math.max(1.1, 2.2 - difficulty * 0.08);
+                    bpm = Math.min(175, 128 + difficulty * 4);
+                    beatInterval = 60 / bpm;
+                }
+
+                if (gameState === 'title') {
+                    elapsedTime += dt;
+                    titlePulse += dt;
+                }
+
+                // Update particles and disco
+                updateParticles(dt);
+                discoRotation += dt * 0.6;
+                spotlightAngle += dt * 0.35;
+
+                // --- Draw ---
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                // Screen shake offset
+                let shakeX = 0,
+                    shakeY = 0;
+                if (shakeAmount > 0.5) {
+                    shakeX = (Math.random() - 0.5) * shakeAmount;
+                    shakeY = (Math.random() - 0.5) * shakeAmount;
+                }
+
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                // Background
+                const bgGrad = ctx.createRadialGradient(canvas.width / 2, canvas.height * 0.3, canvas.width * 0.1,
+                    canvas.width / 2, canvas.height * 0.5, canvas.width * 1.2);
+                bgGrad.addColorStop(0, '#1a1030');
+                bgGrad.addColorStop(0.5, '#0d0a20');
+                bgGrad.addColorStop(1, '#050510');
+                ctx.fillStyle = bgGrad;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Spotlights
+                drawSpotlights(ctx);
+
+                // Disco ball
+                const discoX = canvas.width * 0.5;
+                const discoY = canvas.height * 0.07;
+                const discoRadius = Math.min(canvas.width * 0.06, 35);
+                drawDiscoBall(ctx, discoX, discoY, discoRadius);
+
+                // Dance floor
+                drawDanceFloor(ctx);
+
+                // Lane guides
+                const targetY = getTargetY();
+                const laneSize = canvas.width * 0.06;
+                const beatPulse = Math.sin(beatTimer * Math.PI / beatInterval) * 0.5 + 0.5;
+
+                for (let lane = 0; lane < 4; lane++) {
+                    const lx = getLaneX(lane) + canvas.width * 0.07;
+                    // Draw lane background
+                    ctx.fillStyle = 'rgba(255,255,255,0.02)';
+                    ctx.fillRect(lx - laneSize * 1.3, canvas.height * 0.05, laneSize * 2.6, targetY - canvas.height * 0.05);
+                    // Draw lane line
+                    ctx.strokeStyle = LANE_GLOW[lane] + '0.2)';
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([15, 20]);
+                    ctx.beginPath();
+                    ctx.moveTo(lx, canvas.height * 0.06);
+                    ctx.lineTo(lx, targetY - laneSize);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    // Target zone
+                    drawTargetZone(ctx, lx, targetY, laneSize, lane, beatPulse);
+                }
+
+                // Draw falling arrows
+                const spawnY = getSpawnY();
+                for (const arrow of arrows) {
+                    if (arrow.hit || arrow.missed) continue;
+                    const progress = (elapsedTime - arrow.spawnTime) / (arrow.targetTime - arrow.spawnTime);
+                    const y = spawnY + progress * (targetY - spawnY);
+                    const lx = getLaneX(arrow.lane) + canvas.width * 0.07;
+                    const alpha = progress < 0.1 ? progress / 0.1 : 1;
+                    drawArrowShape(ctx, lx, y, laneSize * 0.9, arrow.lane, Math.min(1, alpha));
+                }
+
+                // Hit flash
+                if (flashAlpha > 0) {
+                    ctx.fillStyle = 'rgba(255,255,255,' + flashAlpha + ')';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                }
+
+                // Draw character
+                const charX = canvas.width * 0.78;
+                const charY = canvas.height * 0.42;
+                const charScale = Math.min(canvas.width / 700, canvas.height / 550);
+                drawCharacter(ctx, charX, charY, charScale);
+
+                // Draw particles
+                drawParticles(ctx);
+
+                ctx.restore();
+
+                // --- UI (no shake) ---
+                // Score
+                const uiX = canvas.width * 0.04;
+                const uiY = canvas.height * 0.04;
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold ' + Math.round(canvas.width * 0.04) + 'px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText('SCORE: ' + score.toLocaleString(), uiX, uiY + canvas.height * 0.04);
+
+                // Combo
+                if (combo >= 3) {
+                    const comboGrad = ctx.createLinearGradient(uiX, uiY + canvas.height * 0.08, uiX + canvas.width * 0.2, uiY +
+                        canvas.height * 0.08);
+                    comboGrad.addColorStop(0, '#ffcc00');
+                    comboGrad.addColorStop(1, '#ff6600');
+                    ctx.fillStyle = comboGrad;
+                    ctx.font = 'bold ' + Math.round(canvas.width * 0.05) + 'px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText(combo + 'x COMBO!', uiX, uiY + canvas.height * 0.1);
+                }
+
+                // Lives
+                ctx.fillStyle = '#ffffff';
+                ctx.font = Math.round(canvas.width * 0.028) + 'px "Segoe UI", Arial, sans-serif';
+                ctx.textAlign = 'right';
+                const livesX = canvas.width * 0.96;
+                ctx.fillText('LIVES: ' + '❤️'.repeat(Math.max(0, maxMisses - misses)), livesX, uiY + canvas.height * 0.04);
+
+                // Combo text popup
+                if (comboTextTimer > 0 && comboText) {
+                    const ctAlpha = Math.min(1, comboTextTimer / 0.3);
+                    const ctScale = 1 + (1.2 - comboTextTimer) * 0.5;
+                    ctx.save();
+                    ctx.globalAlpha = ctAlpha;
+                    ctx.fillStyle = '#ffdd00';
+                    ctx.font = 'bold ' + Math.round(canvas.width * 0.06 * ctScale) + 'px "Segoe UI", Arial, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = '#ff6600';
+                    ctx.shadowBlur = 20;
+                    ctx.fillText(comboText, canvas.width / 2, canvas.height * 0.45);
+                    ctx.shadowBlur = 0;
+                    ctx.restore();
+                }
+
+                // Difficulty indicator
+                if (gameState === 'playing') {
+                    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                    ctx.font = Math.round(canvas.width * 0.022) + 'px "Segoe UI", Arial, sans-serif';
+                    ctx.textAlign = 'right';
+                    ctx.fillText('LEVEL ' + difficulty + ' | BPM ' + bpm, livesX, uiY + canvas.height * 0.08);
+                }
+
+                // --- Title Screen ---
+                if (gameState === 'title') {
+                    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    const titleY = canvas.height * 0.3;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold ' + Math.round(canvas.width * 0.07) + 'px "Segoe UI", Arial, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = '#ff3060';
+                    ctx.shadowBlur = 30;
+                    ctx.fillText('iShowSpeed', canvas.width / 2, titleY);
+                    ctx.fillStyle = '#ffcc00';
+                    ctx.fillText('DANCE PARTY! 🔥', canvas.width / 2, titleY + canvas.width * 0.07);
+                    ctx.shadowBlur = 0;
+
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = Math.round(canvas.width * 0.028) + 'px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText('Use ARROW KEYS or tap the buttons', canvas.width / 2, titleY + canvas.width * 0.13);
+                    ctx.fillText('Hit the arrows to make Speed dance!', canvas.width / 2, titleY + canvas.width * 0.16);
+
+                    const pulse = Math.sin(titlePulse * 3) * 0.4 + 0.6;
+                    ctx.fillStyle = 'rgba(255,255,200,' + (0.6 + pulse * 0.4) + ')';
+                    ctx.font = 'bold ' + Math.round(canvas.width * 0.035) + 'px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText('PRESS SPACE OR TAP TO START', canvas.width / 2, titleY + canvas.width * 0.22);
+
+                    // Draw character preview
+                    const prevCharX = canvas.width * 0.5;
+                    const prevCharY = canvas.height * 0.62;
+                    drawCharacter(ctx, prevCharX, prevCharY, charScale * 1.3);
+                }
+
+                // --- Game Over Screen ---
+                if (gameState === 'gameover') {
+                    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    const goY = canvas.height * 0.28;
+                    ctx.fillStyle = '#ff3060';
+                    ctx.font = 'bold ' + Math.round(canvas.width * 0.07) + 'px "Segoe UI", Arial, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = '#ff0000';
+                    ctx.shadowBlur = 25;
+                    ctx.fillText('GAME OVER!', canvas.width / 2, goY);
+                    ctx.shadowBlur = 0;
+
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = Math.round(canvas.width * 0.04) + 'px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText('Final Score: ' + score.toLocaleString(), canvas.width / 2, goY + canvas.width * 0.06);
+                    ctx.fillText('Max Combo: ' + maxCombo + 'x', canvas.width / 2, goY + canvas.width * 0.1);
+                    ctx.fillText('Level Reached: ' + difficulty, canvas.width / 2, goY + canvas.width * 0.14);
+
+                    const goPulse = Math.sin(elapsedTime * 3) * 0.4 + 0.6;
+                    ctx.fillStyle = 'rgba(255,220,100,' + (0.6 + goPulse * 0.4) + ')';
+                    ctx.font = 'bold ' + Math.round(canvas.width * 0.032) + 'px "Segoe UI", Arial, sans-serif';
+                    ctx.fillText('PRESS SPACE OR TAP TO RESTART', canvas.width / 2, goY + canvas.width * 0.2);
+                }
+
+                requestAnimationFrame(render);
+            }
+
+            // --- Input Handling ---
+            function handleLanePress(lane) {
+                initAudio();
+                if (gameState === 'title') {
+                    resetGame();
+                    gameState = 'playing';
+                    elapsedTime = 0;
+                    beatTimer = 0;
+                    lastBeatTime = -10;
+                    lastTime = performance.now();
+                    return;
+                }
+                if (gameState === 'gameover') {
+                    resetGame();
+                    gameState = 'playing';
+                    elapsedTime = 0;
+                    beatTimer = 0;
+                    lastBeatTime = -10;
+                    lastTime = performance.now();
+                    return;
+                }
+                if (gameState === 'playing') {
+                    checkHit(lane);
+                }
+            }
+
+            document.addEventListener('keydown', (e) => {
+                if (e.key === ' ' || e.code === 'Space') {
+                    e.preventDefault();
+                    if (gameState === 'title' || gameState === 'gameover') {
+                        handleLanePress(0);
+                    }
+                    return;
+                }
+                const laneIdx = LANE_KEYS.indexOf(e.code);
+                const altIdx = LANE_ALT_KEYS.indexOf(e.code);
+                const idx = laneIdx >= 0 ? laneIdx : (altIdx >= 0 ? altIdx : -1);
+                if (idx >= 0) {
+                    e.preventDefault();
+                    if (!keysPressed[idx]) {
+                        keysPressed[idx] = true;
+                        keyJustPressed[idx] = true;
+                        handleLanePress(idx);
+                    }
+                }
+            });
+
+            document.addEventListener('keyup', (e) => {
+                const laneIdx = LANE_KEYS.indexOf(e.code);
+                const altIdx = LANE_ALT_KEYS.indexOf(e.code);
+                const idx = laneIdx >= 0 ? laneIdx : (altIdx >= 0 ? altIdx : -1);
+                if (idx >= 0) {
+                    keysPressed[idx] = false;
+                }
+            });
+
+            // Touch controls
+            const touchBtns = document.querySelectorAll('.touch-btn');
+            touchBtns.forEach(btn => {
+                btn.addEventListener('pointerdown', (e) => {
+                    e.preventDefault();
+                    const lane = parseInt(btn.dataset.lane);
+                    handleLanePress(lane);
+                    // Visual feedback handled by CSS :active
+                });
+                btn.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    const lane = parseInt(btn.dataset.lane);
+                    handleLanePress(lane);
+                });
+            });
+
+            // Canvas tap for title/gameover
+            canvas.addEventListener('click', (e) => {
+                initAudio();
+                if (gameState === 'title' || gameState === 'gameover') {
+                    handleLanePress(0);
+                }
+            });
+
+            // Prevent scrolling on mobile
+            document.addEventListener('touchmove', function(e) {
+                if (e.target.closest('#touch-controls') || e.target.closest('canvas')) {
+                    e.preventDefault();
+                }
+            }, { passive: false });
+
+            // --- Initialize and Start ---
+            resizeCanvas();
+            resetGame();
+            gameState = 'title';
+            elapsedTime = 0;
+            lastTime = performance.now();
+            requestAnimationFrame(render);
+
+            console.log('🎉 iShowSpeed Dance Party ready!');
+            console.log('Use Arrow Keys or tap the buttons to play.');
+            console.log('Press SPACE or tap the screen to start.');
+        })();
+    </script>
+</body>
+</html>
