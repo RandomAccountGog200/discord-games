@@ -493,5 +493,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T05:37:08.272Z",
     "updatedAt": "2026-07-16T05:37:08.272Z"
+  },
+  {
+    "slug": "100-in-321-group-chat-name-challenge",
+    "title": "100 IN 321 - Group Chat Name Challenge",
+    "description": "I am making this the longest group chat name but it can only be 100 letters long and it’s 100 in 321",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T05:37:48.177Z",
+    "updatedAt": "2026-07-16T05:37:48.177Z"
   }
 ]
