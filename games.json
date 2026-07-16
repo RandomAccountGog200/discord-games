@@ -133,5 +133,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T04:42:03.823Z",
     "updatedAt": "2026-07-16T04:42:03.823Z"
+  },
+  {
+    "slug": "nosey-boys-xqc",
+    "title": "Nosey Boys xQc",
+    "description": "nosey boys xqc",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T04:43:02.530Z",
+    "updatedAt": "2026-07-16T04:43:02.530Z"
   }
 ]
