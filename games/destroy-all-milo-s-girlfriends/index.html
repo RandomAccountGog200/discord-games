@@ -1,0 +1,1072 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Destroy All Milo's Girlfriends! 💔</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #0a0010;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: manipulation;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            cursor: crosshair;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            let W, H;
+            let centerX, centerY;
+
+            function resizeCanvas() {
+                W = canvas.width = window.innerWidth;
+                H = canvas.height = window.innerHeight;
+                centerX = W / 2;
+                centerY = H / 2;
+            }
+            resizeCanvas();
+            window.addEventListener('resize', () => {
+                resizeCanvas();
+                // Update milo position
+                if (milo) {
+                    milo.x = centerX;
+                    milo.y = centerY;
+                }
+            });
+
+            // Audio setup
+            let audioCtx = null;
+
+            function getAudioCtx() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                return audioCtx;
+            }
+
+            function playSound(freq, type, duration, vol = 0.15, slideTo = null) {
+                try {
+                    const ac = getAudioCtx();
+                    const osc = ac.createOscillator();
+                    const gain = ac.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, ac.currentTime);
+                    if (slideTo) osc.frequency.linearRampToValueAtTime(slideTo, ac.currentTime + duration);
+                    gain.gain.setValueAtTime(vol, ac.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + duration);
+                    osc.connect(gain);
+                    gain.connect(ac.destination);
+                    osc.start(ac.currentTime);
+                    osc.stop(ac.currentTime + duration);
+                } catch (e) {
+                    // Silently handle audio errors
+                }
+            }
+
+            function sfxPop() { playSound(800, 'sine', 0.1, 0.12, 200); }
+
+            function sfxCombo() { playSound(1200, 'square', 0.08, 0.15, 600);
+                playSound(1600, 'sine', 0.06, 0.12, 900); }
+
+            function sfxDamage() { playSound(60, 'sawtooth', 0.25, 0.3, 30);
+                playSound(50, 'triangle', 0.2, 0.35, 25); }
+
+            function sfxGameOver() {
+                playSound(200, 'sawtooth', 0.3, 0.5, 80);
+                setTimeout(() => playSound(150, 'sawtooth', 0.3, 0.5, 50), 300);
+                setTimeout(() => playSound(100, 'sawtooth', 0.4, 0.7, 40), 600);
+            }
+
+            function sfxSpecial() { playSound(500, 'sine', 0.06, 0.2, 1400);
+                playSound(700, 'triangle', 0.05, 0.18, 1600); }
+
+            // Game state
+            const STATE = { PLAYING: 'playing', GAMEOVER: 'gameover' };
+            let gameState = STATE.PLAYING;
+            let score = 0;
+            let lives = 5;
+            let maxLives = 5;
+            let difficulty = 1;
+            let spawnTimer = 0;
+            let spawnInterval = 1.4; // seconds
+            let enemiesDestroyed = 0;
+            let comboCnt = 0;
+            let lastKillTime = 0;
+            let comboTimer = 0;
+            let screenShake = 0;
+            let shakeX = 0;
+            let shakeY = 0;
+            let miloFlashTimer = 0;
+            let instructionAlpha = 1;
+            let gameOverTimer = 0;
+
+            // Game objects
+            let milo = null;
+            let enemies = [];
+            let particles = [];
+            let floatingTexts = [];
+            let bgStars = [];
+
+            // Milo
+            function createMilo() {
+                return {
+                    x: centerX,
+                    y: centerY,
+                    radius: 35,
+                    fearLevel: 0, // 0-1, increases when enemies are close
+                    eyeOffset: 0,
+                    bounceAnim: 0,
+                };
+            }
+
+            // Enemy types
+            const ENEMY_TYPES = {
+                normal: { name: 'normal', baseSpeed: 80, radius: 32, hp: 1, points: 10, color: '#ff6b9d',
+                    glowColor: '#ff4080' },
+                fast: { name: 'fast', baseSpeed: 150, radius: 26, hp: 1, points: 25, color: '#ff3d67',
+                    glowColor: '#ff1744' },
+                tough: { name: 'tough', baseSpeed: 55, radius: 42, hp: 2, points: 40, color: '#e040fb',
+                    glowColor: '#d500f9' },
+                golden: { name: 'golden', baseSpeed: 90, radius: 30, hp: 1, points: 75, color: '#ffd740',
+                    glowColor: '#ffc400' },
+            };
+
+            function createEnemy(typeKey = 'normal') {
+                const type = ENEMY_TYPES[typeKey];
+                // Spawn from edges
+                const side = Math.floor(Math.random() * 4); // 0: top, 1: right, 2: bottom, 3: left
+                let x, y;
+                const margin = type.radius + 10;
+                switch (side) {
+                    case 0:
+                        x = Math.random() * W;
+                        y = -margin;
+                        break;
+                    case 1:
+                        x = W + margin;
+                        y = Math.random() * H;
+                        break;
+                    case 2:
+                        x = Math.random() * W;
+                        y = H + margin;
+                        break;
+                    case 3:
+                        x = -margin;
+                        y = Math.random() * H;
+                        break;
+                }
+                const angle = Math.atan2(centerY - y, centerX - x);
+                const speed = type.baseSpeed + (difficulty - 1) * 25 + Math.random() * 30;
+                return {
+                    x,
+                    y,
+                    type,
+                    hp: type.hp,
+                    maxHp: type.hp,
+                    radius: type.radius,
+                    speed,
+                    angle,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    wobble: Math.random() * Math.PI * 2,
+                    wobbleSpeed: (Math.random() - 0.5) * 3,
+                    wobbleAmp: (Math.random() * 0.3 + 0.1),
+                    alive: true,
+                    hitFlash: 0,
+                    scale: 1,
+                };
+            }
+
+            function createParticle(x, y, color, count = 12) {
+                for (let i = 0; i < count; i++) {
+                    const angle = (Math.PI * 2 / count) * i + Math.random() * 0.4;
+                    const speed = 120 + Math.random() * 280;
+                    particles.push({
+                        x,
+                        y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        life: 0.5 + Math.random() * 0.7,
+                        maxLife: 0.5 + Math.random() * 0.7,
+                        color,
+                        radius: 2 + Math.random() * 5,
+                    });
+                }
+            }
+
+            function createFloatingText(x, y, text, color = '#ffffff') {
+                floatingTexts.push({
+                    x,
+                    y,
+                    text,
+                    color,
+                    life: 1.2,
+                    maxLife: 1.2,
+                    vy: -80 - Math.random() * 60,
+                });
+            }
+
+            function createBgStars() {
+                bgStars = [];
+                for (let i = 0; i < 120; i++) {
+                    bgStars.push({
+                        x: Math.random() * W,
+                        y: Math.random() * H,
+                        radius: Math.random() * 1.8 + 0.3,
+                        twinkle: Math.random() * Math.PI * 2,
+                        twinkleSpeed: 1 + Math.random() * 3,
+                        brightness: 0.3 + Math.random() * 0.7,
+                    });
+                }
+            }
+
+            function spawnEnemy() {
+                const roll = Math.random();
+                let typeKey = 'normal';
+                if (difficulty >= 4 && roll < 0.08) typeKey = 'golden';
+                else if (difficulty >= 3 && roll < 0.22) typeKey = 'tough';
+                else if (difficulty >= 2 && roll < 0.45) typeKey = 'fast';
+                else typeKey = 'normal';
+                enemies.push(createEnemy(typeKey));
+            }
+
+            function damagePlayer() {
+                if (gameState !== STATE.PLAYING) return;
+                lives--;
+                screenShake = 0.4;
+                miloFlashTimer = 0.3;
+                sfxDamage();
+                createFloatingText(centerX, centerY - 50, '💔', '#ff0000');
+                if (lives <= 0) {
+                    endGame();
+                }
+            }
+
+            function endGame() {
+                gameState = STATE.GAMEOVER;
+                gameOverTimer = 0;
+                sfxGameOver();
+                // Big explosion at milo
+                createParticle(centerX, centerY, '#ff1744', 40);
+                createParticle(centerX, centerY, '#ff6d00', 30);
+                createParticle(centerX, centerY, '#ffffff', 20);
+                // Destroy all enemies with particles
+                enemies.forEach(e => {
+                    if (e.alive) {
+                        createParticle(e.x, e.y, e.type.color, 8);
+                    }
+                });
+                enemies = [];
+            }
+
+            function restartGame() {
+                score = 0;
+                lives = maxLives;
+                difficulty = 1;
+                spawnTimer = 0;
+                spawnInterval = 1.4;
+                enemiesDestroyed = 0;
+                comboCnt = 0;
+                lastKillTime = 0;
+                comboTimer = 0;
+                screenShake = 0;
+                shakeX = 0;
+                shakeY = 0;
+                miloFlashTimer = 0;
+                instructionAlpha = 1;
+                gameOverTimer = 0;
+                enemies = [];
+                particles = [];
+                floatingTexts = [];
+                milo = createMilo();
+                gameState = STATE.PLAYING;
+                createBgStars();
+            }
+
+            function hitEnemy(enemy) {
+                if (!enemy.alive || gameState !== STATE.PLAYING) return;
+                enemy.hp--;
+                enemy.hitFlash = 0.15;
+                enemy.scale = 1.3;
+                if (enemy.hp <= 0) {
+                    enemy.alive = false;
+                    const points = enemy.type.points;
+                    // Combo
+                    const now = performance.now() / 1000;
+                    if (now - lastKillTime < 0.6) {
+                        comboCnt++;
+                        comboTimer = 1.5;
+                        if (comboCnt >= 3) {
+                            sfxCombo();
+                            createFloatingText(enemy.x, enemy.y, `${comboCnt}x COMBO! +${points * comboCnt}`,
+                                '#ffd740');
+                            score += points * comboCnt;
+                        } else {
+                            sfxPop();
+                            createFloatingText(enemy.x, enemy.y, `+${points}`, '#ffffff');
+                            score += points;
+                        }
+                    } else {
+                        comboCnt = 1;
+                        sfxPop();
+                        createFloatingText(enemy.x, enemy.y, `+${points}`, '#ffffff');
+                        score += points;
+                    }
+                    lastKillTime = now;
+                    enemiesDestroyed++;
+                    createParticle(enemy.x, enemy.y, enemy.type.color, 16);
+                    if (enemy.type.name === 'golden') {
+                        createParticle(enemy.x, enemy.y, '#ffffff', 20);
+                        sfxSpecial();
+                    }
+                    // Update difficulty
+                    difficulty = Math.floor(enemiesDestroyed / 15) + 1;
+                    spawnInterval = Math.max(0.35, 1.4 - (difficulty - 1) * 0.18);
+                } else {
+                    // Damaged but not destroyed
+                    createParticle(enemy.x, enemy.y, '#ffffff', 5);
+                    playSound(300, 'square', 0.06, 0.08, 150);
+                }
+            }
+
+            function findEnemyAt(cx, cy) {
+                let closest = null;
+                let closestDist = Infinity;
+                for (const enemy of enemies) {
+                    if (!enemy.alive) continue;
+                    const dx = cx - enemy.x;
+                    const dy = cy - enemy.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < enemy.radius + 12 && dist < closestDist) {
+                        closest = enemy;
+                        closestDist = dist;
+                    }
+                }
+                return closest;
+            }
+
+            function handleInput(clientX, clientY) {
+                if (gameState === STATE.GAMEOVER) {
+                    // Check restart button
+                    const rect = canvas.getBoundingClientRect();
+                    const cx = clientX - rect.left;
+                    const cy = clientY - rect.top;
+                    const btnX = centerX;
+                    const btnY = centerY + 60;
+                    const btnW = 200;
+                    const btnH = 50;
+                    if (cx > btnX - btnW / 2 && cx < btnX + btnW / 2 && cy > btnY - btnH / 2 && cy < btnY + btnH / 2) {
+                        restartGame();
+                    }
+                    return;
+                }
+                const rect = canvas.getBoundingClientRect();
+                const cx = clientX - rect.left;
+                const cy = clientY - rect.top;
+                const enemy = findEnemyAt(cx, cy);
+                if (enemy) {
+                    hitEnemy(enemy);
+                }
+            }
+
+            canvas.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                handleInput(e.clientX, e.clientY);
+            });
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                if (e.touches.length > 0) {
+                    handleInput(e.touches[0].clientX, e.touches[0].clientY);
+                }
+            }, { passive: false });
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+            }, { passive: false });
+
+            // Drawing functions
+            function drawHeart(ctx, x, y, size, color, glowColor) {
+                ctx.save();
+                ctx.translate(x, y);
+                const s = size / 35;
+                ctx.scale(s, s);
+
+                // Glow
+                ctx.shadowColor = glowColor;
+                ctx.shadowBlur = 18;
+
+                ctx.beginPath();
+                ctx.moveTo(0, 8);
+                ctx.bezierCurveTo(-10, -8, -24, 2, -24, 16);
+                ctx.bezierCurveTo(-24, 26, 0, 38, 0, 42);
+                ctx.bezierCurveTo(0, 38, 24, 26, 24, 16);
+                ctx.bezierCurveTo(24, 2, 10, -8, 0, 8);
+                ctx.closePath();
+                ctx.fillStyle = color;
+                ctx.fill();
+
+                // Inner highlight
+                ctx.shadowBlur = 0;
+                ctx.shadowColor = 'transparent';
+                ctx.beginPath();
+                ctx.moveTo(0, 10);
+                ctx.bezierCurveTo(-6, -2, -16, 5, -16, 14);
+                ctx.bezierCurveTo(-16, 21, 0, 30, 0, 33);
+                ctx.bezierCurveTo(0, 30, 16, 21, 16, 14);
+                ctx.bezierCurveTo(16, 5, 6, -2, 0, 10);
+                ctx.closePath();
+                const gradient = ctx.createRadialGradient(-3, 5, 2, 0, 15, 25);
+                gradient.addColorStop(0, 'rgba(255,255,255,0.5)');
+                gradient.addColorStop(1, 'rgba(255,255,255,0)');
+                ctx.fillStyle = gradient;
+                ctx.fill();
+
+                ctx.restore();
+            }
+
+            function drawMilo(ctx, milo) {
+                const { x, y, fearLevel, eyeOffset } = milo;
+                ctx.save();
+                ctx.translate(x, y);
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.beginPath();
+                ctx.ellipse(0, 28, 22, 8, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body
+                const bodyGrad = ctx.createLinearGradient(0, -5, 0, 25);
+                bodyGrad.addColorStop(0, '#5c9ce6');
+                bodyGrad.addColorStop(1, '#3b7dd8');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.roundRect(-14, 2, 28, 30, 10);
+                ctx.fill();
+                ctx.strokeStyle = '#2858a0';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Arms
+                ctx.fillStyle = '#5c9ce6';
+                ctx.strokeStyle = '#2858a0';
+                ctx.lineWidth = 2;
+                // Left arm
+                ctx.beginPath();
+                ctx.roundRect(-20, 8, 10, 20, 6);
+                ctx.fill();
+                ctx.stroke();
+                // Right arm
+                ctx.beginPath();
+                ctx.roundRect(10, 8, 10, 20, 6);
+                ctx.fill();
+                ctx.stroke();
+
+                // Head
+                const headGrad = ctx.createRadialGradient(-2, -8, 3, 0, -5, 18);
+                headGrad.addColorStop(0, '#ffe0bd');
+                headGrad.addColorStop(1, '#f0c8a0');
+                ctx.fillStyle = headGrad;
+                ctx.beginPath();
+                ctx.arc(0, -3, 17, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#c8946e';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Hair
+                ctx.fillStyle = '#4a3520';
+                ctx.beginPath();
+                ctx.arc(0, -12, 18, Math.PI, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(-8, -15, 7, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(8, -15, 7, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Eyes - get wider with fear
+                const eyeY = -6;
+                const eyeSpacing = 6;
+                const eyeSize = 3 + fearLevel * 4;
+                const pupilSize = 1.5 + fearLevel * 2;
+
+                // White of eyes
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(-eyeSpacing, eyeY + eyeOffset, eyeSize + 1, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(eyeSpacing, eyeY + eyeOffset, eyeSize + 1, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Pupils
+                ctx.fillStyle = '#1a1a1a';
+                ctx.beginPath();
+                ctx.arc(-eyeSpacing, eyeY + eyeOffset, pupilSize, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(eyeSpacing, eyeY + eyeOffset, pupilSize, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Eyebrows (worried)
+                ctx.strokeStyle = '#4a3520';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(-eyeSpacing - 4, eyeY - 5 - fearLevel * 2);
+                ctx.lineTo(-eyeSpacing + 4, eyeY - 2 + fearLevel);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(eyeSpacing + 4, eyeY - 5 - fearLevel * 2);
+                ctx.lineTo(eyeSpacing - 4, eyeY - 2 + fearLevel);
+                ctx.stroke();
+
+                // Mouth
+                const mouthY = 4;
+                if (fearLevel > 0.5) {
+                    // Open mouth (scared)
+                    ctx.fillStyle = '#333';
+                    ctx.beginPath();
+                    ctx.ellipse(0, mouthY, 4, 3 + fearLevel * 2, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                } else {
+                    // Normal mouth
+                    ctx.strokeStyle = '#c8946e';
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.arc(0, mouthY - 2, 5, 0.2, Math.PI - 0.2);
+                    ctx.stroke();
+                }
+
+                // Sweat drops when fearful
+                if (fearLevel > 0.4) {
+                    const sweatCount = Math.floor(fearLevel * 4);
+                    for (let i = 0; i < sweatCount; i++) {
+                        const sx = -12 + i * 8;
+                        const sy = -18 + i * 3;
+                        ctx.fillStyle = '#87ceeb';
+                        ctx.beginPath();
+                        ctx.arc(sx, sy, 2, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+
+                ctx.restore();
+            }
+
+            function drawBackground() {
+                // Deep space gradient
+                const bgGrad = ctx.createRadialGradient(centerX, centerY, 50, centerX, centerY, Math.max(W, H) * 0.8);
+                bgGrad.addColorStop(0, '#1a0a2e');
+                bgGrad.addColorStop(0.5, '#0d0520');
+                bgGrad.addColorStop(1, '#020010');
+                ctx.fillStyle = bgGrad;
+                ctx.fillRect(0, 0, W, H);
+
+                // Stars
+                bgStars.forEach(star => {
+                    const twinkle = Math.sin(star.twinkle) * 0.5 + 0.5;
+                    const alpha = star.brightness * (0.5 + twinkle * 0.5);
+                    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+
+                // Subtle radial rings
+                ctx.strokeStyle = 'rgba(255,100,180,0.04)';
+                ctx.lineWidth = 1;
+                for (let r = 80; r < Math.max(W, H); r += 60) {
+                    ctx.beginPath();
+                    ctx.arc(centerX, centerY, r, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+            }
+
+            function drawDangerZone() {
+                // Pulsing circle around Milo
+                const pulse = Math.sin(performance.now() / 1000 * 2) * 0.3 + 0.7;
+                const dangerRadius = milo.radius + 55;
+                const grad = ctx.createRadialGradient(centerX, centerY, milo.radius + 15, centerX, centerY, dangerRadius);
+                grad.addColorStop(0, 'rgba(255,50,50,0)');
+                grad.addColorStop(0.6, `rgba(255,30,30,${0.08 * pulse})`);
+                grad.addColorStop(1, 'rgba(255,0,0,0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, dangerRadius, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.strokeStyle = `rgba(255,80,80,${0.25 * pulse})`;
+                ctx.lineWidth = 2;
+                ctx.setLineDash([8, 12]);
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, dangerRadius, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.lineWidth = 1;
+            }
+
+            function drawUI() {
+                // Score
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 22px "Segoe UI", Tahoma, sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText(`Score: ${score}`, 20, 35);
+
+                // Combo
+                if (comboTimer > 0 && comboCnt >= 3) {
+                    const comboAlpha = Math.min(1, comboTimer);
+                    ctx.fillStyle = `rgba(255,215,64,${comboAlpha})`;
+                    ctx.font = 'bold 20px "Segoe UI", Tahoma, sans-serif';
+                    ctx.fillText(`${comboCnt}x COMBO!`, 20, 62);
+                }
+
+                // Lives
+                ctx.textAlign = 'right';
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 18px "Segoe UI", Tahoma, sans-serif';
+                ctx.fillText('Lives:', W - 20, 35);
+                for (let i = 0; i < maxLives; i++) {
+                    const hx = W - 70 - i * 32;
+                    const hy = 24;
+                    if (i < lives) {
+                        ctx.fillStyle = '#ff4060';
+                        ctx.shadowColor = '#ff2040';
+                        ctx.shadowBlur = 8;
+                    } else {
+                        ctx.fillStyle = '#444';
+                        ctx.shadowColor = 'transparent';
+                        ctx.shadowBlur = 0;
+                    }
+                    // Small heart
+                    ctx.beginPath();
+                    const hs = 12;
+                    ctx.moveTo(hx, hy + hs * 0.25);
+                    ctx.bezierCurveTo(hx - hs * 0.3, hy - hs * 0.25, hx - hs * 0.7, hy + hs * 0.05, hx - hs * 0.7, hy +
+                        hs * 0.45);
+                    ctx.bezierCurveTo(hx - hs * 0.7, hy + hs * 0.75, hx, hy + hs * 1.1, hx, hy + hs * 1.2);
+                    ctx.bezierCurveTo(hx, hy + hs * 1.1, hx + hs * 0.7, hy + hs * 0.75, hx + hs * 0.7, hy + hs * 0.45);
+                    ctx.bezierCurveTo(hx + hs * 0.7, hy + hs * 0.05, hx + hs * 0.3, hy - hs * 0.25, hx, hy + hs * 0.25);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+                ctx.shadowBlur = 0;
+                ctx.shadowColor = 'transparent';
+
+                // Difficulty
+                ctx.textAlign = 'left';
+                ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                ctx.font = '14px "Segoe UI", Tahoma, sans-serif';
+                ctx.fillText(`Wave: ${difficulty}`, 20, H - 20);
+
+                // Enemies remaining indicator
+                const aliveCount = enemies.filter(e => e.alive).length;
+                if (aliveCount > 8) {
+                    ctx.fillStyle = 'rgba(255,150,150,0.7)';
+                    ctx.font = 'bold 14px "Segoe UI", Tahoma, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`⚠ ${aliveCount} girlfriends incoming! ⚠`, centerX, H - 20);
+                }
+
+                // Instructions (fading)
+                if (instructionAlpha > 0.01 && gameState === STATE.PLAYING) {
+                    ctx.fillStyle = `rgba(255,255,255,${instructionAlpha})`;
+                    ctx.font = 'bold 16px "Segoe UI", Tahoma, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('Tap or click the hearts to destroy them!', centerX, H - 50);
+                    ctx.fillText('Protect Milo! 💙', centerX, H - 28);
+                }
+            }
+
+            function drawGameOver() {
+                // Darken
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, W, H);
+
+                // Title
+                ctx.fillStyle = '#ff4060';
+                ctx.font = 'bold 42px "Segoe UI", Tahoma, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = '#ff0040';
+                ctx.shadowBlur = 25;
+                ctx.fillText('GAME OVER', centerX, centerY - 40);
+                ctx.shadowBlur = 0;
+                ctx.shadowColor = 'transparent';
+
+                // Score
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 24px "Segoe UI", Tahoma, sans-serif';
+                ctx.fillText(`Final Score: ${score}`, centerX, centerY + 10);
+                ctx.fillText(`Girlfriends Destroyed: ${enemiesDestroyed}`, centerX, centerY + 40);
+                ctx.fillText(`Wave Reached: ${difficulty}`, centerX, centerY + 68);
+
+                // Restart button
+                const btnX = centerX;
+                const btnY = centerY + 110;
+                const btnW = 200;
+                const btnH = 50;
+
+                const btnGrad = ctx.createLinearGradient(btnX, btnY - btnH / 2, btnX, btnY + btnH / 2);
+                btnGrad.addColorStop(0, '#ff4060');
+                btnGrad.addColorStop(1, '#c02040');
+                ctx.fillStyle = btnGrad;
+                ctx.beginPath();
+                ctx.roundRect(btnX - btnW / 2, btnY - btnH / 2, btnW, btnH, 25);
+                ctx.fill();
+                ctx.strokeStyle = '#ff80a0';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 20px "Segoe UI", Tahoma, sans-serif';
+                ctx.fillText('Play Again', btnX, btnY + 7);
+
+                // Glow on button
+                ctx.shadowColor = '#ff4060';
+                ctx.shadowBlur = 20;
+                ctx.strokeStyle = 'rgba(255,100,140,0.6)';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.roundRect(btnX - btnW / 2, btnY - btnH / 2, btnW, btnH, 25);
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+                ctx.shadowColor = 'transparent';
+                ctx.lineWidth = 1;
+            }
+
+            function drawEnemy(enemy) {
+                if (!enemy.alive) return;
+                const { x, y, type, radius, hitFlash, scale } = enemy;
+                const currentRadius = radius * scale;
+                const flashColor = hitFlash > 0 ? '#ffffff' : type.color;
+                const glowColor = hitFlash > 0 ? '#ffffff' : type.glowColor;
+                drawHeart(ctx, x, y, currentRadius, flashColor, glowColor);
+
+                // Eyes on heart
+                const eyeY = y - currentRadius * 0.15;
+                const eyeSpacing = currentRadius * 0.22;
+                const eyeR = currentRadius * 0.12;
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(x - eyeSpacing, eyeY, eyeR, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(x + eyeSpacing, eyeY, eyeR, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#1a1a1a';
+                const pupilR = eyeR * 0.55;
+                ctx.beginPath();
+                ctx.arc(x - eyeSpacing, eyeY, pupilR, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(x + eyeSpacing, eyeY, pupilR, 0, Math.PI * 2);
+                ctx.fill();
+
+                // HP indicator for tough enemies
+                if (type.hp > 1 && enemy.hp < enemy.maxHp) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+                    ctx.font = 'bold 12px "Segoe UI", Tahoma, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`${enemy.hp}`, x, y - currentRadius - 4);
+                }
+
+                // Small blush circles
+                const blushY = eyeY + currentRadius * 0.2;
+                ctx.fillStyle = 'rgba(255,150,150,0.5)';
+                ctx.beginPath();
+                ctx.arc(x - eyeSpacing - currentRadius * 0.1, blushY, currentRadius * 0.08, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(x + eyeSpacing + currentRadius * 0.1, blushY, currentRadius * 0.08, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Game loop
+            let lastTime = performance.now();
+
+            function update(dt) {
+                if (gameState === STATE.GAMEOVER) {
+                    gameOverTimer += dt;
+                    // Update remaining particles
+                    particles.forEach(p => {
+                        p.x += p.vx * dt;
+                        p.y += p.vy * dt;
+                        p.life -= dt;
+                    });
+                    particles = particles.filter(p => p.life > 0);
+                    floatingTexts.forEach(ft => { ft.y += ft.vy * dt;
+                        ft.life -= dt; });
+                    floatingTexts = floatingTexts.filter(ft => ft.life > 0);
+                    bgStars.forEach(s => { s.twinkle += s.twinkleSpeed * dt; });
+                    screenShake = Math.max(0, screenShake - dt);
+                    return;
+                }
+
+                // Update instruction fade
+                if (instructionAlpha > 0.01) {
+                    instructionAlpha -= dt * 0.3;
+                    if (instructionAlpha < 0.01) instructionAlpha = 0;
+                }
+
+                // Update screen shake
+                if (screenShake > 0) {
+                    screenShake = Math.max(0, screenShake - dt);
+                    shakeX = (Math.random() - 0.5) * screenShake * 25;
+                    shakeY = (Math.random() - 0.5) * screenShake * 25;
+                } else {
+                    shakeX = 0;
+                    shakeY = 0;
+                }
+
+                // Update milo flash
+                miloFlashTimer = Math.max(0, miloFlashTimer - dt);
+
+                // Update combo timer
+                if (comboTimer > 0) {
+                    comboTimer -= dt;
+                    if (comboTimer <= 0) comboCnt = 0;
+                }
+
+                // Update milo fear level
+                let closestDist = Infinity;
+                enemies.forEach(e => {
+                    if (!e.alive) return;
+                    const dx = centerX - e.x;
+                    const dy = centerY - e.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < closestDist) closestDist = dist;
+                });
+                const dangerZone = milo.radius + 55;
+                milo.fearLevel = Math.max(0, Math.min(1, 1 - (closestDist - milo.radius) / (dangerZone - milo.radius)));
+                milo.eyeOffset = milo.fearLevel * 3;
+                milo.bounceAnim += dt * 3;
+
+                // Spawn enemies
+                spawnTimer += dt;
+                const currentInterval = spawnInterval + (Math.random() - 0.5) * 0.5;
+                if (spawnTimer >= Math.max(0.3, currentInterval)) {
+                    spawnTimer = 0;
+                    if (enemies.filter(e => e.alive).length < 25) {
+                        spawnEnemy();
+                    }
+                }
+
+                // Update enemies
+                enemies.forEach(enemy => {
+                    if (!enemy.alive) return;
+                    // Wobble
+                    enemy.wobble += enemy.wobbleSpeed * dt;
+                    const wobbleOffset = Math.sin(enemy.wobble) * enemy.wobbleAmp * enemy.speed * dt;
+                    const perpAngle = enemy.angle + Math.PI / 2;
+                    enemy.x += enemy.vx * dt + Math.cos(perpAngle) * wobbleOffset;
+                    enemy.y += enemy.vy * dt + Math.sin(perpAngle) * wobbleOffset;
+
+                    // Recalculate angle toward center (slight homing)
+                    const toCx = centerX - enemy.x;
+                    const toCy = centerY - enemy.y;
+                    const targetAngle = Math.atan2(toCy, toCx);
+                    const angleDiff = targetAngle - enemy.angle;
+                    const adjustedDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff));
+                    enemy.angle += adjustedDiff * dt * 1.5;
+                    enemy.vx = Math.cos(enemy.angle) * enemy.speed;
+                    enemy.vy = Math.sin(enemy.angle) * enemy.speed;
+
+                    // Hit flash decay
+                    enemy.hitFlash = Math.max(0, enemy.hitFlash - dt);
+                    // Scale recovery
+                    enemy.scale += (1 - enemy.scale) * dt * 10;
+                    if (Math.abs(enemy.scale - 1) < 0.01) enemy.scale = 1;
+
+                    // Check if reached Milo
+                    const dx = centerX - enemy.x;
+                    const dy = centerY - enemy.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < milo.radius + enemy.radius * 0.7) {
+                        enemy.alive = false;
+                        createParticle(enemy.x, enemy.y, '#ff0000', 20);
+                        damagePlayer();
+                    }
+                });
+
+                // Clean up dead enemies
+                enemies = enemies.filter(e => e.alive || e.hitFlash > 0 || e.scale > 1.05);
+                // Actually keep only alive ones (particles handle the death visuals)
+                enemies = enemies.filter(e => e.alive);
+
+                // Update particles
+                particles.forEach(p => {
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.life -= dt;
+                    p.vy += 60 * dt; // gravity
+                });
+                particles = particles.filter(p => p.life > 0);
+
+                // Update floating texts
+                floatingTexts.forEach(ft => {
+                    ft.y += ft.vy * dt;
+                    ft.life -= dt;
+                });
+                floatingTexts = floatingTexts.filter(ft => ft.life > 0);
+
+                // Update bg stars
+                bgStars.forEach(s => { s.twinkle += s.twinkleSpeed * dt; });
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, W, H);
+
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                drawBackground();
+                drawDangerZone();
+
+                // Draw enemies
+                enemies.forEach(enemy => drawEnemy(enemy));
+
+                // Draw Milo
+                if (miloFlashTimer > 0 && Math.floor(miloFlashTimer * 30) % 2 === 0) {
+                    // Flash milo red on damage
+                    ctx.fillStyle = 'rgba(255,0,0,0.3)';
+                    ctx.beginPath();
+                    ctx.arc(centerX, centerY, milo.radius + 10, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                drawMilo(ctx, milo);
+
+                // Draw particles
+                particles.forEach(p => {
+                    const alpha = p.life / p.maxLife;
+                    ctx.fillStyle = p.color.replace(')', `,${alpha})`).replace('rgb',
+                        'rgba');
+                    if (p.color.startsWith('#')) {
+                        const hex = p.color;
+                        const r = parseInt(hex.slice(1, 3), 16);
+                        const g = parseInt(hex.slice(3, 5), 16);
+                        const b = parseInt(hex.slice(5, 7), 16);
+                        ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+                    }
+                    ctx.shadowColor = ctx.fillStyle;
+                    ctx.shadowBlur = 4;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.radius * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+                ctx.shadowBlur = 0;
+                ctx.shadowColor = 'transparent';
+
+                // Draw floating texts
+                floatingTexts.forEach(ft => {
+                    const alpha = ft.life / ft.maxLife;
+                    const scale = 1 + (1 - alpha) * 0.5;
+                    ctx.fillStyle = ft.color.replace(')', `,${alpha})`);
+                    if (ft.color.startsWith('#')) {
+                        const hex = ft.color;
+                        const r = parseInt(hex.slice(1, 3), 16);
+                        const g = parseInt(hex.slice(3, 5), 16);
+                        const b = parseInt(hex.slice(5, 7), 16);
+                        ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+                    }
+                    ctx.font = `bold ${16*scale}px "Segoe UI", Tahoma, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(ft.text, ft.x, ft.y);
+                });
+
+                ctx.restore();
+
+                // UI (not affected by shake)
+                drawUI();
+
+                // Game over overlay
+                if (gameState === STATE.GAMEOVER) {
+                    drawGameOver();
+                }
+
+                // Vignette
+                const vignetteGrad = ctx.createRadialGradient(centerX, centerY, Math.min(W, H) * 0.4, centerX, centerY,
+                    Math.max(W, H) * 0.75);
+                vignetteGrad.addColorStop(0, 'rgba(0,0,0,0)');
+                vignetteGrad.addColorStop(1, 'rgba(0,0,0,0.5)');
+                ctx.fillStyle = vignetteGrad;
+                ctx.fillRect(0, 0, W, H);
+            }
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.1) dt = 0.1; // Cap to prevent huge jumps
+                lastTime = timestamp;
+
+                update(dt);
+                render();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // Initialize
+            function init() {
+                milo = createMilo();
+                createBgStars();
+                enemies = [];
+                particles = [];
+                floatingTexts = [];
+                score = 0;
+                lives = maxLives;
+                difficulty = 1;
+                spawnTimer = 0;
+                spawnInterval = 1.4;
+                enemiesDestroyed = 0;
+                comboCnt = 0;
+                lastKillTime = 0;
+                comboTimer = 0;
+                screenShake = 0;
+                shakeX = 0;
+                shakeY = 0;
+                miloFlashTimer = 0;
+                instructionAlpha = 1;
+                gameOverTimer = 0;
+                gameState = STATE.PLAYING;
+                lastTime = performance.now();
+            }
+
+            init();
+            requestAnimationFrame(gameLoop);
+
+            // Handle window resize for bg stars
+            window.addEventListener('resize', () => {
+                createBgStars();
+            });
+
+            console.log('💔 Destroy All Milo\'s Girlfriends! - Ready to play!');
+            console.log('Tap or click the heart-shaped girlfriends to destroy them before they reach Milo!');
+            console.log('Protect Milo at all costs! 💙');
+        })();
+    </script>
+</body>
+</html>
