@@ -1,0 +1,1347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jude's Pea-pocalypse</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0a0a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: manipulation;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        canvas {
+            border: 3px solid #333;
+            border-radius: 12px;
+            box-shadow: 0 0 40px rgba(255, 100, 30, 0.4), 0 0 80px rgba(255, 60, 20, 0.2);
+            max-width: 100vw;
+            max-height: 100vh;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+
+            // Game resolution
+            const W = 800;
+            const H = 500;
+            canvas.width = W;
+            canvas.height = H;
+
+            // Scale canvas to fit screen
+            function resizeCanvas() {
+                const scale = Math.min(window.innerWidth / W, window.innerHeight / H) * 0.95;
+                canvas.style.width = (W * scale) + 'px';
+                canvas.style.height = (H * scale) + 'px';
+            }
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+
+            // Audio context
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playSound(freq, type, duration, vol = 0.15, freqEnd = null, noise = false) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (freqEnd) osc.frequency.linearRampToValueAtTime(freqEnd, t + duration);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    if (noise) {
+                        const bufferSize = audioCtx.sampleRate * duration;
+                        const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                        const data = buffer.getChannelData(0);
+                        for (let i = 0; i < bufferSize; i++) {
+                            data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2);
+                        }
+                        const noiseSrc = audioCtx.createBufferSource();
+                        noiseSrc.buffer = buffer;
+                        const noiseGain = audioCtx.createGain();
+                        noiseGain.gain.setValueAtTime(vol * 2, t);
+                        noiseGain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                        noiseSrc.connect(noiseGain);
+                        noiseGain.connect(audioCtx.destination);
+                        noiseSrc.start(t);
+                        noiseSrc.stop(t + duration);
+                    }
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) {}
+            }
+
+            function sfxJump() { playSound(300, 'sine', 0.2, 0.1, 600); }
+
+            function sfxPea() { playSound(800, 'sine', 0.08, 0.04, 1200); }
+
+            function sfxBump() { playSound(80, 'triangle', 0.3, 0.12, 30, true); }
+
+            function sfxExplosion() { playSound(40, 'sawtooth', 1.5, 0.5, 10, true);
+                playSound(25, 'square', 1.8, 0.4, 8, true); }
+
+            function sfxGangAlert() { playSound(200, 'square', 0.3, 0.1, 500); }
+
+            function sfxHit() { playSound(60, 'sawtooth', 0.5, 0.2, 20, true); }
+
+            function sfxShockwave() { playSound(30, 'sine', 0.6, 0.2, 15); }
+
+            // Game state
+            const game = {
+                time: 0,
+                score: 0,
+                phase: 'running', // 'running', 'explosion', 'gameover'
+                player: {
+                    x: 140,
+                    y: 0,
+                    vy: 0,
+                    width: 28,
+                    height: 44,
+                    jumping: false,
+                    canDoubleJump: true,
+                    grounded: true,
+                    invincible: 0,
+                },
+                jude: {
+                    x: 620,
+                    y: 160,
+                    size: 35,
+                    targetSize: 35,
+                    peasEaten: 0,
+                    glowPulse: 0,
+                    exploding: false,
+                    explodeTimer: 0,
+                    shakeAmount: 0,
+                },
+                groundY: 395,
+                scrollSpeed: 3.5,
+                obstacles: [],
+                particles: [],
+                shockwaves: [],
+                gangMembers: [],
+                bananas: [],
+                buildings: [],
+                knockedOver: false,
+                gangActive: false,
+                explosionTriggered: false,
+                explosionTime: 0,
+                screenFlash: 0,
+                shakeAmount: 0,
+                bgClouds: [],
+                cityDestroyed: 0,
+                scoreMultiplier: 1,
+            };
+
+            // Initialize player position
+            game.player.y = game.groundY - game.player.height;
+            game.player.x = 140;
+
+            // Generate buildings
+            function generateBuildings() {
+                game.buildings = [];
+                for (let x = -100; x < W + 200; x += 60 + Math.random() * 80) {
+                    const h = 80 + Math.random() * 200;
+                    const w = 40 + Math.random() * 70;
+                    game.buildings.push({
+                        x: x,
+                        width: w,
+                        height: h,
+                        color: `hsl(${200 + Math.random() * 40}, ${20 + Math.random() * 30}%, ${25 + Math.random() * 35}%)`,
+                        windows: Math.floor(h / 25),
+                        windowRows: Math.floor(h / 28),
+                    });
+                }
+            }
+            generateBuildings();
+
+            // Generate clouds
+            for (let i = 0; i < 8; i++) {
+                game.bgClouds.push({
+                    x: Math.random() * W,
+                    y: 30 + Math.random() * 120,
+                    w: 40 + Math.random() * 100,
+                    h: 20 + Math.random() * 30,
+                    speed: 0.3 + Math.random() * 0.8,
+                });
+            }
+
+            // Input handling
+            const keys = {};
+            let touchActive = false;
+            let touchY = 0;
+
+            window.addEventListener('keydown', e => {
+                keys[e.code] = true;
+                initAudio();
+                if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
+                    e.preventDefault();
+                    playerJump();
+                }
+                if (e.code === 'ArrowDown' || e.code === 'KeyS') {
+                    e.preventDefault();
+                    playerSlide();
+                }
+                if (e.code === 'KeyR' && game.phase === 'gameover') {
+                    restartGame();
+                }
+            });
+            window.addEventListener('keyup', e => {
+                keys[e.code] = false;
+            });
+
+            canvas.addEventListener('touchstart', e => {
+                e.preventDefault();
+                initAudio();
+                touchActive = true;
+                touchY = e.touches[0].clientY;
+                if (game.phase === 'gameover') {
+                    restartGame();
+                    return;
+                }
+                const rect = canvas.getBoundingClientRect();
+                const relY = (e.touches[0].clientY - rect.top) / rect.height;
+                if (relY < 0.55) {
+                    playerJump();
+                } else {
+                    playerSlide();
+                }
+            });
+            canvas.addEventListener('touchmove', e => {
+                e.preventDefault();
+                if (e.touches.length > 0) touchY = e.touches[0].clientY;
+            });
+            canvas.addEventListener('touchend', e => {
+                e.preventDefault();
+                touchActive = false;
+            });
+            canvas.addEventListener('click', e => {
+                initAudio();
+                if (game.phase === 'gameover') {
+                    restartGame();
+                    return;
+                }
+                const rect = canvas.getBoundingClientRect();
+                const relY = (e.clientY - rect.top) / rect.height;
+                if (relY < 0.55) {
+                    playerJump();
+                } else {
+                    playerSlide();
+                }
+            });
+
+            function playerJump() {
+                initAudio();
+                if (game.phase === 'gameover') return;
+                const p = game.player;
+                if (p.grounded) {
+                    p.vy = -13;
+                    p.jumping = true;
+                    p.grounded = false;
+                    p.canDoubleJump = true;
+                    sfxJump();
+                } else if (p.canDoubleJump && p.vy > -3) {
+                    p.vy = -11;
+                    p.canDoubleJump = false;
+                    sfxJump();
+                    // Double jump particles
+                    for (let i = 0; i < 8; i++) {
+                        game.particles.push({
+                            x: p.x + p.width / 2,
+                            y: p.y + p.height,
+                            vx: (Math.random() - 0.5) * 4,
+                            vy: Math.random() * 3 + 2,
+                            life: 0.4,
+                            maxLife: 0.4,
+                            color: '#fff',
+                            size: 3,
+                        });
+                    }
+                }
+            }
+
+            function playerSlide() {
+                initAudio();
+                if (game.phase === 'gameover') return;
+                const p = game.player;
+                if (p.grounded && !p.sliding) {
+                    p.sliding = true;
+                    p.slideTimer = 0.4;
+                    p.height = 22;
+                    p.y = game.groundY - p.height;
+                    p.width = 36;
+                }
+            }
+
+            function restartGame() {
+                initAudio();
+                game.time = 0;
+                game.score = 0;
+                game.phase = 'running';
+                game.player.x = 140;
+                game.player.y = game.groundY - 44;
+                game.player.vy = 0;
+                game.player.width = 28;
+                game.player.height = 44;
+                game.player.jumping = false;
+                game.player.canDoubleJump = true;
+                game.player.grounded = true;
+                game.player.invincible = 0;
+                game.player.sliding = false;
+                game.player.slideTimer = 0;
+                game.jude.size = 35;
+                game.jude.targetSize = 35;
+                game.jude.peasEaten = 0;
+                game.jude.glowPulse = 0;
+                game.jude.exploding = false;
+                game.jude.explodeTimer = 0;
+                game.jude.shakeAmount = 0;
+                game.scrollSpeed = 3.5;
+                game.obstacles = [];
+                game.particles = [];
+                game.shockwaves = [];
+                game.gangMembers = [];
+                game.bananas = [];
+                game.knockedOver = false;
+                game.gangActive = false;
+                game.explosionTriggered = false;
+                game.explosionTime = 0;
+                game.screenFlash = 0;
+                game.shakeAmount = 0;
+                game.cityDestroyed = 0;
+                game.scoreMultiplier = 1;
+                generateBuildings();
+                game.bgClouds = [];
+                for (let i = 0; i < 8; i++) {
+                    game.bgClouds.push({
+                        x: Math.random() * W,
+                        y: 30 + Math.random() * 120,
+                        w: 40 + Math.random() * 100,
+                        h: 20 + Math.random() * 30,
+                        speed: 0.3 + Math.random() * 0.8,
+                    });
+                }
+            }
+
+            // Spawn gang member
+            function spawnGangMember(fromRight = true) {
+                const gm = {
+                    x: fromRight ? W + 50 + Math.random() * 200 : -60,
+                    y: game.groundY - 50,
+                    width: 30,
+                    height: 50,
+                    speed: 2.5 + Math.random() * 3 + game.time * 0.03,
+                    type: Math.random() < 0.35 ? 'thrower' : 'chaser',
+                    throwTimer: 0,
+                    throwCooldown: 1.5 + Math.random() * 2,
+                    color: `hsl(${30 + Math.random() * 25}, ${60 + Math.random() * 30}%, ${35 + Math.random() * 20}%)`,
+                    bandanaColor: `hsl(${10 + Math.random() * 20}, 80%, 40%)`,
+                    angry: true,
+                    wobble: Math.random() * Math.PI * 2,
+                };
+                game.gangMembers.push(gm);
+                if (game.gangActive && game.gangMembers.length === 1 && !game.knockedOver) {
+                    // First gang member is the one who gets knocked over
+                    gm.x = game.player.x + 80;
+                    gm.speed = 0;
+                    gm.isKnockover = true;
+                }
+            }
+
+            function spawnBanana(x, y, vx, vy) {
+                game.bananas.push({
+                    x: x,
+                    y: y,
+                    vx: vx,
+                    vy: vy,
+                    rotation: Math.random() * Math.PI * 2,
+                    rotSpeed: (Math.random() - 0.5) * 15,
+                    life: 3,
+                });
+            }
+
+            function spawnDebris(x, y, count = 15) {
+                for (let i = 0; i < count; i++) {
+                    game.particles.push({
+                        x: x + (Math.random() - 0.5) * 60,
+                        y: y + (Math.random() - 0.5) * 40,
+                        vx: (Math.random() - 0.5) * 18,
+                        vy: (Math.random() - 1) * 16 - 6,
+                        life: 1.5 + Math.random() * 2,
+                        maxLife: 1.5 + Math.random() * 2,
+                        color: Math.random() < 0.5 ? '#ff6b35' : '#ff4500',
+                        size: 3 + Math.random() * 10,
+                        gravity: true,
+                    });
+                }
+            }
+
+            function triggerExplosion() {
+                if (game.explosionTriggered) return;
+                game.explosionTriggered = true;
+                game.explosionTime = game.time;
+                game.jude.exploding = true;
+                game.jude.explodeTimer = 0;
+                game.screenFlash = 0.8;
+                game.shakeAmount = 20;
+                game.scrollSpeed = 7;
+                game.scoreMultiplier = 3;
+                sfxExplosion();
+                spawnDebris(game.jude.x, game.jude.y, 40);
+
+                // Shockwave
+                game.shockwaves.push({
+                    x: game.jude.x,
+                    y: game.jude.y,
+                    radius: 10,
+                    speed: 350,
+                    maxRadius: 900,
+                    strength: 1,
+                });
+
+                // Destroy some buildings
+                game.cityDestroyed = 1;
+                for (let b of game.buildings) {
+                    if (Math.abs(b.x - game.jude.x) < 250) {
+                        b.destroyed = true;
+                        b.destroyTimer = 0;
+                    }
+                }
+
+                // Activate gang if not already
+                if (!game.gangActive) {
+                    game.gangActive = true;
+                    game.knockedOver = true;
+                    for (let i = 0; i < 3; i++) {
+                        setTimeout(() => {
+                            if (game.phase !== 'gameover') spawnGangMember(true);
+                        }, i * 400);
+                    }
+                }
+            }
+
+            // Update
+            function update(dt) {
+                if (game.phase === 'gameover') return;
+
+                const realDt = Math.min(dt, 0.1); // Cap delta time
+                game.time += realDt;
+                game.score += realDt * 10 * game.scoreMultiplier;
+
+                // Update player
+                const p = game.player;
+                if (p.invincible > 0) p.invincible -= realDt;
+
+                // Slide timer
+                if (p.sliding) {
+                    p.slideTimer -= realDt;
+                    if (p.slideTimer <= 0) {
+                        p.sliding = false;
+                        p.height = 44;
+                        p.width = 28;
+                        p.y = game.groundY - p.height;
+                    }
+                }
+
+                // Gravity
+                if (!p.grounded) {
+                    p.vy += 35 * realDt;
+                    p.y += p.vy * 60 * realDt;
+                    if (p.y >= game.groundY - p.height) {
+                        p.y = game.groundY - p.height;
+                        p.vy = 0;
+                        p.grounded = true;
+                        p.jumping = false;
+                        p.canDoubleJump = true;
+                    }
+                }
+
+                // Update Jude
+                const j = game.jude;
+                if (!j.exploding) {
+                    // Jude eats peas periodically
+                    j.peasEaten += realDt * 3;
+                    j.targetSize = 35 + j.peasEaten * 1.8;
+                    j.size += (j.targetSize - j.size) * 3 * realDt;
+                    j.glowPulse = Math.sin(game.time * 4) * 0.5 + 0.5;
+                    j.x = 620 - j.peasEaten * 3;
+                    if (j.x < 400) j.x = 400;
+
+                    // Pea eating particles
+                    if (Math.random() < realDt * 8) {
+                        game.particles.push({
+                            x: j.x + (Math.random() - 0.5) * j.size,
+                            y: j.y - 20 + (Math.random() - 0.5) * 20,
+                            vx: (Math.random() - 0.5) * 2,
+                            vy: -Math.random() * 6 - 2,
+                            life: 0.5,
+                            maxLife: 0.5,
+                            color: '#7ec850',
+                            size: 3 + Math.random() * 3,
+                            gravity: true,
+                        });
+                        if (Math.random() < 0.3) sfxPea();
+                    }
+
+                    // Trigger explosion when Jude is big enough
+                    if (j.peasEaten > 25 && !game.explosionTriggered) {
+                        triggerExplosion();
+                    }
+                    // Force explosion by time if not already
+                    if (game.time > 10 && !game.explosionTriggered && j.peasEaten > 15) {
+                        triggerExplosion();
+                    }
+                    if (game.time > 14 && !game.explosionTriggered) {
+                        triggerExplosion();
+                    }
+                } else {
+                    j.explodeTimer += realDt;
+                    j.size += realDt * 300;
+                    j.shakeAmount = Math.max(0, j.shakeAmount - realDt * 8);
+                    if (j.explodeTimer > 0.3) {
+                        j.size = 0;
+                        j.shakeAmount = 0;
+                    }
+                }
+
+                // Update shockwaves
+                for (let sw of game.shockwaves) {
+                    sw.radius += sw.speed * realDt;
+                    if (sw.radius > sw.maxRadius) sw.strength = 0;
+                }
+                game.shockwaves = game.shockwaves.filter(sw => sw.strength > 0 && sw.radius < sw.maxRadius);
+
+                // Check shockwave collision with player
+                for (let sw of game.shockwaves) {
+                    if (sw.strength > 0.3) {
+                        const dx = p.x + p.width / 2 - sw.x;
+                        const dy = p.y + p.height / 2 - sw.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist < sw.radius + 20 && dist > sw.radius - 30 && p.grounded) {
+                            // Player is on ground near shockwave - they need to jump!
+                            if (p.invincible <= 0) {
+                                gameOver('caught in shockwave');
+                                return;
+                            }
+                        }
+                        // If player is airborne, they're safe from ground shockwave
+                        if (dist < sw.radius && dist > sw.radius - 15 && !p.grounded && p.y < game.groundY - 30) {
+                            // Player jumped over it! Add bonus
+                            if (!sw.playerJumped) {
+                                sw.playerJumped = true;
+                                game.score += 50;
+                                for (let i = 0; i < 10; i++) {
+                                    game.particles.push({
+                                        x: p.x + p.width / 2,
+                                        y: p.y,
+                                        vx: (Math.random() - 0.5) * 6,
+                                        vy: -Math.random() * 8,
+                                        life: 0.6,
+                                        maxLife: 0.6,
+                                        color: '#ffdd57',
+                                        size: 3,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Update gang members
+                for (let gm of game.gangMembers) {
+                    if (gm.isKnockover && !game.knockedOver) {
+                        // This gang member is about to be knocked over
+                        if (Math.abs(gm.x - p.x) < 50 && game.time > 3) {
+                            // Knockover!
+                            game.knockedOver = true;
+                            game.gangActive = true;
+                            gm.knockedDown = true;
+                            gm.knockTimer = 0.8;
+                            gm.vy = -8;
+                            gm.vx = -5;
+                            sfxBump();
+                            spawnBanana(gm.x, gm.y - 10, -3, -6);
+                            game.shakeAmount = Math.max(game.shakeAmount, 5);
+                            for (let i = 0; i < 12; i++) {
+                                game.particles.push({
+                                    x: gm.x + gm.width / 2,
+                                    y: gm.y,
+                                    vx: (Math.random() - 0.5) * 8,
+                                    vy: -Math.random() * 10 - 3,
+                                    life: 0.7,
+                                    maxLife: 0.7,
+                                    color: '#ffaa00',
+                                    size: 4,
+                                });
+                            }
+                            // Spawn more gang members soon
+                            setTimeout(() => {
+                                if (game.phase !== 'gameover') spawnGangMember(true);
+                            }, 600);
+                            setTimeout(() => {
+                                if (game.phase !== 'gameover') spawnGangMember(true);
+                            }, 1200);
+                            setTimeout(() => {
+                                if (game.phase !== 'gameover') spawnGangMember(false);
+                            }, 1800);
+                        }
+                    }
+                    if (gm.knockedDown) {
+                        gm.knockTimer -= realDt;
+                        gm.y += gm.vy * 60 * realDt;
+                        gm.vy += 30 * realDt;
+                        gm.x += gm.vx * 60 * realDt;
+                        if (gm.y >= game.groundY - gm.height) {
+                            gm.y = game.groundY - gm.height;
+                            gm.vy = 0;
+                            gm.vx *= 0.8;
+                        }
+                        if (gm.knockTimer <= 0 && gm.y >= game.groundY - gm.height - 5) {
+                            gm.knockedDown = false;
+                            gm.speed = 4;
+                            gm.y = game.groundY - gm.height;
+                        }
+                        continue;
+                    }
+                    if (!gm.isKnockover || game.knockedOver) {
+                        gm.x -= gm.speed * 60 * realDt;
+                    }
+                    gm.wobble += realDt * 8;
+                    if (gm.type === 'thrower' && game.gangActive) {
+                        gm.throwTimer += realDt;
+                        if (gm.throwTimer > gm.throwCooldown && gm.x > 0 && gm.x < W + 100) {
+                            gm.throwTimer = 0;
+                            gm.throwCooldown = 1.5 + Math.random() * 2.5;
+                            const bx = gm.x;
+                            const by = gm.y + gm.height / 2;
+                            const dx = p.x - bx;
+                            const dy = p.y - by;
+                            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                            spawnBanana(bx, by, (dx / dist) * 5 - 2, (dy / dist) * 5 - 7);
+                            sfxGangAlert();
+                        }
+                    }
+                }
+                // Remove off-screen gang members
+                game.gangMembers = game.gangMembers.filter(gm => gm.x > -120 && gm.x < W + 200 && !gm.knockedDown || (
+                    gm.knockedDown && gm.knockTimer > -1));
+
+                // Update bananas
+                for (let b of game.bananas) {
+                    b.x += b.vx * 60 * realDt;
+                    b.y += b.vy * 60 * realDt;
+                    b.vy += 20 * realDt;
+                    b.rotation += b.rotSpeed * realDt;
+                    b.life -= realDt;
+                }
+                game.bananas = game.bananas.filter(b => b.life > 0 && b.x > -50 && b.x < W + 50 && b.y < H + 50);
+
+                // Check banana collision with player
+                for (let b of game.bananas) {
+                    if (p.invincible <= 0 &&
+                        b.x > p.x && b.x < p.x + p.width &&
+                        b.y > p.y && b.y < p.y + p.height) {
+                        gameOver('hit by rotten banana');
+                        return;
+                    }
+                }
+
+                // Check gang member collision with player
+                for (let gm of game.gangMembers) {
+                    if (gm.knockedDown && gm.knockTimer > 0) continue;
+                    if (p.invincible <= 0 &&
+                        gm.x < p.x + p.width && gm.x + gm.width > p.x &&
+                        gm.y < p.y + p.height && gm.y + gm.height > p.y) {
+                        if (gm.isKnockover && !game.knockedOver && game.time < 6) continue;
+                        gameOver('caught by the gang');
+                        return;
+                    }
+                }
+
+                // Update particles
+                for (let pt of game.particles) {
+                    pt.life -= realDt;
+                    pt.x += pt.vx * 60 * realDt;
+                    pt.y += pt.vy * 60 * realDt;
+                    if (pt.gravity) pt.vy += 15 * realDt;
+                }
+                game.particles = game.particles.filter(pt => pt.life > 0);
+
+                // Update buildings
+                for (let b of game.buildings) {
+                    b.x -= game.scrollSpeed * 60 * realDt;
+                    if (b.destroyed) {
+                        b.destroyTimer += realDt;
+                        b.yOffset = (b.destroyTimer || 0) * 60;
+                    }
+                }
+                // Regenerate buildings
+                while (game.buildings.length < 30) {
+                    const lastX = game.buildings.length > 0 ? Math.max(...game.buildings.map(b => b.x)) : W;
+                    const h = 60 + Math.random() * 180;
+                    const w = 35 + Math.random() * 65;
+                    game.buildings.push({
+                        x: lastX + 50 + Math.random() * 90,
+                        width: w,
+                        height: h,
+                        color: `hsl(${200 + Math.random() * 40}, ${20 + Math.random() * 30}%, ${25 + Math.random() * 35}%)`,
+                        windows: Math.floor(h / 25),
+                        windowRows: Math.floor(h / 28),
+                        destroyed: false,
+                        destroyTimer: 0,
+                        yOffset: 0,
+                    });
+                }
+                game.buildings = game.buildings.filter(b => b.x > -150);
+
+                // Update clouds
+                for (let c of game.bgClouds) {
+                    c.x -= c.speed * 60 * realDt;
+                    if (c.x < -120) {
+                        c.x = W + 50 + Math.random() * 100;
+                        c.y = 30 + Math.random() * 120;
+                    }
+                }
+
+                // Screen shake decay
+                game.shakeAmount = Math.max(0, game.shakeAmount - realDt * 15);
+                game.screenFlash = Math.max(0, game.screenFlash - realDt * 2);
+
+                // Spawn obstacles periodically
+                if (game.gangActive && game.gangMembers.length < 5 && Math.random() < realDt * 0.7) {
+                    spawnGangMember(true);
+                }
+                if (game.gangActive && game.gangMembers.length < 3 && Math.random() < realDt * 0.3) {
+                    spawnGangMember(false);
+                }
+
+                // City destruction spreads
+                if (game.cityDestroyed > 0 && game.cityDestroyed < 1) {
+                    game.cityDestroyed += realDt * 0.3;
+                    if (game.cityDestroyed > 1) game.cityDestroyed = 1;
+                }
+
+                // Spawn first gang member for knockover event
+                if (!game.knockedOver && game.time > 2.5 && game.gangMembers.length === 0 && !game.explosionTriggered) {
+                    spawnGangMember(true);
+                    if (game.gangMembers.length > 0) {
+                        game.gangMembers[0].isKnockover = true;
+                        game.gangMembers[0].speed = 0.8;
+                        game.gangMembers[0].x = game.player.x + 100;
+                    }
+                }
+            }
+
+            function gameOver(reason) {
+                if (game.phase === 'gameover') return;
+                game.phase = 'gameover';
+                game.shakeAmount = 15;
+                game.screenFlash = 0.5;
+                sfxHit();
+                // Death particles
+                const p = game.player;
+                for (let i = 0; i < 25; i++) {
+                    game.particles.push({
+                        x: p.x + p.width / 2,
+                        y: p.y + p.height / 2,
+                        vx: (Math.random() - 0.5) * 12,
+                        vy: (Math.random() - 1) * 14 - 4,
+                        life: 1.2,
+                        maxLife: 1.2,
+                        color: Math.random() < 0.5 ? '#ff4444' : '#ff8888',
+                        size: 2 + Math.random() * 7,
+                        gravity: true,
+                    });
+                }
+            }
+
+            // Draw functions
+            function drawSky() {
+                const skyGrad = ctx.createLinearGradient(0, 0, 0, H);
+                if (game.cityDestroyed > 0.5) {
+                    skyGrad.addColorStop(0, '#3a0a0a');
+                    skyGrad.addColorStop(0.5, '#5a2010');
+                    skyGrad.addColorStop(1, '#8a4020');
+                } else if (game.explosionTriggered) {
+                    const t = Math.min(1, (game.time - game.explosionTime) / 2);
+                    skyGrad.addColorStop(0, `rgb(${Math.floor(40+180*t)},${Math.floor(60-40*t)},${Math.floor(100-70*t)})`);
+                    skyGrad.addColorStop(0.5,
+                        `rgb(${Math.floor(60+160*t)},${Math.floor(80-50*t)},${Math.floor(140-100*t)})`);
+                    skyGrad.addColorStop(1, `rgb(${Math.floor(80+140*t)},${Math.floor(100-60*t)},${Math.floor(170-130*t)})`);
+                } else {
+                    skyGrad.addColorStop(0, '#4a90d9');
+                    skyGrad.addColorStop(0.6, '#87ceeb');
+                    skyGrad.addColorStop(1, '#b8dff0');
+                }
+                ctx.fillStyle = skyGrad;
+                ctx.fillRect(0, 0, W, H);
+            }
+
+            function drawClouds() {
+                for (let c of game.bgClouds) {
+                    const alpha = game.cityDestroyed > 0.5 ? 0.3 : 0.8;
+                    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+                    ctx.beginPath();
+                    ctx.ellipse(c.x, c.y, c.w / 2, c.h / 2, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.ellipse(c.x - c.w * 0.25, c.y + c.h * 0.15, c.w * 0.3, c.h * 0.4, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.ellipse(c.x + c.w * 0.2, c.y - c.h * 0.1, c.w * 0.35, c.h * 0.45, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function drawBuildings() {
+                for (let b of game.buildings) {
+                    ctx.save();
+                    const by = game.groundY - b.height + (b.yOffset || 0);
+                    if (b.destroyed) {
+                        const progress = Math.min(1, (b.destroyTimer || 0) / 1.5);
+                        ctx.globalAlpha = 1 - progress;
+                        const rubbleY = game.groundY;
+                        ctx.fillStyle = '#5a4030';
+                        for (let i = 0; i < 8; i++) {
+                            const rx = b.x + Math.random() * b.width;
+                            const ry = rubbleY - Math.random() * b.height * progress;
+                            ctx.fillRect(rx, ry, 6 + Math.random() * 10, 5 + Math.random() * 8);
+                        }
+                    }
+                    // Building body
+                    const grad = ctx.createLinearGradient(b.x, by, b.x, game.groundY);
+                    const baseColor = b.color;
+                    grad.addColorStop(0, baseColor);
+                    grad.addColorStop(1, '#1a1a1a');
+                    ctx.fillStyle = grad;
+                    ctx.fillRect(b.x, by, b.width, b.height);
+                    // Roof
+                    ctx.fillStyle = '#2a2a2a';
+                    ctx.fillRect(b.x - 3, by - 6, b.width + 6, 10);
+                    // Windows
+                    if (!b.destroyed) {
+                        for (let row = 0; row < b.windowRows; row++) {
+                            for (let w = 0; w < b.windows; w++) {
+                                const wx = b.x + 8 + w * (b.width / b.windows);
+                                const wy = by + 12 + row * 28;
+                                if (wx < b.x + b.width - 6 && wy < game.groundY - 10) {
+                                    const lit = Math.sin(b.x * 3 + row * 5 + w * 7 + game.time) > 0.1;
+                                    ctx.fillStyle = lit ? '#ffeebb' : '#334455';
+                                    ctx.fillRect(wx, wy, 6, 8);
+                                    if (lit) {
+                                        ctx.fillStyle = 'rgba(255,240,200,0.3)';
+                                        ctx.fillRect(wx - 1, wy - 1, 8, 10);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    ctx.restore();
+                }
+            }
+
+            function drawGround() {
+                const groundGrad = ctx.createLinearGradient(0, game.groundY, 0, H);
+                groundGrad.addColorStop(0, '#5a4a3a');
+                groundGrad.addColorStop(0.05, '#4a3a2a');
+                groundGrad.addColorStop(0.3, '#3a2a1a');
+                groundGrad.addColorStop(1, '#1a0a00');
+                ctx.fillStyle = groundGrad;
+                ctx.fillRect(0, game.groundY, W, H - game.groundY);
+                // Road line
+                ctx.strokeStyle = '#6a6a50';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([20, 25]);
+                ctx.beginPath();
+                const roadY = game.groundY + 15;
+                ctx.moveTo(0, roadY);
+                ctx.lineTo(W, roadY);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                // Curb
+                ctx.fillStyle = '#7a7a7a';
+                ctx.fillRect(0, game.groundY - 3, W, 6);
+            }
+
+            function drawJude() {
+                const j = game.jude;
+                if (j.exploding && j.explodeTimer > 0.35) return;
+                if (j.size <= 0 && j.exploding) return;
+
+                const jx = j.x;
+                const jy = j.y;
+                const js = j.size;
+
+                // Glow
+                if (j.glowPulse > 0.3 || j.exploding) {
+                    const glowAlpha = j.exploding ? Math.max(0, 1 - j.explodeTimer * 3) : j.glowPulse * 0.6;
+                    const glowGrad = ctx.createRadialGradient(jx, jy, js * 0.3, jx, jy, js * 1.8);
+                    glowGrad.addColorStop(0, `rgba(255,200,50,${glowAlpha})`);
+                    glowGrad.addColorStop(0.5, `rgba(255,120,30,${glowAlpha * 0.6})`);
+                    glowGrad.addColorStop(1, `rgba(255,60,10,0)`);
+                    ctx.fillStyle = glowGrad;
+                    ctx.beginPath();
+                    ctx.arc(jx, jy, js * 1.8, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Body
+                const bodyGrad = ctx.createRadialGradient(jx, jy - js * 0.1, js * 0.1, jx, jy, js);
+                if (j.exploding) {
+                    bodyGrad.addColorStop(0, '#ffffff');
+                    bodyGrad.addColorStop(0.3, '#ffaa00');
+                    bodyGrad.addColorStop(0.7, '#ff4400');
+                    bodyGrad.addColorStop(1, '#aa0000');
+                } else if (j.peasEaten > 15) {
+                    bodyGrad.addColorStop(0, '#ffaaaa');
+                    bodyGrad.addColorStop(0.5, '#ff6644');
+                    bodyGrad.addColorStop(1, '#cc3322');
+                } else {
+                    bodyGrad.addColorStop(0, '#ffccaa');
+                    bodyGrad.addColorStop(0.5, '#ee9977');
+                    bodyGrad.addColorStop(1, '#cc7755');
+                }
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.arc(jx, jy, js, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Face
+                const faceY = jy - js * 0.15;
+                // Eyes
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(jx - js * 0.25, faceY - js * 0.1, js * 0.22, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(jx + js * 0.25, faceY - js * 0.1, js * 0.22, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#111';
+                ctx.beginPath();
+                ctx.arc(jx - js * 0.2, faceY - js * 0.08, js * 0.1, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(jx + js * 0.3, faceY - js * 0.08, js * 0.1, 0, Math.PI * 2);
+                ctx.fill();
+                // Mouth
+                if (j.exploding) {
+                    ctx.fillStyle = '#000';
+                    ctx.beginPath();
+                    ctx.arc(jx, faceY + js * 0.25, js * 0.3, 0, Math.PI * 2);
+                    ctx.fill();
+                } else {
+                    ctx.strokeStyle = '#553322';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(jx, faceY + js * 0.1, js * 0.2, 0.1, Math.PI - 0.1);
+                    ctx.stroke();
+                }
+
+                // Pea bowl
+                if (!j.exploding && j.peasEaten < 20) {
+                    ctx.fillStyle = '#8B7355';
+                    ctx.fillRect(jx - js * 0.6, jy + js * 0.5, js * 1.2, js * 0.4);
+                    ctx.fillStyle = '#6B5335';
+                    ctx.fillRect(jx - js * 0.55, jy + js * 0.45, js * 1.1, js * 0.15);
+                    // Peas in bowl
+                    for (let i = 0; i < 8; i++) {
+                        ctx.fillStyle = '#7ec850';
+                        ctx.beginPath();
+                        ctx.arc(jx - js * 0.4 + i * js * 0.14, jy + js * 0.4, js * 0.06, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+
+                // If exploding, draw expanding energy
+                if (j.exploding && j.explodeTimer < 0.3) {
+                    const energyR = j.explodeTimer * 400;
+                    const energyGrad = ctx.createRadialGradient(jx, jy, energyR * 0.3, jx, jy, energyR);
+                    energyGrad.addColorStop(0, 'rgba(255,255,200,0.9)');
+                    energyGrad.addColorStop(0.4, 'rgba(255,150,30,0.6)');
+                    energyGrad.addColorStop(0.7, 'rgba(255,50,10,0.3)');
+                    energyGrad.addColorStop(1, 'rgba(255,0,0,0)');
+                    ctx.fillStyle = energyGrad;
+                    ctx.beginPath();
+                    ctx.arc(jx, jy, energyR, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function drawPlayer() {
+                const p = game.player;
+                if (p.invincible > 0 && Math.floor(p.invincible * 20) % 2 === 0) return;
+
+                const px = p.x;
+                const py = p.y;
+                const pw = p.width;
+                const ph = p.height;
+
+                ctx.save();
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.beginPath();
+                ctx.ellipse(px + pw / 2, game.groundY, pw / 2 + 3, 4, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body
+                const bodyGrad = ctx.createLinearGradient(px, py, px, py + ph);
+                bodyGrad.addColorStop(0, '#4488cc');
+                bodyGrad.addColorStop(0.5, '#3366aa');
+                bodyGrad.addColorStop(1, '#224488');
+                ctx.fillStyle = bodyGrad;
+                if (p.sliding) {
+                    ctx.fillRect(px, py + ph * 0.35, pw, ph * 0.65);
+                } else {
+                    ctx.fillRect(px + pw * 0.2, py + ph * 0.2, pw * 0.6, ph * 0.8);
+                }
+
+                // Head
+                ctx.fillStyle = '#ffcc99';
+                ctx.beginPath();
+                const headY = p.sliding ? py + ph * 0.15 : py - ph * 0.15;
+                const headR = pw * 0.45;
+                ctx.arc(px + pw / 2, headY, headR, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Hair
+                ctx.fillStyle = '#3a2a1a';
+                ctx.beginPath();
+                ctx.arc(px + pw / 2, headY - headR * 0.3, headR * 1.05, Math.PI, Math.PI * 2);
+                ctx.fill();
+
+                // Eyes
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(px + pw / 2 - headR * 0.3, headY - headR * 0.1, headR * 0.3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(px + pw / 2 + headR * 0.3, headY - headR * 0.1, headR * 0.3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#111';
+                ctx.beginPath();
+                ctx.arc(px + pw / 2 - headR * 0.25, headY - headR * 0.08, headR * 0.14, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(px + pw / 2 + headR * 0.35, headY - headR * 0.08, headR * 0.14, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Legs
+                if (!p.sliding) {
+                    ctx.fillStyle = '#334455';
+                    const legW = pw * 0.2;
+                    const legH = ph * 0.35;
+                    const runCycle = Math.sin(game.time * 12) * 6;
+                    ctx.fillRect(px + pw * 0.25, py + ph * 0.75, legW, legH + runCycle);
+                    ctx.fillRect(px + pw * 0.55, py + ph * 0.75, legW, legH - runCycle);
+                }
+
+                ctx.restore();
+            }
+
+            function drawGangMember(gm) {
+                if (gm.knockedDown && gm.knockTimer < -0.5 && gm.x < -60) return;
+                const gx = gm.x;
+                const gy = gm.y;
+                const gw = gm.width;
+                const gh = gm.height;
+
+                ctx.save();
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.beginPath();
+                ctx.ellipse(gx + gw / 2, game.groundY, gw / 2 + 2, 3, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body
+                const bodyGrad = ctx.createLinearGradient(gx, gy, gx, gy + gh);
+                bodyGrad.addColorStop(0, gm.color);
+                bodyGrad.addColorStop(1, '#3a2a10');
+                ctx.fillStyle = bodyGrad;
+                ctx.fillRect(gx + gw * 0.15, gy + gh * 0.2, gw * 0.7, gh * 0.8);
+
+                // Head
+                ctx.fillStyle = '#ddaa77';
+                ctx.beginPath();
+                const gHeadY = gy - gh * 0.1;
+                const gHeadR = gw * 0.4;
+                ctx.arc(gx + gw / 2, gHeadY, gHeadR, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Bandana
+                ctx.fillStyle = gm.bandanaColor;
+                ctx.fillRect(gx + gw * 0.05, gHeadY - gHeadR * 0.5, gw * 0.9, gHeadR * 0.7);
+                ctx.fillRect(gx + gw * 0.7, gHeadY - gHeadR * 0.3, gw * 0.35, gHeadR * 0.5);
+
+                // Angry eyes
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(gx + gw / 2 - gHeadR * 0.25, gHeadY - gHeadR * 0.05, gHeadR * 0.25, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(gx + gw / 2 + gHeadR * 0.25, gHeadY - gHeadR * 0.05, gHeadR * 0.25, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#a00';
+                ctx.beginPath();
+                ctx.arc(gx + gw / 2 - gHeadR * 0.2, gHeadY - gHeadR * 0.03, gHeadR * 0.11, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(gx + gw / 2 + gHeadR * 0.3, gHeadY - gHeadR * 0.03, gHeadR * 0.11, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Rotten banana held by throwers
+                if (gm.type === 'thrower' && !gm.knockedDown) {
+                    const bx = gx + gw * 0.8;
+                    const by = gy + gh * 0.3;
+                    ctx.fillStyle = '#8B7D3C';
+                    ctx.save();
+                    ctx.translate(bx, by);
+                    ctx.rotate(Math.sin(gm.wobble) * 0.4);
+                    ctx.beginPath();
+                    ctx.ellipse(0, 0, 10, 5, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#5a4a20';
+                    ctx.beginPath();
+                    ctx.arc(3, -2, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Brown spots
+                    ctx.fillStyle = '#4a3020';
+                    ctx.beginPath();
+                    ctx.arc(-2, 1, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(4, 2, 1.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+
+                ctx.restore();
+            }
+
+            function drawBanana(b) {
+                ctx.save();
+                ctx.translate(b.x, b.y);
+                ctx.rotate(b.rotation);
+                ctx.fillStyle = '#a09040';
+                ctx.beginPath();
+                ctx.ellipse(0, 0, 9, 4, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#6b5a25';
+                ctx.beginPath();
+                ctx.arc(3, -1, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#3a2510';
+                ctx.beginPath();
+                ctx.arc(-2, 1, 1.8, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(4, 2, 1.2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            function drawShockwave(sw) {
+                const alpha = sw.strength * 0.7;
+                ctx.strokeStyle = `rgba(255,200,100,${alpha})`;
+                ctx.lineWidth = 4 * sw.strength;
+                ctx.beginPath();
+                ctx.arc(sw.x, sw.y, sw.radius, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.strokeStyle = `rgba(255,150,50,${alpha * 0.6})`;
+                ctx.lineWidth = 8 * sw.strength;
+                ctx.beginPath();
+                ctx.arc(sw.x, sw.y, sw.radius - 6, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.strokeStyle = `rgba(255,255,200,${alpha * 0.8})`;
+                ctx.lineWidth = 2 * sw.strength;
+                ctx.beginPath();
+                ctx.arc(sw.x, sw.y, sw.radius + 4, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+
+            function drawParticles() {
+                for (let pt of game.particles) {
+                    const alpha = pt.life / pt.maxLife;
+                    ctx.fillStyle = pt.color.replace(')', `,${alpha})`).replace('rgb',
+                        'rgba');
+                    if (pt.color.startsWith('#')) {
+                        const hex = pt.color;
+                        const r = parseInt(hex.slice(1, 3), 16);
+                        const g = parseInt(hex.slice(3, 5), 16);
+                        const b = parseInt(hex.slice(5, 7), 16);
+                        ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+                    }
+                    ctx.beginPath();
+                    ctx.arc(pt.x, pt.y, pt.size * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function drawUI() {
+                // Score
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 18px "Segoe UI", Tahoma, sans-serif';
+                ctx.textAlign = 'left';
+                ctx.shadowColor = 'rgba(0,0,0,0.6)';
+                ctx.shadowBlur = 4;
+                ctx.fillText(`Score: ${Math.floor(game.score)}`, 15, 30);
+                ctx.shadowBlur = 0;
+
+                // Phase indicator
+                if (game.gangActive && !game.explosionTriggered) {
+                    ctx.fillStyle = '#ffaa00';
+                    ctx.font = 'bold 14px "Segoe UI", Tahoma, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('⚠ The Gang is hunting you!', W / 2, 25);
+                }
+                if (game.explosionTriggered && game.phase !== 'gameover') {
+                    const pulse = Math.sin(game.time * 6) * 0.5 + 0.5;
+                    ctx.fillStyle = `rgba(255,60,20,${0.7 + pulse * 0.3})`;
+                    ctx.font = 'bold 16px "Segoe UI", Tahoma, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('💥 JUDE EXPLODED! SURVIVE! 💥', W / 2, 25);
+                }
+
+                // Instructions
+                if (game.time < 4 && game.phase === 'running') {
+                    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+                    ctx.font = '13px "Segoe UI", Tahoma, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('Tap top half / Space = Jump | Tap bottom half = Slide | Double jump available!', W / 2,
+                        H - 15);
+                }
+            }
+
+            function drawGameOver() {
+                // Dark overlay
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, W, H);
+
+                ctx.fillStyle = '#ff4444';
+                ctx.font = 'bold 42px "Segoe UI", Tahoma, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = 'rgba(255,0,0,0.7)';
+                ctx.shadowBlur = 20;
+                ctx.fillText('GAME OVER', W / 2, H / 2 - 50);
+                ctx.shadowBlur = 0;
+
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 20px "Segoe UI", Tahoma, sans-serif';
+                ctx.fillText(`Final Score: ${Math.floor(game.score)}`, W / 2, H / 2 + 5);
+
+                ctx.fillStyle = '#ffcc00';
+                ctx.font = 'bold 18px "Segoe UI", Tahoma, sans-serif';
+                const pulse = Math.sin(Date.now() / 500) * 0.4 + 0.6;
+                ctx.fillText('Tap or press R to restart', W / 2, H / 2 + 50);
+
+                // Reason
+                ctx.fillStyle = '#ffaaaa';
+                ctx.font = '14px "Segoe UI", Tahoma, sans-serif';
+                const reason = game.player.invincible <= -99 ? 'caught in shockwave' :
+                    game.bananas.length > 0 ? 'hit by rotten banana' : 'caught by the gang';
+                ctx.fillText(`The Rotten Banana Gang got you!`, W / 2, H / 2 + 80);
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, W, H);
+
+                // Screen shake
+                let shakeX = 0;
+                let shakeY = 0;
+                if (game.shakeAmount > 0.1) {
+                    shakeX = (Math.random() - 0.5) * game.shakeAmount * 2;
+                    shakeY = (Math.random() - 0.5) * game.shakeAmount * 2;
+                }
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                drawSky();
+                drawClouds();
+                drawBuildings();
+                drawGround();
+                drawJude();
+                for (let sw of game.shockwaves) drawShockwave(sw);
+                for (let gm of game.gangMembers) drawGangMember(gm);
+                for (let b of game.bananas) drawBanana(b);
+                drawPlayer();
+                drawParticles();
+                drawUI();
+
+                ctx.restore();
+
+                // Screen flash
+                if (game.screenFlash > 0.01) {
+                    ctx.fillStyle = `rgba(255,255,255,${game.screenFlash})`;
+                    ctx.fillRect(0, 0, W, H);
+                }
+
+                if (game.phase === 'gameover') {
+                    drawGameOver();
+                }
+            }
+
+            // Game loop
+            let lastTime = performance.now();
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.2) dt = 0.2; // Clamp to prevent huge jumps
+                lastTime = timestamp;
+
+                update(dt);
+                render();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // Initialize
+            function init() {
+                // Spawn initial knockover gang member after a short delay
+                game.gangMembers = [];
+                game.phase = 'running';
+                game.player.y = game.groundY - game.player.height;
+                game.player.grounded = true;
+                game.player.vy = 0;
+                lastTime = performance.now();
+                requestAnimationFrame(gameLoop);
+            }
+
+            init();
+
+            console.log('🟢 Jude\'s Pea-pocalypse ready!');
+            console.log('   Jude loves peas. He eats them. He explodes.');
+            console.log('   You knocked over a gang member. Now they hunt you.');
+            console.log('   Survive the explosion AND the Rotten Banana Gang!');
+            console.log('   Controls: Space/Click top = Jump, Click bottom = Slide, Double jump available!');
+        })();
+    </script>
+</body>
+</html>
