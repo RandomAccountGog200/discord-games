@@ -1,0 +1,1044 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>REMIX OPENS</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+        canvas {
+            display: block;
+            margin: 0 auto;
+            border-radius: 4px;
+            box-shadow: 0 0 60px rgba(128, 0, 255, 0.2), 0 0 120px rgba(0, 180, 255, 0.1);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <script>
+        (function() {
+            // ──────────────────────────────
+            // CONSTANTS
+            // ──────────────────────────────
+            const CANVAS_W = 480;
+            const CANVAS_H = 800;
+            const BPM = 128;
+            const BEAT_INTERVAL = 60 / BPM; // seconds per beat
+            const STEP_INTERVAL = BEAT_INTERVAL / 2; // eighth-note steps
+            const FALL_DURATION = 2.0; // seconds for note to fall
+            const HIT_ZONE_Y = 670;
+            const SPAWN_Y = -70;
+            const PERFECT_WINDOW = 0.050;
+            const GOOD_WINDOW = 0.100;
+            const TOTAL_STEPS = 256; // ~60 seconds
+            const LANE_CENTERS = [70, 190, 310, 430];
+            const LANE_COLORS = ['#FF2D55', '#00C6FF', '#FFD700', '#00FF7F'];
+            const LANE_GLOW = ['#ff5c7a', '#33d6ff', '#ffe633', '#33ff99'];
+            const LANE_KEYS = ['D', 'F', 'J', 'K'];
+            const LANE_FREQS = [130, 261, 440, 660]; // Hz for hit sounds
+
+            // ──────────────────────────────
+            // DOM SETUP
+            // ──────────────────────────────
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+            canvas.width = CANVAS_W;
+            canvas.height = CANVAS_H;
+
+            function resizeCanvas() {
+                const ratio = CANVAS_W / CANVAS_H;
+                let w, h;
+                if (window.innerWidth / window.innerHeight > ratio) {
+                    h = window.innerHeight;
+                    w = h * ratio;
+                } else {
+                    w = window.innerWidth;
+                    h = w / ratio;
+                }
+                canvas.style.width = Math.floor(w) + 'px';
+                canvas.style.height = Math.floor(h) + 'px';
+            }
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+
+            // ──────────────────────────────
+            // GAME STATE
+            // ──────────────────────────────
+            let state = 'menu'; // 'menu' | 'playing' | 'gameover'
+            let score = 0;
+            let combo = 0;
+            let maxCombo = 0;
+            let multiplier = 1;
+            let perfectCount = 0;
+            let goodCount = 0;
+            let missCount = 0;
+            let notes = [];
+            let particles = [];
+            let judgments = [];
+            let ambientParticles = [];
+            let gameStartTime = 0;
+            let gameTime = 0;
+            let nextStepTime = 0;
+            let currentStepIndex = 0;
+            let spawningComplete = false;
+            let beatFlashAlpha = 0;
+            let receptorFlashes = [0, 0, 0, 0];
+            let lastFrameTime = 0;
+            let menuGlow = 0;
+            let menuGlowDir = 1;
+
+            // Audio
+            let audioCtx = null;
+            let audioUnlocked = false;
+
+            // ──────────────────────────────
+            // PATTERN DEFINITIONS
+            // ──────────────────────────────
+            const patternPools = {
+                easy: [
+                    [
+                        [0], [], [1], [], [2], [], [3], []
+                    ],
+                    [
+                        [3], [], [2], [], [1], [], [0], []
+                    ],
+                    [
+                        [0], [], [0], [], [1], [], [1], []
+                    ],
+                    [
+                        [2], [], [2], [], [3], [], [3], []
+                    ],
+                    [
+                        [1], [], [0], [], [2], [], [3], []
+                    ],
+                ],
+                medium: [
+                    [
+                        [0], [1], [2], [], [0, 2], [], [1, 3], []
+                    ],
+                    [
+                        [0, 1], [], [2, 3], [], [0], [1], [2], [3]
+                    ],
+                    [
+                        [0], [2], [0], [2], [1], [3], [1], [3]
+                    ],
+                    [
+                        [1], [], [0, 2], [], [3], [1], [0, 3], []
+                    ],
+                    [
+                        [0], [], [1, 2], [], [2], [3], [0, 1], []
+                    ],
+                ],
+                hard: [
+                    [
+                        [0, 2], [1], [0, 2], [3], [1, 3], [0], [1, 3], [2]
+                    ],
+                    [
+                        [0], [1, 2], [3], [0, 1], [2], [3], [0, 2], [1, 3]
+                    ],
+                    [
+                        [0, 1, 3], [], [2], [0], [1, 2, 3], [], [0], [1]
+                    ],
+                    [
+                        [0], [2], [1, 3], [0], [3], [1, 2], [0, 3], [1]
+                    ],
+                    [
+                        [0, 2], [1, 3], [0], [2], [1, 3], [0, 2], [1], [3]
+                    ],
+                    [
+                        [0], [0, 1], [2], [2, 3], [1], [0, 3], [1, 2], [0]
+                    ],
+                ]
+            };
+
+            function getDifficulty() {
+                if (score >= 6000) return 'hard';
+                if (score >= 2500) return 'medium';
+                return 'easy';
+            }
+
+            function getLanesForStep(stepIndex) {
+                const diff = getDifficulty();
+                const pool = patternPools[diff];
+                const blockIndex = Math.floor(stepIndex / 8) % pool.length;
+                const stepInBlock = stepIndex % 8;
+                return pool[blockIndex][stepInBlock];
+            }
+
+            // ──────────────────────────────
+            // AUDIO FUNCTIONS
+            // ──────────────────────────────
+            function initAudio() {
+                if (!audioCtx) {
+                    try {
+                        audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                    } catch (e) {
+                        return;
+                    }
+                }
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+                audioUnlocked = true;
+            }
+
+            function playTone(freq, type, duration, volume, startTime) {
+                if (!audioCtx || !audioUnlocked) return;
+                const t = startTime || audioCtx.currentTime;
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = type || 'sine';
+                osc.frequency.setValueAtTime(freq, t);
+                gain.gain.setValueAtTime(volume || 0.4, t);
+                gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(t);
+                osc.stop(t + duration + 0.05);
+            }
+
+            function playKick(startTime) {
+                if (!audioCtx || !audioUnlocked) return;
+                const t = startTime || audioCtx.currentTime;
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(150, t);
+                osc.frequency.exponentialRampToValueAtTime(40, t + 0.1);
+                gain.gain.setValueAtTime(0.6, t);
+                gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(t);
+                osc.stop(t + 0.2);
+            }
+
+            function playHitSound(lane) {
+                if (!audioCtx || !audioUnlocked) return;
+                const t = audioCtx.currentTime;
+                const types = ['sine', 'triangle', 'square', 'sawtooth'];
+                playTone(LANE_FREQS[lane], types[lane], 0.12, 0.45, t);
+            }
+
+            function playEmptySound() {
+                if (!audioCtx || !audioUnlocked) return;
+                const t = audioCtx.currentTime;
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.value = 55;
+                gain.gain.setValueAtTime(0.2, t);
+                gain.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(t);
+                osc.stop(t + 0.1);
+            }
+
+            function playMissSound() {
+                if (!audioCtx || !audioUnlocked) return;
+                const t = audioCtx.currentTime;
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.value = 80;
+                gain.gain.setValueAtTime(0.25, t);
+                gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(t);
+                osc.stop(t + 0.18);
+            }
+
+            // ──────────────────────────────
+            // PARTICLE & JUDGMENT HELPERS
+            // ──────────────────────────────
+            function spawnHitParticles(lane) {
+                const x = LANE_CENTERS[lane];
+                const y = HIT_ZONE_Y;
+                const color = LANE_COLORS[lane];
+                const count = 18 + Math.floor(Math.random() * 10);
+                for (let i = 0; i < count; i++) {
+                    const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.1;
+                    const speed = 80 + Math.random() * 350;
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        life: 0.35 + Math.random() * 0.45,
+                        maxLife: 0.35 + Math.random() * 0.45,
+                        color: color,
+                        size: 1.5 + Math.random() * 5
+                    });
+                }
+            }
+
+            function spawnMissParticles(lane) {
+                const x = LANE_CENTERS[lane];
+                const y = HIT_ZONE_Y;
+                const color = '#ff4444';
+                for (let i = 0; i < 8; i++) {
+                    const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.6;
+                    const speed = 30 + Math.random() * 120;
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        life: 0.25 + Math.random() * 0.3,
+                        maxLife: 0.25 + Math.random() * 0.3,
+                        color: color,
+                        size: 2 + Math.random() * 3
+                    });
+                }
+            }
+
+            function spawnJudgment(text, color, x, y) {
+                judgments.push({
+                    text: text,
+                    x: x,
+                    y: y,
+                    life: 0.7,
+                    maxLife: 0.7,
+                    color: color
+                });
+            }
+
+            function initAmbientParticles() {
+                ambientParticles = [];
+                for (let i = 0; i < 40; i++) {
+                    ambientParticles.push({
+                        x: Math.random() * CANVAS_W,
+                        y: Math.random() * CANVAS_H,
+                        vx: (Math.random() - 0.5) * 15,
+                        vy: -10 - Math.random() * 25,
+                        size: 0.8 + Math.random() * 2.5,
+                        life: 2 + Math.random() * 5,
+                        maxLife: 2 + Math.random() * 5,
+                        color: LANE_COLORS[Math.floor(Math.random() * 4)],
+                        alpha: 0.15 + Math.random() * 0.35
+                    });
+                }
+            }
+            initAmbientParticles();
+
+            // ──────────────────────────────
+            // GAME LOGIC
+            // ──────────────────────────────
+            function spawnNotesForStep(stepIndex, targetTime) {
+                const lanes = getLanesForStep(stepIndex);
+                for (const lane of lanes) {
+                    notes.push({
+                        lane: lane,
+                        targetTime: targetTime,
+                        hit: false,
+                        missed: false,
+                        hitResult: null
+                    });
+                }
+            }
+
+            function startGame() {
+                initAudio();
+                score = 0;
+                combo = 0;
+                maxCombo = 0;
+                multiplier = 1;
+                perfectCount = 0;
+                goodCount = 0;
+                missCount = 0;
+                notes = [];
+                particles = [];
+                judgments = [];
+                gameStartTime = performance.now() / 1000;
+                gameTime = 0;
+                currentStepIndex = 0;
+                nextStepTime = FALL_DURATION;
+                spawningComplete = false;
+                beatFlashAlpha = 0;
+                receptorFlashes = [0, 0, 0, 0];
+                spawnNotesForStep(0, nextStepTime);
+                state = 'playing';
+            }
+
+            function getNoteY(note) {
+                const timeUntilTarget = note.targetTime - gameTime;
+                const progress = 1 - (timeUntilTarget / FALL_DURATION);
+                return SPAWN_Y + (HIT_ZONE_Y - SPAWN_Y) * progress;
+            }
+
+            function triggerLane(lane) {
+                receptorFlashes[lane] = 1.0;
+
+                // Find best note in this lane
+                let bestNote = null;
+                let bestDist = Infinity;
+                for (const note of notes) {
+                    if (note.lane === lane && !note.hit && !note.missed) {
+                        const dist = Math.abs(gameTime - note.targetTime);
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            bestNote = note;
+                        }
+                    }
+                }
+
+                if (bestNote && bestDist <= GOOD_WINDOW) {
+                    const isPerfect = bestDist <= PERFECT_WINDOW;
+                    bestNote.hit = true;
+                    bestNote.hitResult = isPerfect ? 'perfect' : 'good';
+                    if (isPerfect) {
+                        score += 100 * multiplier;
+                        perfectCount++;
+                        spawnJudgment('PERFECT!', '#FFD700', LANE_CENTERS[lane], HIT_ZONE_Y - 30);
+                    } else {
+                        score += 50 * multiplier;
+                        goodCount++;
+                        spawnJudgment('GOOD', '#ffffff', LANE_CENTERS[lane], HIT_ZONE_Y - 30);
+                    }
+                    combo++;
+                    if (combo > maxCombo) maxCombo = combo;
+                    if (combo % 10 === 0 && multiplier < 8) multiplier = Math.min(8, multiplier * 2);
+                    playHitSound(lane);
+                    spawnHitParticles(lane);
+                } else if (!bestNote || bestDist > GOOD_WINDOW) {
+                    playEmptySound();
+                }
+            }
+
+            function update(deltaTime) {
+                // Update ambient particles (always)
+                for (const ap of ambientParticles) {
+                    ap.x += ap.vx * deltaTime;
+                    ap.y += ap.vy * deltaTime;
+                    ap.life -= deltaTime;
+                    if (ap.life <= 0 || ap.y < -50 || ap.x < -50 || ap.x > CANVAS_W + 50) {
+                        ap.x = Math.random() * CANVAS_W;
+                        ap.y = CANVAS_H + 30 + Math.random() * 60;
+                        ap.life = ap.maxLife;
+                        ap.vx = (Math.random() - 0.5) * 20;
+                        ap.vy = -8 - Math.random() * 30;
+                    }
+                }
+
+                // Update particles
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx * deltaTime;
+                    p.y += p.vy * deltaTime;
+                    p.life -= deltaTime;
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+
+                // Update judgments
+                for (let i = judgments.length - 1; i >= 0; i--) {
+                    judgments[i].life -= deltaTime;
+                    judgments[i].y -= 40 * deltaTime;
+                    if (judgments[i].life <= 0) judgments.splice(i, 1);
+                }
+
+                // Update receptor flashes
+                for (let i = 0; i < 4; i++) {
+                    receptorFlashes[i] = Math.max(0, receptorFlashes[i] - deltaTime * 6.5);
+                }
+
+                // Update beat flash
+                beatFlashAlpha = Math.max(0, beatFlashAlpha - deltaTime * 3.0);
+
+                // Update menu glow
+                if (state === 'menu') {
+                    menuGlow += deltaTime * 0.8 * menuGlowDir;
+                    if (menuGlow >= 1.0) { menuGlow = 1.0;
+                        menuGlowDir = -1; }
+                    if (menuGlow <= 0.3) { menuGlow = 0.3;
+                        menuGlowDir = 1; }
+                }
+
+                if (state !== 'playing') return;
+
+                // Advance game time
+                gameTime += deltaTime;
+
+                // Check for step beats
+                while (gameTime >= nextStepTime && !spawningComplete) {
+                    const isDownbeat = (currentStepIndex % 2 === 0);
+                    if (isDownbeat) {
+                        playKick(audioCtx ? audioCtx.currentTime : null);
+                        beatFlashAlpha = 0.12;
+                        // Flash all receptors slightly on downbeat
+                        for (let i = 0; i < 4; i++) {
+                            receptorFlashes[i] = Math.max(receptorFlashes[i], 0.25);
+                        }
+                    }
+
+                    currentStepIndex++;
+                    nextStepTime += STEP_INTERVAL;
+
+                    if (currentStepIndex >= TOTAL_STEPS) {
+                        spawningComplete = true;
+                    } else {
+                        spawnNotesForStep(currentStepIndex, nextStepTime);
+                    }
+                }
+
+                // Check for missed notes
+                for (const note of notes) {
+                    if (!note.hit && !note.missed) {
+                        if (gameTime > note.targetTime + GOOD_WINDOW) {
+                            note.missed = true;
+                            missCount++;
+                            combo = 0;
+                            multiplier = 1;
+                            playMissSound();
+                            spawnMissParticles(note.lane);
+                            spawnJudgment('MISS', '#ff4444', LANE_CENTERS[note.lane], HIT_ZONE_Y - 20);
+                        }
+                    }
+                }
+
+                // Remove notes that are well off-screen
+                for (let i = notes.length - 1; i >= 0; i--) {
+                    const note = notes[i];
+                    const y = getNoteY(note);
+                    if (y > CANVAS_H + 120) {
+                        notes.splice(i, 1);
+                    } else if (note.hit && y < HIT_ZONE_Y - 10) {
+                        // Hit notes get removed quickly (they were already processed)
+                        notes.splice(i, 1);
+                    }
+                }
+
+                // Clean up hit notes that are past the zone
+                for (let i = notes.length - 1; i >= 0; i--) {
+                    if (notes[i].hit && getNoteY(notes[i]) > HIT_ZONE_Y + 20) {
+                        notes.splice(i, 1);
+                    }
+                }
+
+                // Check game over condition
+                if (spawningComplete && notes.length === 0) {
+                    state = 'gameover';
+                }
+            }
+
+            // ──────────────────────────────
+            // RENDERING
+            // ──────────────────────────────
+            function drawBackground() {
+                // Gradient background
+                const grad = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+                grad.addColorStop(0, '#0a0a20');
+                grad.addColorStop(0.5, '#0d0d28');
+                grad.addColorStop(1, '#060615');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+                // Subtle grid lines
+                ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+                ctx.lineWidth = 1;
+                for (let y = 0; y < CANVAS_H; y += 40) {
+                    ctx.beginPath();
+                    ctx.moveTo(0, y);
+                    ctx.lineTo(CANVAS_W, y);
+                    ctx.stroke();
+                }
+                for (let x = 0; x < CANVAS_W; x += 60) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, 0);
+                    ctx.lineTo(x, CANVAS_H);
+                    ctx.stroke();
+                }
+
+                // Lane separator lines (subtle)
+                ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+                ctx.lineWidth = 1;
+                const separators = [130, 250, 370];
+                for (const sx of separators) {
+                    ctx.beginPath();
+                    ctx.moveTo(sx, 0);
+                    ctx.lineTo(sx, CANVAS_H);
+                    ctx.stroke();
+                }
+
+                // Ambient particles
+                for (const ap of ambientParticles) {
+                    const alpha = ap.alpha * Math.min(1, ap.life / ap.maxLife);
+                    ctx.fillStyle = ap.color.replace(')', `, ${alpha})`).replace('rgb',
+                        'rgba').replace('#FF2D55', 'rgba(255,45,85').replace('#00C6FF', 'rgba(0,198,255').replace(
+                        '#FFD700', 'rgba(255,215,0').replace('#00FF7F', 'rgba(0,255,127');
+                    // Simpler: use globalAlpha
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = ap.color;
+                    ctx.beginPath();
+                    ctx.arc(ap.x, ap.y, ap.size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+
+                // Beat flash overlay
+                if (beatFlashAlpha > 0.01) {
+                    ctx.fillStyle = `rgba(255,255,255,${beatFlashAlpha})`;
+                    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+                }
+            }
+
+            function drawReceptors() {
+                for (let i = 0; i < 4; i++) {
+                    const cx = LANE_CENTERS[i];
+                    const cy = HIT_ZONE_Y;
+                    const flash = receptorFlashes[i];
+                    const baseSize = 60;
+                    const size = baseSize + flash * 18;
+
+                    // Glow
+                    ctx.shadowColor = LANE_GLOW[i];
+                    ctx.shadowBlur = 20 + flash * 25;
+
+                    // Outer ring
+                    ctx.strokeStyle = LANE_COLORS[i];
+                    ctx.lineWidth = 3 + flash * 3;
+                    ctx.beginPath();
+                    ctx.roundRect(cx - size / 2, cy - size / 2, size, size, 12);
+                    ctx.stroke();
+
+                    // Inner fill
+                    const alpha = 0.15 + flash * 0.5;
+                    ctx.fillStyle = LANE_COLORS[i].replace(')', `, ${alpha})`).replace('#FF2D55',
+                        'rgba(255,45,85').replace('#00C6FF', 'rgba(0,198,255').replace('#FFD700',
+                        'rgba(255,215,0').replace('#00FF7F', 'rgba(0,255,127');
+                    if (ctx.fillStyle === LANE_COLORS[i]) {
+                        // Fallback if replacement fails
+                        ctx.fillStyle = LANE_COLORS[i];
+                        ctx.globalAlpha = alpha;
+                    }
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+
+                    ctx.shadowBlur = 0;
+
+                    // Key label
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 18px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.shadowColor = LANE_GLOW[i];
+                    ctx.shadowBlur = 8;
+                    ctx.fillText(LANE_KEYS[i], cx, cy);
+                    ctx.shadowBlur = 0;
+                }
+            }
+
+            function drawHitZoneLine() {
+                ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([8, 16]);
+                ctx.beginPath();
+                ctx.moveTo(10, HIT_ZONE_Y);
+                ctx.lineTo(CANVAS_W - 10, HIT_ZONE_Y);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            function drawNotes() {
+                for (const note of notes) {
+                    const y = getNoteY(note);
+                    if (y < SPAWN_Y - 60 || y > CANVAS_H + 80) continue;
+
+                    const cx = LANE_CENTERS[note.lane];
+                    const noteW = 54;
+                    const noteH = 54;
+                    const distToTarget = note.targetTime - gameTime;
+                    const absDist = Math.abs(distToTarget);
+
+                    let color = LANE_COLORS[note.lane];
+                    let glowColor = LANE_GLOW[note.lane];
+                    let alpha = 1;
+                    let glowStrength = 16;
+
+                    if (note.missed) {
+                        color = '#ff4444';
+                        glowColor = '#ff6666';
+                        alpha = 0.5;
+                        glowStrength = 8;
+                    } else if (note.hit) {
+                        alpha = 0.3;
+                        glowStrength = 6;
+                    } else if (absDist < GOOD_WINDOW) {
+                        glowStrength = 22 + (1 - absDist / GOOD_WINDOW) * 14;
+                    }
+
+                    ctx.globalAlpha = alpha;
+                    ctx.shadowColor = glowColor;
+                    ctx.shadowBlur = glowStrength;
+
+                    // Note body
+                    const grad = ctx.createLinearGradient(cx - noteW / 2, y - noteH / 2, cx + noteW / 2, y + noteH / 2);
+                    grad.addColorStop(0, color);
+                    grad.addColorStop(1, 'rgba(0,0,0,0.4)');
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.roundRect(cx - noteW / 2, y - noteH / 2, noteW, noteH, 10);
+                    ctx.fill();
+
+                    // Bright border
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 2.5;
+                    ctx.stroke();
+
+                    // Inner highlight
+                    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                    ctx.beginPath();
+                    ctx.roundRect(cx - noteW / 2 + 4, y - noteH / 2 + 4, noteW - 8, noteH / 2 - 4, 6);
+                    ctx.fill();
+
+                    ctx.shadowBlur = 0;
+                    ctx.globalAlpha = 1;
+                }
+            }
+
+            function drawJudgments() {
+                for (const j of judgments) {
+                    const alpha = Math.min(1, j.life / j.maxLife);
+                    const scale = 1 + (1 - alpha) * 0.5;
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = j.color;
+                    ctx.font = `bold ${Math.floor(22 * scale)}px "Segoe UI", system-ui, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.shadowColor = j.color;
+                    ctx.shadowBlur = 10;
+                    ctx.fillText(j.text, j.x, j.y);
+                    ctx.shadowBlur = 0;
+                }
+                ctx.globalAlpha = 1;
+            }
+
+            function drawUI() {
+                // Score
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 26px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'top';
+                ctx.shadowColor = 'rgba(255,255,255,0.5)';
+                ctx.shadowBlur = 6;
+                ctx.fillText(`${score.toLocaleString()}`, 20, 18);
+                ctx.shadowBlur = 0;
+
+                // Multiplier badge
+                if (multiplier > 1) {
+                    ctx.fillStyle = '#FFD700';
+                    ctx.font = 'bold 20px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'right';
+                    ctx.shadowColor = '#FFD700';
+                    ctx.shadowBlur = 10;
+                    ctx.fillText(`x${multiplier}`, CANVAS_W - 20, 20);
+                    ctx.shadowBlur = 0;
+                }
+
+                // Combo (if high)
+                if (combo >= 10) {
+                    const comboAlpha = 0.7 + Math.sin(gameTime * 8) * 0.3;
+                    ctx.globalAlpha = comboAlpha;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 36px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = 'rgba(255,255,255,0.8)';
+                    ctx.shadowBlur = 15;
+                    ctx.fillText(`${combo}`, CANVAS_W / 2, 55);
+                    ctx.shadowBlur = 0;
+                    ctx.globalAlpha = 1;
+                }
+
+                // Progress bar
+                const progress = spawningComplete ? 1 : Math.min(1, currentStepIndex / TOTAL_STEPS);
+                const barY = CANVAS_H - 12;
+                const barW = CANVAS_W - 40;
+                const barH = 4;
+                ctx.fillStyle = 'rgba(255,255,255,0.15)';
+                ctx.beginPath();
+                ctx.roundRect(20, barY, barW, barH, 2);
+                ctx.fill();
+                const progColor = progress >= 1 ? '#FF2D55' : '#00C6FF';
+                ctx.fillStyle = progColor;
+                ctx.shadowColor = progColor;
+                ctx.shadowBlur = 6;
+                ctx.beginPath();
+                ctx.roundRect(20, barY, barW * progress, barH, 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+
+            function drawMenuScreen() {
+                drawBackground();
+                drawReceptors();
+                drawHitZoneLine();
+
+                // Title
+                const titleY = 200;
+                const glowPulse = menuGlow;
+                ctx.shadowColor = '#ff2d8a';
+                ctx.shadowBlur = 30 + glowPulse * 25;
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 56px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('REMIX', CANVAS_W / 2, titleY);
+                ctx.shadowColor = '#00d4ff';
+                ctx.shadowBlur = 30 + glowPulse * 25;
+                ctx.fillText('OPENS', CANVAS_W / 2, titleY + 64);
+                ctx.shadowBlur = 0;
+
+                // Subtitle
+                ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                ctx.font = 'bold 16px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('A RHYTHM GAME', CANVAS_W / 2, titleY + 120);
+
+                // Key hints
+                const keyY = 430;
+                ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                ctx.font = '14px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('PRESS KEYS OR TAP LANES', CANVAS_W / 2, keyY);
+                for (let i = 0; i < 4; i++) {
+                    ctx.fillStyle = LANE_COLORS[i];
+                    ctx.font = 'bold 22px "Segoe UI", system-ui, sans-serif';
+                    ctx.fillText(LANE_KEYS[i], LANE_CENTERS[i], keyY + 50);
+                }
+
+                // Start prompt
+                const promptAlpha = 0.5 + Math.sin(performance.now() / 1000 * 3) * 0.4;
+                ctx.globalAlpha = promptAlpha;
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 18px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('TAP OR PRESS ANY KEY TO START', CANVAS_W / 2, 560);
+                ctx.globalAlpha = 1;
+
+                // Decorative floating notes
+                const t = performance.now() / 1000;
+                for (let i = 0; i < 6; i++) {
+                    const nx = LANE_CENTERS[i % 4] + Math.sin(t * 1.5 + i) * 20;
+                    const ny = 300 + Math.cos(t * 1.2 + i * 1.7) * 60 + i * 40;
+                    ctx.globalAlpha = 0.3;
+                    ctx.fillStyle = LANE_COLORS[i % 4];
+                    ctx.shadowColor = LANE_GLOW[i % 4];
+                    ctx.shadowBlur = 10;
+                    ctx.beginPath();
+                    ctx.roundRect(nx - 20, ny - 20, 40, 40, 8);
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                }
+                ctx.globalAlpha = 1;
+            }
+
+            function drawGameOverScreen() {
+                // Darken overlay
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+                // Game Over title
+                const goY = 220;
+                ctx.shadowColor = '#ff2d8a';
+                ctx.shadowBlur = 35;
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 52px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('GAME OVER', CANVAS_W / 2, goY);
+                ctx.shadowBlur = 0;
+
+                // Score
+                ctx.fillStyle = '#FFD700';
+                ctx.font = 'bold 30px "Segoe UI", system-ui, sans-serif';
+                ctx.shadowColor = '#FFD700';
+                ctx.shadowBlur = 12;
+                ctx.fillText(`SCORE: ${score.toLocaleString()}`, CANVAS_W / 2, goY + 70);
+                ctx.shadowBlur = 0;
+
+                // Stats
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '18px "Segoe UI", system-ui, sans-serif';
+                const statsY = goY + 130;
+                ctx.fillText(`PERFECT: ${perfectCount}`, CANVAS_W / 2 - 60, statsY);
+                ctx.fillText(`GOOD: ${goodCount}`, CANVAS_W / 2 + 60, statsY);
+                ctx.fillText(`MISS: ${missCount}`, CANVAS_W / 2, statsY + 30);
+                ctx.fillText(`MAX COMBO: ${maxCombo}`, CANVAS_W / 2, statsY + 60);
+                ctx.fillText(`MULTIPLIER: x${multiplier}`, CANVAS_W / 2, statsY + 90);
+
+                // Restart prompt
+                const promptAlpha = 0.5 + Math.sin(performance.now() / 1000 * 3) * 0.4;
+                ctx.globalAlpha = promptAlpha;
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 18px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('TAP OR PRESS ANY KEY TO RESTART', CANVAS_W / 2, statsY + 160);
+                ctx.globalAlpha = 1;
+            }
+
+            function draw() {
+                ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+
+                if (state === 'menu') {
+                    drawMenuScreen();
+                    return;
+                }
+
+                drawBackground();
+                drawHitZoneLine();
+                drawReceptors();
+                drawNotes();
+                drawJudgments();
+                drawUI();
+
+                if (state === 'gameover') {
+                    drawGameOverScreen();
+                }
+            }
+
+            // ──────────────────────────────
+            // GAME LOOP
+            // ──────────────────────────────
+            function gameLoop(timestamp) {
+                if (!lastFrameTime) lastFrameTime = timestamp;
+                let deltaTime = (timestamp - lastFrameTime) / 1000;
+                lastFrameTime = timestamp;
+
+                // Cap delta to avoid huge jumps
+                if (deltaTime > 0.15) deltaTime = 0.15;
+                if (deltaTime <= 0) deltaTime = 0.016;
+
+                update(deltaTime);
+                draw();
+
+                requestAnimationFrame(gameLoop);
+            }
+
+            // ──────────────────────────────
+            // INPUT HANDLING
+            // ──────────────────────────────
+            const pressedKeys = new Set();
+
+            function getCanvasPos(clientX, clientY) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = CANVAS_W / rect.width;
+                const scaleY = CANVAS_H / rect.height;
+                return {
+                    x: (clientX - rect.left) * scaleX,
+                    y: (clientY - rect.top) * scaleY
+                };
+            }
+
+            function getLaneFromX(x) {
+                if (x < 130) return 0;
+                if (x < 250) return 1;
+                if (x < 370) return 2;
+                return 3;
+            }
+
+            function handlePress(lane) {
+                if (state === 'menu') {
+                    startGame();
+                    return;
+                }
+                if (state === 'gameover') {
+                    startGame();
+                    return;
+                }
+                if (state === 'playing') {
+                    triggerLane(lane);
+                }
+            }
+
+            // Keyboard
+            window.addEventListener('keydown', (e) => {
+                if (pressedKeys.has(e.key)) return;
+                pressedKeys.add(e.key);
+                const keyMap = { 'd': 0, 'f': 1, 'j': 2, 'k': 3, 'D': 0, 'F': 1, 'J': 2, 'K': 3 };
+                if (e.key in keyMap) {
+                    e.preventDefault();
+                    handlePress(keyMap[e.key]);
+                } else if (state !== 'playing') {
+                    // Any other key starts/restarts
+                    e.preventDefault();
+                    handlePress(0); // lane doesn't matter for state transition
+                }
+            });
+
+            window.addEventListener('keyup', (e) => {
+                pressedKeys.delete(e.key);
+            });
+
+            // Touch
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                for (const touch of e.changedTouches) {
+                    const pos = getCanvasPos(touch.clientX, touch.clientY);
+                    const lane = getLaneFromX(pos.x);
+                    handlePress(lane);
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+            }, { passive: false });
+
+            canvas.addEventListener('touchend', (e) => {
+                e.preventDefault();
+            }, { passive: false });
+
+            canvas.addEventListener('touchcancel', (e) => {
+                e.preventDefault();
+            }, { passive: false });
+
+            // Mouse click (for desktop testing)
+            canvas.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                const pos = getCanvasPos(e.clientX, e.clientY);
+                const lane = getLaneFromX(pos.x);
+                handlePress(lane);
+            });
+
+            // ──────────────────────────────
+            // POLYFILL: roundRect
+            // ──────────────────────────────
+            if (!ctx.roundRect) {
+                ctx.roundRect = function(x, y, w, h, r) {
+                    if (typeof r === 'number') r = { tl: r, tr: r, br: r, bl: r };
+                    ctx.beginPath();
+                    ctx.moveTo(x + r.tl, y);
+                    ctx.lineTo(x + w - r.tr, y);
+                    ctx.quadraticCurveTo(x + w, y, x + w, y + r.tr);
+                    ctx.lineTo(x + w, y + h - r.br);
+                    ctx.quadraticCurveTo(x + w, y + h, x + w - r.br, y + h);
+                    ctx.lineTo(x + r.bl, y + h);
+                    ctx.quadraticCurveTo(x, y + h, x, y + h - r.bl);
+                    ctx.lineTo(x, y + r.tl);
+                    ctx.quadraticCurveTo(x, y, x + r.tl, y);
+                    ctx.closePath();
+                };
+            }
+
+            // ──────────────────────────────
+            // INIT
+            // ──────────────────────────────
+            lastFrameTime = performance.now();
+            requestAnimationFrame(gameLoop);
+            console.log('🎧 REMIX OPENS ready — Press D F J K or tap the lanes!');
+        })();
+    </script>
+</body>
+</html>
