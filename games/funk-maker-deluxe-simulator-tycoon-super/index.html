@@ -1,0 +1,1247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Funk Maker Deluxe Simulator Tycoon Super Limited Edition Super Town Crazy Creap 99% Deal Super Simulator</title>
+    <style>
+        :root {
+            --bg: #1a0030;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        #game-container {
+            position: relative;
+            width: 100vmin;
+            height: 100vmin;
+            max-width: 500px;
+            max-height: 750px;
+            aspect-ratio: 480 / 700;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            border-radius: 16px;
+            box-shadow: 0 0 40px rgba(255, 20, 147, 0.5), 0 0 80px rgba(139, 0, 255, 0.4), 0 0 120px rgba(255, 102, 0, 0.3);
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            const GAME_W = 480;
+            const GAME_H = 700;
+            canvas.width = GAME_W;
+            canvas.height = GAME_H;
+
+            // ============ AUDIO ENGINE ============
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playBeep(freq, duration, type = 'square', vol = 0.08) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    osc.frequency.exponentialRampToValueAtTime(freq * 0.3, t + duration);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) { /* silent */ }
+            }
+
+            function playClickSound() { playBeep(600 + Math.random() * 300, 0.08, 'square', 0.06);
+                playBeep(200, 0.04, 'triangle', 0.04); }
+
+            function playBuySound() {
+                playBeep(800, 0.06, 'square', 0.07);
+                setTimeout(() => playBeep(1000, 0.06, 'square', 0.07), 60);
+                setTimeout(() => playBeep(1200, 0.08, 'triangle', 0.08), 120);
+            }
+
+            function playDealSound() {
+                playBeep(400, 0.1, 'sawtooth', 0.1);
+                setTimeout(() => playBeep(600, 0.1, 'sawtooth', 0.1), 100);
+                setTimeout(() => playBeep(900, 0.15, 'square', 0.12), 200);
+            }
+
+            function playWinSound() {
+                [523, 659, 784, 1047].forEach((f, i) => {
+                    setTimeout(() => playBeep(f, 0.2, 'triangle', 0.1), i * 120);
+                });
+            }
+
+            // ============ GAME STATE ============
+            const state = {
+                funk: 0,
+                totalFunkEarned: 0,
+                funkPerClick: 1,
+                funkPerSecond: 0,
+                clickMultiplier: 1,
+                dealFrequency: 1,
+                prestigeMultiplier: 1,
+                upgrades: [],
+                activeDeal: null,
+                dealTimer: 0,
+                dealCooldown: 0,
+                particles: [],
+                floatingTexts: [],
+                upgradeScrollY: 0,
+                maxUpgradeScroll: 0,
+                townBuildingsUnlocked: [],
+                pulsePhase: 0,
+                lastSave: 0,
+                won: false,
+                winCelebration: 0,
+            };
+
+            // ============ UPGRADE DEFINITIONS ============
+            const upgradeDefs = [
+                { id: 0, name: 'Funky Finger', desc: '+1 funk per click', cost: 15, effect: { clickBonus: 1 },
+                color: '#FF6B9D' },
+                { id: 1, name: 'Disco Ball Mini', desc: '+2 funk/sec', cost: 50, effect: { passiveBonus: 2 },
+                color: '#C44DFF' },
+                { id: 2, name: 'Groove Machine', desc: '+5 funk/sec', cost: 200, effect: { passiveBonus: 5 },
+                color: '#FF8C42' },
+                { id: 3, name: 'Funk Robot 3000', desc: '+10 funk/sec', cost: 800, effect: { passiveBonus: 10 },
+                color: '#00E5FF' },
+                { id: 4, name: 'Ltd Edition Hat 👒', desc: '2x click power!', cost: 3000, effect: { clickMultiplier: 2 },
+                    color: '#FFD700' },
+                { id: 5, name: 'Creap Speaker Deluxe', desc: '+25 funk/sec', cost: 5000, effect: { passiveBonus: 25 },
+                    color: '#FF1493' },
+                { id: 6, name: '99% Deal Finder', desc: 'Deals 2x more often!', cost: 10000, effect: { dealFrequency: 2 },
+                    color: '#32FF32' },
+                { id: 7, name: 'Funk Master Studio', desc: '+50 funk/sec', cost: 20000, effect: { passiveBonus: 50 },
+                    color: '#FF6600' },
+                { id: 8, name: 'Super Town Plaza', desc: '+100 funk/sec', cost: 50000, effect: { passiveBonus: 100 },
+                    color: '#8B00FF' },
+                { id: 9, name: 'DELUXE SIMULATOR', desc: '+500 funk/sec LEGENDARY', cost: 200000,
+                    effect: { passiveBonus: 500 }, color: '#FF0040' },
+            ];
+
+            // ============ TOWN MILESTONES ============
+            const townMilestones = [
+                { name: 'Funk Shack', threshold: 0, color: '#FF6B9D', h: 40 },
+                { name: 'Disco Club', threshold: 500, color: '#C44DFF', h: 60 },
+                { name: 'Super Mall', threshold: 5000, color: '#FF8C42', h: 75 },
+                { name: 'Funk Tower', threshold: 20000, color: '#00E5FF', h: 95 },
+                { name: 'Creap Castle', threshold: 100000, color: '#FFD700', h: 110 },
+                { name: '99% DEAL HQ', threshold: 500000, color: '#FF1493', h: 130 },
+                { name: 'DELUXE SPIRE', threshold: 2000000, color: '#FF0040', h: 150 },
+            ];
+
+            function initState() {
+                state.funk = 0;
+                state.totalFunkEarned = 0;
+                state.funkPerClick = 1;
+                state.funkPerSecond = 0;
+                state.clickMultiplier = 1;
+                state.dealFrequency = 1;
+                state.upgrades = upgradeDefs.map(u => ({ ...u, purchased: false }));
+                state.activeDeal = null;
+                state.dealTimer = 0;
+                state.dealCooldown = 15 + Math.random() * 20;
+                state.particles = [];
+                state.floatingTexts = [];
+                state.upgradeScrollY = 0;
+                state.maxUpgradeScroll = 0;
+                state.townBuildingsUnlocked = [];
+                state.won = false;
+                state.winCelebration = 0;
+                updateTownBuildings();
+                updateMaxScroll();
+                recalcStats();
+            }
+
+            function recalcStats() {
+                let cBonus = 0;
+                let pBonus = 0;
+                let cm = state.clickMultiplier;
+                let df = 1;
+                for (const u of state.upgrades) {
+                    if (!u.purchased) continue;
+                    if (u.effect.clickBonus) cBonus += u.effect.clickBonus;
+                    if (u.effect.passiveBonus) pBonus += u.effect.passiveBonus;
+                    if (u.effect.clickMultiplier) cm *= u.effect.clickMultiplier;
+                    if (u.effect.dealFrequency) df = Math.max(df, u.effect.dealFrequency);
+                }
+                state.funkPerClick = (1 + cBonus) * cm * state.prestigeMultiplier;
+                state.funkPerSecond = pBonus * state.prestigeMultiplier;
+                state.dealFrequency = df;
+                updateMaxScroll();
+            }
+
+            function updateMaxScroll() {
+                const panelTop = 420;
+                const panelH = 260;
+                const rowH = 56;
+                const totalH = state.upgrades.length * rowH;
+                state.maxUpgradeScroll = Math.max(0, totalH - panelH + 10);
+                if (state.upgradeScrollY > state.maxUpgradeScroll) state.upgradeScrollY = state.maxUpgradeScroll;
+                if (state.upgradeScrollY < 0) state.upgradeScrollY = 0;
+            }
+
+            function updateTownBuildings() {
+                state.townBuildingsUnlocked = townMilestones.filter(
+                    m => state.totalFunkEarned >= m.threshold * (1 / state.prestigeMultiplier)
+                );
+            }
+
+            // ============ PARTICLES ============
+            function spawnParticles(x, y, count, color, spread = 3, life = 0.6) {
+                for (let i = 0; i < count; i++) {
+                    state.particles.push({
+                        x,
+                        y,
+                        vx: (Math.random() - 0.5) * spread * 40,
+                        vy: (Math.random() - 0.5) * spread * 40 - 30,
+                        life,
+                        maxLife: life,
+                        color,
+                        size: 2 + Math.random() * 5,
+                    });
+                }
+            }
+
+            function spawnFloatingText(x, y, text, color = '#FFD700') {
+                state.floatingTexts.push({
+                    x,
+                    y,
+                    text,
+                    color,
+                    life: 1.2,
+                    maxLife: 1.2,
+                    vy: -60,
+                });
+            }
+
+            function updateParticles(dt) {
+                for (let i = state.particles.length - 1; i >= 0; i--) {
+                    const p = state.particles[i];
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.vy += 80 * dt;
+                    p.life -= dt;
+                    if (p.life <= 0) state.particles.splice(i, 1);
+                }
+                for (let i = state.floatingTexts.length - 1; i >= 0; i--) {
+                    const ft = state.floatingTexts[i];
+                    ft.y += ft.vy * dt;
+                    ft.life -= dt;
+                    if (ft.life <= 0) state.floatingTexts.splice(i, 1);
+                }
+            }
+
+            // ============ DEAL SYSTEM ============
+            function generateDeal() {
+                if (state.activeDeal) return;
+                const unpurchased = state.upgrades.filter(u => !u.purchased);
+                if (unpurchased.length === 0) {
+                    // All purchased - offer bonus funk
+                    state.activeDeal = {
+                        type: 'bonus',
+                        bonusAmount: Math.floor(state.totalFunkEarned * 0.5) + 10000,
+                        timer: 8,
+                        color: '#FFD700',
+                        title: 'CREAP BONUS!!!',
+                    };
+                } else {
+                    const u = unpurchased[Math.floor(Math.random() * unpurchased.length)];
+                    const discount = 0.99;
+                    state.activeDeal = {
+                        type: 'discount',
+                        upgradeId: u.id,
+                        discountedCost: Math.max(1, Math.floor(u.cost * (1 - discount))),
+                        timer: 8,
+                        color: '#FF1493',
+                        title: '99% OFF DEAL!!!',
+                    };
+                }
+                state.dealTimer = state.activeDeal.timer;
+                playDealSound();
+            }
+
+            function acceptDeal() {
+                if (!state.activeDeal) return;
+                const deal = state.activeDeal;
+                if (deal.type === 'discount') {
+                    const cost = deal.discountedCost;
+                    if (state.funk >= cost) {
+                        state.funk -= cost;
+                        const upg = state.upgrades.find(u => u.id === deal.upgradeId);
+                        if (upg && !upg.purchased) {
+                            upg.purchased = true;
+                            recalcStats();
+                            updateTownBuildings();
+                            spawnFloatingText(GAME_W / 2, 350, 'DEAL ACCEPTED! 🎉', '#FFD700');
+                            spawnParticles(GAME_W / 2, 350, 40, '#FFD700', 5, 1);
+                            playBuySound();
+                        }
+                    } else {
+                        spawnFloatingText(GAME_W / 2, 350, 'Not enough funk!', '#FF4444');
+                    }
+                } else if (deal.type === 'bonus') {
+                    state.funk += deal.bonusAmount;
+                    state.totalFunkEarned += deal.bonusAmount;
+                    updateTownBuildings();
+                    spawnFloatingText(GAME_W / 2, 350, '+' + deal.bonusAmount + ' FUNK! 💰', '#FFD700');
+                    spawnParticles(GAME_W / 2, 350, 50, '#FFD700', 6, 1.2);
+                    playWinSound();
+                }
+                state.activeDeal = null;
+                state.dealTimer = 0;
+                state.dealCooldown = (12 + Math.random() * 25) / state.dealFrequency;
+            }
+
+            function dismissDeal() {
+                state.activeDeal = null;
+                state.dealTimer = 0;
+                state.dealCooldown = (10 + Math.random() * 20) / state.dealFrequency;
+                spawnFloatingText(GAME_W / 2, 350, 'Deal dismissed... 💔', '#888');
+            }
+
+            // ============ SAVE / LOAD ============
+            function saveGame() {
+                const saveData = {
+                    funk: state.funk,
+                    totalFunkEarned: state.totalFunkEarned,
+                    prestigeMultiplier: state.prestigeMultiplier,
+                    upgrades: state.upgrades.map(u => ({ id: u.id, purchased: u.purchased })),
+                };
+                try { localStorage.setItem('funkMakerDeluxeSave', JSON.stringify(saveData)); } catch (e) {}
+                state.lastSave = Date.now();
+            }
+
+            function loadGame() {
+                try {
+                    const raw = localStorage.getItem('funkMakerDeluxeSave');
+                    if (raw) {
+                        const data = JSON.parse(raw);
+                        state.funk = data.funk || 0;
+                        state.totalFunkEarned = data.totalFunkEarned || 0;
+                        state.prestigeMultiplier = data.prestigeMultiplier || 1;
+                        if (data.upgrades) {
+                            for (const saved of data.upgrades) {
+                                const upg = state.upgrades.find(u => u.id === saved.id);
+                                if (upg && saved.purchased) upg.purchased = true;
+                            }
+                        }
+                        recalcStats();
+                        updateTownBuildings();
+                    }
+                } catch (e) {}
+            }
+
+            function prestigeReset() {
+                state.prestigeMultiplier *= 2;
+                state.funk = 0;
+                state.totalFunkEarned = 0;
+                state.upgrades.forEach(u => u.purchased = false);
+                state.activeDeal = null;
+                state.dealTimer = 0;
+                state.dealCooldown = 15;
+                state.won = false;
+                state.winCelebration = 0;
+                recalcStats();
+                updateTownBuildings();
+                updateMaxScroll();
+                state.upgradeScrollY = 0;
+                saveGame();
+            }
+
+            // ============ RENDERING ============
+            function drawBackground() {
+                const grad = ctx.createLinearGradient(0, 0, 0, GAME_H);
+                grad.addColorStop(0, '#0d0025');
+                grad.addColorStop(0.35, '#1a0040');
+                grad.addColorStop(0.7, '#0d0030');
+                grad.addColorStop(1, '#050015');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, GAME_W, GAME_H);
+
+                // Subtle grid
+                ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+                ctx.lineWidth = 1;
+                for (let x = 0; x < GAME_W; x += 30) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, 0);
+                    ctx.lineTo(x, GAME_H);
+                    ctx.stroke();
+                }
+                for (let y = 0; y < GAME_H; y += 30) {
+                    ctx.beginPath();
+                    ctx.moveTo(0, y);
+                    ctx.lineTo(GAME_W, y);
+                    ctx.stroke();
+                }
+            }
+
+            function drawTown() {
+                const townY = 50;
+                const townH = 120;
+                const groundY = townY + townH;
+
+                // Sky glow
+                const skyGrad = ctx.createRadialGradient(GAME_W / 2, townY + 30, 20, GAME_W / 2, townY + 30, 200);
+                skyGrad.addColorStop(0, 'rgba(255,100,200,0.15)');
+                skyGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = skyGrad;
+                ctx.fillRect(0, townY - 20, GAME_W, townH + 40);
+
+                // Ground
+                const groundGrad = ctx.createLinearGradient(0, groundY - 5, 0, groundY + 15);
+                groundGrad.addColorStop(0, '#2a1050');
+                groundGrad.addColorStop(1, '#0d0030');
+                ctx.fillStyle = groundGrad;
+                ctx.fillRect(0, groundY - 5, GAME_W, 20);
+
+                // Draw buildings
+                const buildings = state.townBuildingsUnlocked;
+                const totalB = Math.max(buildings.length, 1);
+                const spacing = Math.min(70, (GAME_W - 60) / totalB);
+                const startX = (GAME_W - (totalB - 1) * spacing) / 2;
+
+                buildings.forEach((b, i) => {
+                    const bx = startX + i * spacing - b.h * 0.35;
+                    const bw = b.h * 0.7;
+                    const bh = b.h;
+                    const by = groundY - bh;
+
+                    // Glow
+                    const glowGrad = ctx.createRadialGradient(bx + bw / 2, by + bh / 2, bw * 0.2, bx + bw / 2, by + bh /
+                        2, bw * 1.2);
+                    glowGrad.addColorStop(0, b.color.replace(')', ',0.5)').replace('rgb',
+                        'rgba'));
+                    glowGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                    ctx.fillStyle = glowGrad;
+                    ctx.fillRect(bx - bw * 0.5, by - bh * 0.3, bw * 2, bh * 1.6);
+
+                    // Building body
+                    const bodyGrad = ctx.createLinearGradient(bx, by, bx, by + bh);
+                    bodyGrad.addColorStop(0, b.color);
+                    bodyGrad.addColorStop(0.5, b.color.replace(')', ',0.7)').replace('rgb', 'rgba'));
+                    bodyGrad.addColorStop(1, 'rgba(0,0,0,0.4)');
+                    ctx.fillStyle = bodyGrad;
+                    roundRect(bx, by, bw, bh, 6);
+                    ctx.fill();
+
+                    // Windows
+                    const winCols = Math.floor(bw / 14);
+                    const winRows = Math.floor(bh / 18);
+                    const winW = 8;
+                    const winH = 10;
+                    const winStartX = bx + (bw - winCols * (winW + 4)) / 2 + 2;
+                    const winStartY = by + 8;
+                    for (let r = 0; r < winRows; r++) {
+                        for (let c = 0; c < winCols; c++) {
+                            const lit = Math.random() > 0.3;
+                            ctx.fillStyle = lit ? '#FFE8A0' : 'rgba(255,200,100,0.3)';
+                            ctx.shadowColor = lit ? '#FFD700' : 'transparent';
+                            ctx.shadowBlur = lit ? 4 : 0;
+                            ctx.fillRect(winStartX + c * (winW + 4), winStartY + r * (winH + 4), winW, winH);
+                            ctx.shadowBlur = 0;
+                        }
+                    }
+
+                    // Name
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.font = 'bold 8px "Segoe UI", sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(b.name, bx + bw / 2, by - 6);
+                });
+            }
+
+            function drawScoreBar() {
+                // Score background
+                const barY = 5;
+                const barH = 38;
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                roundRect(8, barY, GAME_W - 16, barH, 10);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+                ctx.lineWidth = 1;
+                roundRect(8, barY, GAME_W - 16, barH, 10);
+                ctx.stroke();
+
+                // Funk amount
+                ctx.fillStyle = '#FFD700';
+                ctx.font = 'bold 18px "Segoe UI", sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText('🕺 ' + formatNumber(state.funk) + ' FUNK', 18, barY + 27);
+
+                // Per second
+                ctx.fillStyle = '#AAAAAA';
+                ctx.font = '10px "Segoe UI", sans-serif';
+                ctx.textAlign = 'right';
+                ctx.fillText(formatNumber(state.funkPerSecond) + '/sec', GAME_W - 18, barY + 16);
+
+                // Prestige indicator
+                if (state.prestigeMultiplier > 1) {
+                    ctx.fillStyle = '#FF8C42';
+                    ctx.font = 'bold 10px "Segoe UI", sans-serif';
+                    ctx.fillText('⭐x' + state.prestigeMultiplier, GAME_W - 18, barY + 30);
+                }
+            }
+
+            function drawMainButton() {
+                const cx = GAME_W / 2;
+                const cy = 310;
+                const baseRadius = 70;
+                const pulse = 1 + Math.sin(state.pulsePhase * 3) * 0.04 + Math.sin(state.pulsePhase * 7) * 0.02;
+                const radius = baseRadius * pulse;
+
+                // Outer glow rings
+                for (let i = 3; i >= 0; i--) {
+                    const r = radius + 8 + i * 12;
+                    const alpha = 0.15 - i * 0.03;
+                    const glowGrad = ctx.createRadialGradient(cx, cy, r * 0.6, cx, cy, r);
+                    glowGrad.addColorStop(0, `rgba(255,100,200,${alpha})`);
+                    glowGrad.addColorStop(0.5, `rgba(200,50,255,${alpha*0.7})`);
+                    glowGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                    ctx.fillStyle = glowGrad;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Main circle
+                const mainGrad = ctx.createRadialGradient(cx - radius * 0.3, cy - radius * 0.3, radius * 0.1, cx, cy,
+                radius);
+                mainGrad.addColorStop(0, '#FF69B4');
+                mainGrad.addColorStop(0.4, '#C44DFF');
+                mainGrad.addColorStop(0.7, '#8B00FF');
+                mainGrad.addColorStop(1, '#4A0070');
+                ctx.fillStyle = mainGrad;
+                ctx.beginPath();
+                ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Shine
+                const shineGrad = ctx.createRadialGradient(cx - radius * 0.35, cy - radius * 0.4, radius * 0.05, cx, cy,
+                    radius);
+                shineGrad.addColorStop(0, 'rgba(255,255,255,0.5)');
+                shineGrad.addColorStop(0.3, 'rgba(255,255,255,0.1)');
+                shineGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = shineGrad;
+                ctx.beginPath();
+                ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Face - sunglasses
+                const eyeY = cy - 8;
+                const eyeSpacing = 20;
+                // Left lens
+                ctx.fillStyle = '#111';
+                ctx.beginPath();
+                ctx.roundRect(cx - eyeSpacing - 16, eyeY - 10, 22, 16, 8);
+                ctx.fill();
+                ctx.strokeStyle = '#FFD700';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                // Right lens
+                ctx.beginPath();
+                ctx.roundRect(cx + eyeSpacing - 6, eyeY - 10, 22, 16, 8);
+                ctx.fill();
+                ctx.stroke();
+                // Bridge
+                ctx.strokeStyle = '#FFD700';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(cx - eyeSpacing + 6, eyeY - 2);
+                ctx.lineTo(cx + eyeSpacing - 6, eyeY - 2);
+                ctx.stroke();
+
+                // Lens shine
+                ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                ctx.beginPath();
+                ctx.arc(cx - eyeSpacing - 10, eyeY - 6, 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(cx + eyeSpacing, eyeY - 6, 4, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Smirk
+                ctx.strokeStyle = '#FFD700';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(cx, eyeY + 18, 14, 0.2, Math.PI - 0.2);
+                ctx.stroke();
+
+                // Funky hat
+                const hatY = cy - radius + 5;
+                ctx.fillStyle = '#FF1493';
+                ctx.beginPath();
+                ctx.moveTo(cx - 30, hatY + 15);
+                ctx.lineTo(cx - 20, hatY - 20);
+                ctx.lineTo(cx + 20, hatY - 20);
+                ctx.lineTo(cx + 30, hatY + 15);
+                ctx.closePath();
+                ctx.fill();
+                ctx.fillStyle = '#FFD700';
+                ctx.fillRect(cx - 22, hatY - 24, 44, 8);
+                ctx.fillStyle = '#FF1493';
+                ctx.fillRect(cx - 8, hatY - 35, 16, 20);
+
+                // Label
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = 'bold 11px "Segoe UI", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('CLICK FOR FUNK!', cx, cy + radius + 20);
+
+                // Orbiting sparkle
+                const sparkleAngle = state.pulsePhase * 2;
+                const sparkleX = cx + Math.cos(sparkleAngle) * (radius + 18);
+                const sparkleY = cy + Math.sin(sparkleAngle) * (radius + 18);
+                ctx.fillStyle = '#FFD700';
+                ctx.shadowColor = '#FFD700';
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.arc(sparkleX, sparkleY, 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                const sparkle2Angle = sparkleAngle + Math.PI;
+                const sparkle2X = cx + Math.cos(sparkle2Angle) * (radius + 25);
+                const sparkle2Y = cy + Math.sin(sparkle2Angle) * (radius + 25);
+                ctx.fillStyle = '#FF69B4';
+                ctx.shadowColor = '#FF69B4';
+                ctx.shadowBlur = 8;
+                ctx.beginPath();
+                ctx.arc(sparkle2X, sparkle2Y, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                return { cx, cy, radius };
+            }
+
+            function drawUpgradePanel() {
+                const panelTop = 420;
+                const panelH = 260;
+                const panelX = 10;
+                const panelW = GAME_W - 20;
+
+                // Panel background
+                ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                roundRect(panelX, panelTop, panelW, panelH, 12);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+                ctx.lineWidth = 2;
+                roundRect(panelX, panelTop, panelW, panelH, 12);
+                ctx.stroke();
+
+                // Title
+                ctx.fillStyle = '#FFD700';
+                ctx.font = 'bold 13px "Segoe UI", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('⭐ UPGRADE SHOP ⭐', GAME_W / 2, panelTop + 18);
+
+                // Clip for scrolling
+                ctx.save();
+                ctx.beginPath();
+                roundRect(panelX + 2, panelTop + 24, panelW - 4, panelH - 30, 8);
+                ctx.clip();
+
+                const rowH = 56;
+                const startY = panelTop + 26;
+
+                for (let i = 0; i < state.upgrades.length; i++) {
+                    const u = state.upgrades[i];
+                    const rowY = startY + i * rowH - state.upgradeScrollY;
+
+                    // Only draw if visible
+                    if (rowY + rowH < panelTop + 24 || rowY > panelTop + panelH - 6) continue;
+
+                    const rowAlpha = 1;
+                    const isAffordable = state.funk >= u.cost && !u.purchased;
+
+                    // Row bg
+                    const rowBg = u.purchased ? 'rgba(40,40,60,0.7)' :
+                        isAffordable ? 'rgba(60,30,80,0.8)' : 'rgba(30,20,40,0.7)';
+                    ctx.fillStyle = rowBg;
+                    roundRect(panelX + 8, rowY, panelW - 36, rowH - 4, 8);
+                    ctx.fill();
+
+                    if (isAffordable && !u.purchased) {
+                        ctx.strokeStyle = 'rgba(255,215,0,0.6)';
+                        ctx.lineWidth = 1.5;
+                        roundRect(panelX + 8, rowY, panelW - 36, rowH - 4, 8);
+                        ctx.stroke();
+                    }
+
+                    // Name
+                    ctx.fillStyle = u.purchased ? '#888' : '#FFFFFF';
+                    ctx.font = 'bold 11px "Segoe UI", sans-serif';
+                    ctx.textAlign = 'left';
+                    ctx.fillText(u.name, panelX + 16, rowY + 16);
+
+                    // Description
+                    ctx.fillStyle = u.purchased ? '#666' : '#BBBBBB';
+                    ctx.font = '9px "Segoe UI", sans-serif';
+                    ctx.fillText(u.desc, panelX + 16, rowY + 32);
+
+                    // Cost / Status button
+                    const btnX = panelX + panelW - 85;
+                    const btnW = 60;
+                    const btnH = 26;
+                    const btnY = rowY + (rowH - btnH) / 2;
+
+                    if (u.purchased) {
+                        ctx.fillStyle = '#2A5A2A';
+                        roundRect(btnX, btnY, btnW, btnH, 13);
+                        ctx.fill();
+                        ctx.fillStyle = '#88FF88';
+                        ctx.font = 'bold 9px "Segoe UI", sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('OWNED ✓', btnX + btnW / 2, btnY + btnH / 2 + 3);
+                    } else {
+                        const btnGrad = ctx.createLinearGradient(btnX, btnY, btnX, btnY + btnH);
+                        if (isAffordable) {
+                            btnGrad.addColorStop(0, '#FF8C42');
+                            btnGrad.addColorStop(1, '#CC5500');
+                        } else {
+                            btnGrad.addColorStop(0, '#555');
+                            btnGrad.addColorStop(1, '#333');
+                        }
+                        ctx.fillStyle = btnGrad;
+                        roundRect(btnX, btnY, btnW, btnH, 13);
+                        ctx.fill();
+                        ctx.fillStyle = isAffordable ? '#FFF' : '#999';
+                        ctx.font = 'bold 9px "Segoe UI", sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(formatNumber(u.cost) + ' F', btnX + btnW / 2, btnY + btnH / 2 + 3);
+                    }
+                }
+
+                ctx.restore();
+
+                // Scrollbar
+                if (state.maxUpgradeScroll > 0) {
+                    const scrollTrackH = panelH - 34;
+                    const thumbH = Math.max(30, scrollTrackH * (scrollTrackH / (state.upgrades.length * rowH)));
+                    const thumbY = panelTop + 26 + (state.upgradeScrollY / state.maxUpgradeScroll) * (scrollTrackH -
+                        thumbH);
+                    const scrollX = panelX + panelW - 14;
+
+                    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+                    roundRect(scrollX, panelTop + 26, 6, scrollTrackH, 3);
+                    ctx.fill();
+                    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                    roundRect(scrollX, thumbY, 6, thumbH, 3);
+                    ctx.fill();
+                }
+            }
+
+            function drawDealPopup() {
+                if (!state.activeDeal) return;
+
+                const deal = state.activeDeal;
+                const popW = 360;
+                const popH = 160;
+                const popX = (GAME_W - popW) / 2;
+                const popY = 200;
+
+                // Overlay
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(0, 0, GAME_W, GAME_H);
+
+                // Pulsing border
+                const borderPulse = 1 + Math.sin(state.pulsePhase * 8) * 0.08;
+                const borderGlow = ctx.createRadialGradient(GAME_W / 2, popY + popH / 2, popW * 0.3, GAME_W / 2, popY + popH /
+                    2, popW * 0.9);
+                borderGlow.addColorStop(0, deal.color.replace(')', ',0.6)').replace('rgb', 'rgba'));
+                borderGlow.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = borderGlow;
+                ctx.fillRect(popX - 20, popY - 20, popW + 40, popH + 40);
+
+                // Popup bg
+                const popGrad = ctx.createLinearGradient(popX, popY, popX, popY + popH);
+                popGrad.addColorStop(0, '#1a0040');
+                popGrad.addColorStop(1, '#0d0025');
+                ctx.fillStyle = popGrad;
+                roundRect(popX, popY, popW, popH, 16);
+                ctx.fill();
+                ctx.strokeStyle = deal.color;
+                ctx.lineWidth = 3 * borderPulse;
+                ctx.shadowColor = deal.color;
+                ctx.shadowBlur = 20;
+                roundRect(popX, popY, popW, popH, 16);
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+
+                // Title
+                ctx.fillStyle = deal.color;
+                ctx.font = 'bold 22px "Segoe UI", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(deal.title, GAME_W / 2, popY + 40);
+
+                // Description
+                if (deal.type === 'discount') {
+                    const upg = state.upgrades.find(u => u.id === deal.upgradeId);
+                    ctx.fillStyle = '#FFF';
+                    ctx.font = 'bold 13px "Segoe UI", sans-serif';
+                    ctx.fillText((upg ? upg.name : 'Upgrade') + ' for only ' + formatNumber(deal.discountedCost) +
+                        ' FUNK!', GAME_W / 2, popY + 70);
+                    ctx.fillStyle = '#FFD700';
+                    ctx.font = '10px "Segoe UI", sans-serif';
+                    ctx.fillText('(Normally ' + formatNumber(upg ? upg.cost : 0) + ' - SAVE 99%!!)', GAME_W / 2, popY + 88);
+                } else {
+                    ctx.fillStyle = '#FFF';
+                    ctx.font = 'bold 14px "Segoe UI", sans-serif';
+                    ctx.fillText('Get ' + formatNumber(deal.bonusAmount) + ' FREE FUNK!', GAME_W / 2, popY + 70);
+                }
+
+                // Timer
+                const timeLeft = Math.ceil(state.dealTimer);
+                ctx.fillStyle = timeLeft < 3 ? '#FF4444' : '#FFD700';
+                ctx.font = 'bold 14px "Segoe UI", sans-serif';
+                ctx.fillText('⏱ ' + timeLeft + 's', GAME_W / 2, popY + 110);
+
+                // Buttons
+                const btnY = popY + popH - 30;
+                // Accept
+                const acceptX = popX + 50;
+                const acceptW = 100;
+                const acceptH = 30;
+                const acceptGrad = ctx.createLinearGradient(acceptX, btnY - acceptH / 2, acceptX, btnY + acceptH / 2);
+                acceptGrad.addColorStop(0, '#32FF32');
+                acceptGrad.addColorStop(1, '#1A8A1A');
+                ctx.fillStyle = acceptGrad;
+                roundRect(acceptX - acceptW / 2, btnY - acceptH / 2, acceptW, acceptH, 15);
+                ctx.fill();
+                ctx.fillStyle = '#000';
+                ctx.font = 'bold 13px "Segoe UI", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('ACCEPT! 💰', acceptX, btnY + 5);
+
+                // Dismiss
+                const dismissX = popX + popW - 50;
+                const dismissW = 80;
+                ctx.fillStyle = '#555';
+                roundRect(dismissX - dismissW / 2, btnY - acceptH / 2, dismissW, acceptH, 15);
+                ctx.fill();
+                ctx.fillStyle = '#CCC';
+                ctx.fillText('NO THX', dismissX, btnY + 5);
+
+                // Store button positions for click detection
+                state._dealAcceptBounds = {
+                    x: acceptX - acceptW / 2,
+                    y: btnY - acceptH / 2,
+                    w: acceptW,
+                    h: acceptH
+                };
+                state._dealDismissBounds = {
+                    x: dismissX - dismissW / 2,
+                    y: btnY - acceptH / 2,
+                    w: dismissW,
+                    h: acceptH
+                };
+            }
+
+            function drawFloatingTextsAll() {
+                for (const ft of state.floatingTexts) {
+                    const alpha = Math.max(0, ft.life / ft.maxLife);
+                    ctx.fillStyle = ft.color.replace(')', `,${alpha})`).replace('rgb', 'rgba');
+                    if (ft.color === '#FFD700') ctx.fillStyle = `rgba(255,215,0,${alpha})`;
+                    if (ft.color === '#FF4444') ctx.fillStyle = `rgba(255,68,68,${alpha})`;
+                    if (ft.color === '#888') ctx.fillStyle = `rgba(180,180,180,${alpha})`;
+                    ctx.font = 'bold 14px "Segoe UI", sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(ft.text, ft.x, ft.y);
+                }
+            }
+
+            function drawParticlesAll() {
+                for (const p of state.particles) {
+                    const alpha = Math.max(0, p.life / p.maxLife);
+                    ctx.fillStyle = p.color.replace(')', `,${alpha})`).replace('rgb', 'rgba');
+                    if (p.color === '#FFD700') ctx.fillStyle = `rgba(255,215,0,${alpha})`;
+                    if (p.color === '#FF1493') ctx.fillStyle = `rgba(255,20,147,${alpha})`;
+                    if (p.color === '#FF69B4') ctx.fillStyle = `rgba(255,105,180,${alpha})`;
+                    ctx.shadowColor = p.color;
+                    ctx.shadowBlur = 4;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.shadowBlur = 0;
+            }
+
+            function drawWinScreen() {
+                if (!state.won) return;
+                const alpha = Math.min(1, state.winCelebration);
+                ctx.fillStyle = `rgba(0,0,0,${alpha*0.7})`;
+                ctx.fillRect(0, 0, GAME_W, GAME_H);
+
+                ctx.fillStyle = `rgba(255,215,0,${alpha})`;
+                ctx.font = 'bold 28px "Segoe UI", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('🏆 YOU WIN! 🏆', GAME_W / 2, 280);
+                ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+                ctx.font = 'bold 15px "Segoe UI", sans-serif';
+                ctx.fillText('Super Limited Edition Complete!', GAME_W / 2, 320);
+                ctx.fillText('Prestige for 2x MULTIPLIER?', GAME_W / 2, 355);
+
+                // Prestige button
+                const btnX = GAME_W / 2 - 80;
+                const btnY = 380;
+                const btnW = 160;
+                const btnH = 44;
+                const btnGrad = ctx.createLinearGradient(btnX, btnY, btnX, btnY + btnH);
+                btnGrad.addColorStop(0, '#FFD700');
+                btnGrad.addColorStop(1, '#FF8C00');
+                ctx.fillStyle = btnGrad;
+                roundRect(btnX, btnY, btnW, btnH, 22);
+                ctx.fill();
+                ctx.fillStyle = '#000';
+                ctx.font = 'bold 16px "Segoe UI", sans-serif';
+                ctx.fillText('PRESTIGE ⭐x' + (state.prestigeMultiplier * 2), GAME_W / 2, btnY + 30);
+
+                state._prestigeBtnBounds = { x: btnX, y: btnY, w: btnW, h: btnH };
+            }
+
+            function roundRect(x, y, w, h, r) {
+                ctx.beginPath();
+                ctx.moveTo(x + r, y);
+                ctx.lineTo(x + w - r, y);
+                ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+                ctx.lineTo(x + w, y + h - r);
+                ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+                ctx.lineTo(x + r, y + h);
+                ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+                ctx.lineTo(x, y + r);
+                ctx.quadraticCurveTo(x, y, x + r, y);
+                ctx.closePath();
+            }
+
+            function formatNumber(n) {
+                if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+                if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+                if (n >= 1e4) return (n / 1e3).toFixed(1) + 'K';
+                return Math.floor(n).toString();
+            }
+
+            // ============ INPUT HANDLING ============
+            function getGameCoords(clientX, clientY) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = GAME_W / rect.width;
+                const scaleY = GAME_H / rect.height;
+                return {
+                    x: (clientX - rect.left) * scaleX,
+                    y: (clientY - rect.top) * scaleY,
+                };
+            }
+
+            function handleClick(gameX, gameY) {
+                initAudio();
+
+                // Check win screen prestige button
+                if (state.won && state._prestigeBtnBounds) {
+                    const b = state._prestigeBtnBounds;
+                    if (gameX >= b.x && gameX <= b.x + b.w && gameY >= b.y && gameY <= b.y + b.h) {
+                        prestigeReset();
+                        return;
+                    }
+                    return;
+                }
+
+                // Check deal popup buttons
+                if (state.activeDeal) {
+                    if (state._dealAcceptBounds) {
+                        const b = state._dealAcceptBounds;
+                        if (gameX >= b.x && gameX <= b.x + b.w && gameY >= b.y && gameY <= b.y + b.h) {
+                            acceptDeal();
+                            return;
+                        }
+                    }
+                    if (state._dealDismissBounds) {
+                        const b = state._dealDismissBounds;
+                        if (gameX >= b.x && gameX <= b.x + b.w && gameY >= b.y && gameY <= b.y + b.h) {
+                            dismissDeal();
+                            return;
+                        }
+                    }
+                    return; // Don't allow other clicks when deal is active
+                }
+
+                // Check main button
+                const mbCX = GAME_W / 2;
+                const mbCY = 310;
+                const mbR = 75;
+                const dist = Math.sqrt((gameX - mbCX) ** 2 + (gameY - mbCY) ** 2);
+                if (dist < mbR + 10) {
+                    // Click the funky button!
+                    const earned = state.funkPerClick;
+                    state.funk += earned;
+                    state.totalFunkEarned += earned;
+                    spawnParticles(gameX, gameY, 15, '#FF69B4', 3, 0.5);
+                    spawnParticles(gameX, gameY, 8, '#FFD700', 2, 0.4);
+                    spawnFloatingText(gameX, gameY - 10, '+' + earned, '#FFD700');
+                    playClickSound();
+                    updateTownBuildings();
+                    checkWinCondition();
+                    return;
+                }
+
+                // Check upgrade panel
+                const panelTop = 420;
+                const panelH = 260;
+                const panelX = 10;
+                const panelW = GAME_W - 20;
+                if (gameX >= panelX && gameX <= panelX + panelW && gameY >= panelTop && gameY <= panelTop + panelH) {
+                    const rowH = 56;
+                    const startY = panelTop + 26;
+                    for (let i = 0; i < state.upgrades.length; i++) {
+                        const u = state.upgrades[i];
+                        const rowY = startY + i * rowH - state.upgradeScrollY;
+                        if (rowY + rowH < panelTop + 24 || rowY > panelTop + panelH - 6) continue;
+                        if (gameY >= rowY && gameY <= rowY + rowH) {
+                            // Check if clicking the buy button area
+                            const btnX = panelX + panelW - 85;
+                            const btnW = 60;
+                            const btnH = 26;
+                            const btnY = rowY + (rowH - btnH) / 2;
+                            if (gameX >= btnX && gameX <= btnX + btnW && gameY >= btnY && gameY <= btnY + btnH) {
+                                if (!u.purchased && state.funk >= u.cost) {
+                                    state.funk -= u.cost;
+                                    u.purchased = true;
+                                    recalcStats();
+                                    updateTownBuildings();
+                                    spawnFloatingText(btnX + btnW / 2, btnY, 'BOUGHT!', '#32FF32');
+                                    spawnParticles(btnX + btnW / 2, btnY + btnH / 2, 20, '#FFD700', 3, 0.6);
+                                    playBuySound();
+                                    checkWinCondition();
+                                    saveGame();
+                                }
+                                return;
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
+
+            function handleScroll(gameX, gameY, delta) {
+                const panelTop = 420;
+                const panelH = 260;
+                const panelX = 10;
+                const panelW = GAME_W - 20;
+                if (gameX >= panelX && gameX <= panelX + panelW && gameY >= panelTop && gameY <= panelTop + panelH) {
+                    state.upgradeScrollY += delta;
+                    state.upgradeScrollY = Math.max(0, Math.min(state.maxUpgradeScroll, state.upgradeScrollY));
+                }
+            }
+
+            function checkWinCondition() {
+                if (!state.won && state.totalFunkEarned >= 1000000 && state.upgrades.filter(u => u.purchased).length >=
+                    7) {
+                    state.won = true;
+                    state.winCelebration = 0;
+                    playWinSound();
+                    spawnParticles(GAME_W / 2, 300, 80, '#FFD700', 8, 2);
+                    spawnParticles(GAME_W / 2, 300, 60, '#FF1493', 6, 1.5);
+                }
+            }
+
+            // ============ EVENT LISTENERS ============
+            canvas.addEventListener('click', (e) => {
+                const coords = getGameCoords(e.clientX, e.clientY);
+                handleClick(coords.x, coords.y);
+            });
+
+            canvas.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const coords = getGameCoords(e.clientX, e.clientY);
+                handleScroll(coords.x, coords.y, e.deltaY * 0.5);
+            });
+
+            // Touch handling
+            let touchStartY = 0;
+            let touchStartX = 0;
+            let touchMoved = false;
+            let touchStartTime = 0;
+            let touchInUpgradeArea = false;
+
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                if (e.touches.length === 1) {
+                    const coords = getGameCoords(e.touches[0].clientX, e.touches[0].clientY);
+                    touchStartX = coords.x;
+                    touchStartY = coords.y;
+                    touchMoved = false;
+                    touchStartTime = Date.now();
+                    const panelTop = 420;
+                    const panelH = 260;
+                    const panelX = 10;
+                    const panelW = GAME_W - 20;
+                    touchInUpgradeArea = coords.x >= panelX && coords.x <= panelX + panelW && coords.y >= panelTop &&
+                        coords.y <= panelTop + panelH;
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                if (e.touches.length === 1 && touchInUpgradeArea) {
+                    const coords = getGameCoords(e.touches[0].clientX, e.touches[0].clientY);
+                    const dy = touchStartY - coords.y;
+                    if (Math.abs(dy) > 4) {
+                        touchMoved = true;
+                        state.upgradeScrollY += dy;
+                        state.upgradeScrollY = Math.max(0, Math.min(state.maxUpgradeScroll, state.upgradeScrollY));
+                        touchStartY = coords.y;
+                    }
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                if (!touchMoved && Date.now() - touchStartTime < 400) {
+                    handleClick(touchStartX, touchStartY);
+                }
+                touchInUpgradeArea = false;
+            }, { passive: false });
+
+            // ============ GAME LOOP ============
+            let lastTime = performance.now();
+            let autoSaveTimer = 0;
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.2) dt = 0.2; // Cap to prevent large jumps
+                lastTime = timestamp;
+
+                state.pulsePhase += dt;
+
+                // Passive income
+                if (state.funkPerSecond > 0) {
+                    const income = state.funkPerSecond * dt;
+                    state.funk += income;
+                    state.totalFunkEarned += income;
+                }
+
+                // Deal cooldown
+                if (!state.activeDeal) {
+                    state.dealCooldown -= dt;
+                    if (state.dealCooldown <= 0) {
+                        generateDeal();
+                    }
+                } else {
+                    state.dealTimer -= dt;
+                    if (state.dealTimer <= 0) {
+                        dismissDeal();
+                    }
+                }
+
+                // Win celebration
+                if (state.won && state.winCelebration < 1) {
+                    state.winCelebration += dt * 1.5;
+                    if (state.winCelebration > 1) state.winCelebration = 1;
+                }
+
+                // Update particles
+                updateParticles(dt);
+
+                // Background sparkle particles
+                if (Math.random() < dt * 8) {
+                    state.particles.push({
+                        x: Math.random() * GAME_W,
+                        y: Math.random() * GAME_H,
+                        vx: (Math.random() - 0.5) * 15,
+                        vy: -10 - Math.random() * 20,
+                        life: 1.5 + Math.random() * 2,
+                        maxLife: 2,
+                        color: ['#FF69B4', '#C44DFF', '#FFD700', '#00E5FF'][Math.floor(Math.random() * 4)],
+                        size: 1 + Math.random() * 3,
+                    });
+                }
+
+                // Auto save
+                autoSaveTimer += dt;
+                if (autoSaveTimer > 15) {
+                    autoSaveTimer = 0;
+                    saveGame();
+                }
+
+                updateTownBuildings();
+                updateMaxScroll();
+
+                // RENDER
+                ctx.clearRect(0, 0, GAME_W, GAME_H);
+                drawBackground();
+                drawTown();
+                drawScoreBar();
+                const mbInfo = drawMainButton();
+                drawUpgradePanel();
+                drawDealPopup();
+                drawFloatingTextsAll();
+                drawParticlesAll();
+                drawWinScreen();
+
+                // Update main button bounds for reference
+                state._mainBtnBounds = {
+                    cx: mbInfo.cx,
+                    cy: mbInfo.cy,
+                    radius: mbInfo.radius + 10
+                };
+
+                requestAnimationFrame(gameLoop);
+            }
+
+            // ============ INIT ============
+            function init() {
+                initState();
+                loadGame();
+                recalcStats();
+                updateTownBuildings();
+                updateMaxScroll();
+                state.dealCooldown = 8 + Math.random() * 15;
+                state.lastSave = Date.now();
+                // Initial welcome particles
+                spawnParticles(GAME_W / 2, 310, 30, '#FFD700', 6, 1.5);
+                spawnParticles(GAME_W / 2, 310, 25, '#FF69B4', 5, 1.2);
+                requestAnimationFrame(gameLoop);
+            }
+
+            init();
+        })();
+    </script>
+</body>
+</html>
