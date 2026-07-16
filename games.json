@@ -358,5 +358,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T05:09:24.428Z",
     "updatedAt": "2026-07-16T05:09:24.428Z"
+  },
+  {
+    "slug": "low-energy-biob-hourglass-manjob",
+    "title": "Low Energy Biob: Hourglass Manjob",
+    "description": "LOW ENERY BIOB Hour glasss manjob",
+    "creator": "kaipie16",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-16T05:10:07.520Z",
+    "updatedAt": "2026-07-16T05:10:07.520Z"
   }
 ]
