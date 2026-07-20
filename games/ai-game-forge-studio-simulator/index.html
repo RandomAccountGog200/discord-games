@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>AI Game Forge - Studio Simulator</title>
     <style>
         :root {
@@ -489,6 +489,14 @@
             color: #ccc;
             margin-left: 8px;
         }
+        #modal .btn-play {
+            background: #ffd740;
+            color: #000;
+            margin-left: 8px;
+        }
+        #modal .btn-play:hover {
+            box-shadow: 0 0 25px rgba(255, 215, 64, 0.6);
+        }
 
         /* History */
         #history-area {
@@ -522,6 +530,64 @@
             font-weight: 700;
             color: var(--gold);
             margin-left: 8px;
+        }
+
+        /* Play canvas */
+        #play-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            z-index: 20;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        #play-canvas {
+            background: #111;
+            border: 2px solid #333;
+            border-radius: 8px;
+            touch-action: none;
+        }
+        #play-hud {
+            display: flex;
+            justify-content: space-between;
+            width: 90%;
+            max-width: 500px;
+            color: #fff;
+            margin-bottom: 8px;
+            font-size: 0.9em;
+        }
+        #ability-btn {
+            background: rgba(0, 229, 255, 0.3);
+            border: 2px solid var(--accent);
+            border-radius: 20px;
+            padding: 8px 18px;
+            color: #fff;
+            font-weight: 700;
+            cursor: pointer;
+            margin-top: 8px;
+            font-size: 0.9em;
+            font-family: inherit;
+        }
+        #ability-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        #play-result {
+            position: absolute;
+            background: rgba(0,0,0,0.85);
+            padding: 20px;
+            border-radius: 16px;
+            text-align: center;
+            color: #fff;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
         }
 
         /* Scrollbar */
@@ -632,10 +698,11 @@
                 selectedTheme: null,
                 selectedMechanic: null,
                 history: [],
-                unlockedMechanics: 4, // start with 4 unlocked
+                unlockedMechanics: 4,
                 unlockedThemes: 4,
                 unlockedGenres: 5,
                 isForging: false,
+                isPlaying: false,
             };
 
             // --- Card Data ---
@@ -662,14 +729,14 @@
             ];
 
             const mechanics = [
-                { id: 'crafting', name: 'Crafting', icon: '🔨', baseVal: 68 },
-                { id: 'stealth', name: 'Stealth', icon: '🕵️', baseVal: 62 },
-                { id: 'parkour', name: 'Parkour', icon: '🤸', baseVal: 58 },
-                { id: 'deckbuild', name: 'Deck-Building', icon: '🃏', baseVal: 76 },
-                { id: 'rhythm', name: 'Rhythm', icon: '🎵', baseVal: 55 },
-                { id: 'gravity', name: 'Gravity Manip', icon: '🧲', baseVal: 72 },
-                { id: 'timewarp', name: 'Time Warp', icon: '⏳', baseVal: 80 },
-                { id: 'fusion', name: 'Fusion', icon: '💥', baseVal: 74 },
+                { id: 'crafting', name: 'Crafting', icon: '🔨', baseVal: 68, ability: 'Craft Shield', cooldown: 8 },
+                { id: 'stealth', name: 'Stealth', icon: '🕵️', baseVal: 62, ability: 'Hide', cooldown: 7 },
+                { id: 'parkour', name: 'Parkour', icon: '🤸', baseVal: 58, ability: 'Jump', cooldown: 5 },
+                { id: 'deckbuild', name: 'Deck-Building', icon: '🃏', baseVal: 76, ability: 'Draw Card', cooldown: 6 },
+                { id: 'rhythm', name: 'Rhythm', icon: '🎵', baseVal: 55, ability: 'Dash', cooldown: 5 },
+                { id: 'gravity', name: 'Gravity Manip', icon: '🧲', baseVal: 72, ability: 'Reverse', cooldown: 7 },
+                { id: 'timewarp', name: 'Time Warp', icon: '⏳', baseVal: 80, ability: 'Slow Time', cooldown: 9 },
+                { id: 'fusion', name: 'Fusion', icon: '💥', baseVal: 74, ability: 'Blast', cooldown: 6 },
             ];
 
             // --- DOM refs ---
@@ -709,7 +776,7 @@
                     gain.connect(audioCtx.destination);
                     osc.start(t);
                     osc.stop(t + dur);
-                } catch (e) { /* ignore */ }
+                } catch (e) {}
             }
 
             function sfxSelect() { playBeep(600, 0.1, 'sine', 0.06);
@@ -772,7 +839,6 @@
                 }
             }
 
-            // --- Resize canvas ---
             function resizeCanvas() {
                 particlesCanvas.width = particlesCanvas.parentElement.clientWidth;
                 particlesCanvas.height = particlesCanvas.parentElement.clientHeight;
@@ -815,7 +881,6 @@
                         sfxSelect();
                         selectCard(type, data.id, div);
                     });
-                    // Touch support
                     div.addEventListener('touchend', (e) => {
                         e.preventDefault();
                         initAudio();
@@ -823,7 +888,6 @@
                         selectCard(type, data.id, div);
                     });
                 }
-                // Highlight if selected
                 if ((type === 'genre' && state.selectedGenre === data.id) ||
                     (type === 'theme' && state.selectedTheme === data.id) ||
                     (type === 'mechanic' && state.selectedMechanic === data.id)) {
@@ -833,8 +897,7 @@
             }
 
             function selectCard(type, id, element) {
-                if (state.isForging) return;
-                // Deselect all in row
+                if (state.isForging || state.isPlaying) return;
                 const row = element.parentElement;
                 row.querySelectorAll('.card').forEach(c => c.classList.remove('selected'));
 
@@ -867,12 +930,12 @@
             function updateForgeButton() {
                 const count = (state.selectedGenre ? 1 : 0) + (state.selectedTheme ? 1 : 0) + (state
                     .selectedMechanic ? 1 : 0);
-                forgeBtn.disabled = count < 3 || state.isForging;
+                forgeBtn.disabled = count < 3 || state.isForging || state.isPlaying;
             }
 
             // --- Forge Game ---
             function forgeGame() {
-                if (state.isForging) return;
+                if (state.isForging || state.isPlaying) return;
                 const count = (state.selectedGenre ? 1 : 0) + (state.selectedTheme ? 1 : 0) + (state
                     .selectedMechanic ? 1 : 0);
                 if (count < 3) return;
@@ -888,7 +951,6 @@
                 updateCoinsDisplay();
                 updateForgeButton();
 
-                // Show thinking
                 aiMessage.textContent = '';
                 aiThinkingDots.style.display = 'flex';
                 forgeBtn.disabled = true;
@@ -896,13 +958,11 @@
 
                 sfxForge();
 
-                // Simulate AI processing time
                 const processingTime = 800 + Math.random() * 1200;
                 setTimeout(() => {
                     finishForging();
                 }, processingTime);
 
-                // Spawn some particles near forge button
                 const btnRect = forgeBtn.getBoundingClientRect();
                 const cx = btnRect.left + btnRect.width / 2;
                 const cy = btnRect.top + btnRect.height / 2;
@@ -919,13 +979,9 @@
                 const themeData = themes.find(t => t.id === state.selectedTheme);
                 const mechanicData = mechanics.find(m => m.id === state.selectedMechanic);
 
-                // Calculate score based on synergy
                 const baseScore = genreData.baseVal + themeData.baseVal + mechanicData.baseVal;
-                // AI "smartness" bonus based on level
                 const levelBonus = state.level * 8;
-                // Random factor (AI creativity)
                 const creativity = Math.floor(Math.random() * 30) - 10;
-                // Synergy bonus for certain combos
                 let synergyBonus = 0;
                 const comboKey = `${state.selectedGenre}|${state.selectedTheme}|${state.selectedMechanic}`;
                 const greatCombos = [
@@ -949,7 +1005,6 @@
                     totalScore >= 110 ? '👌 Decent' :
                     totalScore >= 70 ? '😐 Okay' : '💤 Meh';
 
-                // Generate game name
                 const nameParts = [
                     themeData.name.split(' ')[0],
                     genreData.name.split(' ')[0],
@@ -959,20 +1014,17 @@
                     'Odyssey'
                 ][Math.floor(Math.random() * 6)]);
 
-                // Rewards
                 const coinReward = Math.floor(totalScore / 3) + Math.floor(Math.random() * 20);
                 state.coins += coinReward;
                 const xpGain = Math.floor(totalScore / 2);
                 state.xp += xpGain;
 
-                // Level up check
                 let leveledUp = false;
                 while (state.xp >= state.xpToNext) {
                     state.xp -= state.xpToNext;
                     state.level++;
                     state.xpToNext = Math.floor(state.xpToNext * 1.5);
                     leveledUp = true;
-                    // Unlock more cards
                     if (state.level >= 3 && state.unlockedGenres < genres.length) state.unlockedGenres++;
                     if (state.level >= 4 && state.unlockedThemes < themes.length) state.unlockedThemes++;
                     if (state.level >= 5 && state.unlockedMechanics < mechanics.length) state.unlockedMechanics++;
@@ -982,16 +1034,13 @@
                 updateLevelDisplay();
                 renderCards();
 
-                // Add to history
                 state.history.unshift({ name: gameName, score: totalScore, rating });
                 if (state.history.length > 20) state.history.pop();
                 updateHistory();
 
-                // Show result modal
                 showResultModal(gameName, totalScore, rating, coinReward, xpGain, leveledUp, genreData, themeData,
                     mechanicData);
 
-                // Effects
                 sfxSuccess();
                 const w = window.innerWidth;
                 const h = window.innerHeight;
@@ -1011,7 +1060,6 @@
             }
 
             function showResultModal(name, score, rating, coins, xp, leveledUp, g, t, m) {
-                // Remove existing modal
                 const existing = document.getElementById('modal-overlay');
                 if (existing) existing.remove();
 
@@ -1034,6 +1082,7 @@
                             ${leveledUp && state.unlockedGenres>5 ? '<br><span style="color:#69f0ae;">🔓 New cards unlocked!</span>' : ''}
                         </div>
                         <button class="btn-close" id="modal-close-btn">✨ Continue</button>
+                        <button class="btn-play" id="modal-play-btn">▶️ Play</button>
                     </div>
                 `;
                 document.body.appendChild(overlay);
@@ -1042,6 +1091,10 @@
                     if (e.target === overlay) closeModal();
                 });
                 document.getElementById('modal-close-btn').addEventListener('click', closeModal);
+                document.getElementById('modal-play-btn').addEventListener('click', () => {
+                    closeModal();
+                    startPlayGame(g, t, m);
+                });
 
                 function closeModal() {
                     overlay.style.opacity = '0';
@@ -1072,6 +1125,367 @@
                 `).join('');
             }
 
+            // --- Play Mini-Game ---
+            function startPlayGame(genre, theme, mechanic) {
+                if (state.isPlaying) return;
+                state.isPlaying = true;
+                updateForgeButton();
+                forgeBtn.disabled = true;
+
+                // Remove existing overlay if any
+                const oldOverlay = document.getElementById('play-overlay');
+                if (oldOverlay) oldOverlay.remove();
+
+                const overlay = document.createElement('div');
+                overlay.id = 'play-overlay';
+                overlay.innerHTML = `
+                    <div id="play-hud">
+                        <span>❤️ <span id="play-lives">3</span></span>
+                        <span>⏱️ <span id="play-timer">60</span>s</span>
+                        <span>⭐ <span id="play-score">0</span></span>
+                    </div>
+                    <canvas id="play-canvas" width="400" height="500"></canvas>
+                    <button id="ability-btn">⚡ ${mechanic.ability || 'Special'}</button>
+                    <div id="play-result">
+                        <h3>Game Over!</h3>
+                        <p>Score: <span id="final-score">0</span></p>
+                        <p>Reward: <span id="reward-coins">0</span> 🪙 + <span id="reward-xp">0</span> XP</p>
+                        <button id="play-back-btn">Back to Forge</button>
+                    </div>
+                `;
+                document.body.appendChild(overlay);
+
+                const canvas = document.getElementById('play-canvas');
+                const ctx = canvas.getContext('2d');
+                const abilityBtn = document.getElementById('ability-btn');
+                const playResult = document.getElementById('play-result');
+                const backBtn = document.getElementById('play-back-btn');
+                const livesSpan = document.getElementById('play-lives');
+                const timerSpan = document.getElementById('play-timer');
+                const scoreSpan = document.getElementById('play-score');
+                const finalScoreSpan = document.getElementById('final-score');
+                const rewardCoinsSpan = document.getElementById('reward-coins');
+                const rewardXpSpan = document.getElementById('reward-xp');
+
+                // Game variables
+                const PLAYER_WIDTH = 30;
+                const PLAYER_HEIGHT = 30;
+                let playerX = canvas.width / 2 - PLAYER_WIDTH / 2;
+                const playerY = canvas.height - 60;
+                let lives = 3;
+                let score = 0;
+                let gameTime = 60; // seconds
+                let gameOver = false;
+                let obstacles = [];
+                let coins = [];
+                let lastObstacleSpawn = 0;
+                let lastCoinSpawn = 0;
+                const obstacleSpeedBase = 120;
+                let obstacleSpeed = obstacleSpeedBase;
+                let abilityCooldown = 0;
+                const abilityMaxCooldown = mechanic.cooldown || 5;
+                let abilityActive = false;
+                let abilityTimer = 0;
+                let slowMotion = false;
+
+                // Input handling
+                let keys = {};
+                let touchActive = false;
+                let touchX = null;
+
+                function handleKeyDown(e) {
+                    keys[e.key] = true;
+                    if (e.key === ' ' && abilityCooldown <= 0 && !gameOver) {
+                        activateAbility();
+                        e.preventDefault();
+                    }
+                }
+
+                function handleKeyUp(e) {
+                    keys[e.key] = false;
+                }
+
+                function handleTouchStart(e) {
+                    e.preventDefault();
+                    touchActive = true;
+                    const rect = canvas.getBoundingClientRect();
+                    touchX = e.touches[0].clientX - rect.left;
+                }
+
+                function handleTouchMove(e) {
+                    e.preventDefault();
+                    if (touchActive) {
+                        const rect = canvas.getBoundingClientRect();
+                        touchX = e.touches[0].clientX - rect.left;
+                    }
+                }
+
+                function handleTouchEnd(e) {
+                    e.preventDefault();
+                    touchActive = false;
+                    touchX = null;
+                }
+
+                function handleAbilityClick() {
+                    if (!gameOver && abilityCooldown <= 0) {
+                        activateAbility();
+                    }
+                }
+
+                function activateAbility() {
+                    abilityActive = true;
+                    abilityTimer = 1.5; // active duration
+                    abilityCooldown = abilityMaxCooldown;
+                    if (mechanic.id === 'timewarp') {
+                        slowMotion = true;
+                        setTimeout(() => { slowMotion = false; }, 2000);
+                    }
+                    if (mechanic.id === 'fusion') {
+                        // destroy all obstacles on screen
+                        obstacles = [];
+                        spawnParticles(playerX + PLAYER_WIDTH/2, playerY, 20, 'rgb(255,100,0)');
+                    }
+                }
+
+                window.addEventListener('keydown', handleKeyDown);
+                window.addEventListener('keyup', handleKeyUp);
+                canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+                canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+                canvas.addEventListener('touchend', handleTouchEnd);
+                canvas.addEventListener('touchcancel', handleTouchEnd);
+                abilityBtn.addEventListener('click', handleAbilityClick);
+
+                let lastTimestamp = 0;
+                let gameLoopId;
+
+                function updatePlay(dt) {
+                    if (gameOver) return;
+
+                    // Player movement
+                    const moveSpeed = 300;
+                    if (keys['ArrowLeft'] || keys['a']) playerX -= moveSpeed * dt;
+                    if (keys['ArrowRight'] || keys['d']) playerX += moveSpeed * dt;
+                    if (touchActive && touchX !== null) {
+                        const targetX = touchX - PLAYER_WIDTH / 2;
+                        playerX += (targetX - playerX) * 10 * dt;
+                    }
+                    playerX = Math.max(0, Math.min(canvas.width - PLAYER_WIDTH, playerX));
+
+                    // Update ability cooldown
+                    if (abilityCooldown > 0) {
+                        abilityCooldown -= dt;
+                        if (abilityCooldown < 0) abilityCooldown = 0;
+                        abilityBtn.disabled = abilityCooldown > 0;
+                        abilityBtn.textContent = abilityCooldown > 0 ?
+                            `⏳ ${Math.ceil(abilityCooldown)}s` :
+                            `⚡ ${mechanic.ability || 'Special'}`;
+                    }
+                    if (abilityActive) {
+                        abilityTimer -= dt;
+                        if (abilityTimer <= 0) {
+                            abilityActive = false;
+                        }
+                    }
+
+                    // Spawn obstacles
+                    const currentSpeed = slowMotion ? obstacleSpeed * 0.4 : obstacleSpeed;
+                    const spawnInterval = slowMotion ? 1.0 : 0.6;
+                    lastObstacleSpawn += dt;
+                    if (lastObstacleSpawn > spawnInterval) {
+                        lastObstacleSpawn = 0;
+                        const size = 20 + Math.random() * 20;
+                        obstacles.push({
+                            x: Math.random() * (canvas.width - size),
+                            y: -size,
+                            size,
+                            speed: currentSpeed + Math.random() * 40,
+                        });
+                    }
+
+                    // Spawn coins
+                    lastCoinSpawn += dt;
+                    if (lastCoinSpawn > 1.2) {
+                        lastCoinSpawn = 0;
+                        coins.push({
+                            x: Math.random() * (canvas.width - 15),
+                            y: -15,
+                            size: 14,
+                            speed: currentSpeed * 0.9,
+                        });
+                    }
+
+                    // Move obstacles and check collision
+                    for (let i = obstacles.length - 1; i >= 0; i--) {
+                        const ob = obstacles[i];
+                        ob.y += ob.speed * dt;
+                        if (ob.y > canvas.height + ob.size) {
+                            obstacles.splice(i, 1);
+                            continue;
+                        }
+                        // Collision with player
+                        if (!abilityActive || mechanic.id !== 'stealth') { // stealth makes invulnerable when active
+                            const dx = (playerX + PLAYER_WIDTH / 2) - (ob.x + ob.size / 2);
+                            const dy = (playerY + PLAYER_HEIGHT / 2) - (ob.y + ob.size / 2);
+                            const dist = Math.sqrt(dx * dx + dy * dy);
+                            if (dist < (PLAYER_WIDTH / 2 + ob.size / 2)) {
+                                obstacles.splice(i, 1);
+                                lives--;
+                                livesSpan.textContent = lives;
+                                spawnParticles(ob.x + ob.size / 2, ob.y + ob.size / 2, 8, 'rgb(255,50,50)');
+                                if (lives <= 0) {
+                                    endGame();
+                                    return;
+                                }
+                            }
+                        }
+                    }
+
+                    // Move coins and check collection
+                    for (let i = coins.length - 1; i >= 0; i--) {
+                        const c = coins[i];
+                        c.y += c.speed * dt;
+                        if (c.y > canvas.height + c.size) {
+                            coins.splice(i, 1);
+                            continue;
+                        }
+                        const dx = (playerX + PLAYER_WIDTH / 2) - (c.x + c.size / 2);
+                        const dy = (playerY + PLAYER_HEIGHT / 2) - (c.y + c.size / 2);
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist < (PLAYER_WIDTH / 2 + c.size / 2)) {
+                            coins.splice(i, 1);
+                            score += 20;
+                            scoreSpan.textContent = score;
+                            spawnParticles(c.x + c.size / 2, c.y + c.size / 2, 4, 'rgb(255,215,0)');
+                            playBeep(1000, 0.05, 'sine', 0.04);
+                        }
+                    }
+
+                    // Update timer
+                    gameTime -= dt;
+                    if (gameTime <= 0) {
+                        gameTime = 0;
+                        endGame();
+                        return;
+                    }
+                    timerSpan.textContent = Math.ceil(gameTime);
+                }
+
+                function drawPlay() {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                    // Background gradient based on theme
+                    const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+                    if (theme.id === 'fantasy') { grad.addColorStop(0, '#2a1a4a');
+                        grad.addColorStop(1, '#0a0a14'); } else if (theme.id === 'scifi' || theme.id === 'space') { grad
+                            .addColorStop(0, '#0a1a3a');
+                        grad.addColorStop(1, '#000011'); } else if (theme.id === 'cyberpunk') { grad.addColorStop(0,
+                            '#1a0030');
+                        grad.addColorStop(1, '#0a0010'); } else { grad.addColorStop(0, '#1a1a2e');
+                        grad.addColorStop(1, '#0a0a14'); }
+                    ctx.fillStyle = grad;
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    // Draw obstacles (enemies)
+                    for (const ob of obstacles) {
+                        ctx.fillStyle = '#ff4444';
+                        ctx.beginPath();
+                        ctx.arc(ob.x + ob.size / 2, ob.y + ob.size / 2, ob.size / 2, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = '#aa0000';
+                        ctx.font = `${ob.size*0.8}px sans-serif`;
+                        ctx.textAlign = 'center';
+                        ctx.fillText(theme.icon || '👾', ob.x + ob.size / 2, ob.y + ob.size / 2 + ob.size * 0.25);
+                    }
+
+                    // Draw coins
+                    for (const c of coins) {
+                        ctx.fillStyle = '#ffd740';
+                        ctx.beginPath();
+                        ctx.arc(c.x + c.size / 2, c.y + c.size / 2, c.size / 2, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = '#000';
+                        ctx.font = `${c.size*0.9}px sans-serif`;
+                        ctx.textAlign = 'center';
+                        ctx.fillText('🪙', c.x + c.size / 2, c.y + c.size / 2 + c.size * 0.3);
+                    }
+
+                    // Draw player
+                    ctx.fillStyle = abilityActive ? '#00e5ff' : '#fff';
+                    ctx.beginPath();
+                    ctx.arc(playerX + PLAYER_WIDTH / 2, playerY + PLAYER_HEIGHT / 2, PLAYER_WIDTH / 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#000';
+                    ctx.font = '16px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(genre.icon || '👤', playerX + PLAYER_WIDTH / 2, playerY + PLAYER_HEIGHT / 2 + 6);
+                }
+
+                function gameLoop(timestamp) {
+                    if (!lastTimestamp) lastTimestamp = timestamp;
+                    let dt = (timestamp - lastTimestamp) / 1000;
+                    if (dt > 0.1) dt = 0.1;
+                    lastTimestamp = timestamp;
+
+                    if (!gameOver) {
+                        updatePlay(dt);
+                        drawPlay();
+                    }
+                    gameLoopId = requestAnimationFrame(gameLoop);
+                }
+
+                function endGame() {
+                    gameOver = true;
+                    const finalScore = score + Math.floor((60 - gameTime) * 10);
+                    finalScoreSpan.textContent = finalScore;
+                    const coinReward = Math.floor(finalScore / 8) + 5;
+                    const xpReward = Math.floor(finalScore / 4);
+                    rewardCoinsSpan.textContent = coinReward;
+                    rewardXpSpan.textContent = xpReward;
+                    playResult.style.display = 'block';
+
+                    state.coins += coinReward;
+                    state.xp += xpReward;
+                    let leveledUp = false;
+                    while (state.xp >= state.xpToNext) {
+                        state.xp -= state.xpToNext;
+                        state.level++;
+                        state.xpToNext = Math.floor(state.xpToNext * 1.5);
+                        leveledUp = true;
+                        if (state.level >= 3 && state.unlockedGenres < genres.length) state.unlockedGenres++;
+                        if (state.level >= 4 && state.unlockedThemes < themes.length) state.unlockedThemes++;
+                        if (state.level >= 5 && state.unlockedMechanics < mechanics.length) state.unlockedMechanics++;
+                    }
+                    updateCoinsDisplay();
+                    updateLevelDisplay();
+                    renderCards();
+
+                    if (leveledUp) {
+                        aiMessage.textContent = '🎉 Level up while playing! New cards unlocked!';
+                    }
+                }
+
+                function cleanup() {
+                    window.removeEventListener('keydown', handleKeyDown);
+                    window.removeEventListener('keyup', handleKeyUp);
+                    canvas.removeEventListener('touchstart', handleTouchStart);
+                    canvas.removeEventListener('touchmove', handleTouchMove);
+                    canvas.removeEventListener('touchend', handleTouchEnd);
+                    canvas.removeEventListener('touchcancel', handleTouchEnd);
+                    abilityBtn.removeEventListener('click', handleAbilityClick);
+                    if (gameLoopId) cancelAnimationFrame(gameLoopId);
+                    overlay.remove();
+                    state.isPlaying = false;
+                    updateForgeButton();
+                    aiMessage.textContent = 'Select 3 cards and I\'ll forge a game!';
+                }
+
+                backBtn.addEventListener('click', cleanup);
+
+                // Start loop
+                lastTimestamp = 0;
+                gameLoopId = requestAnimationFrame(gameLoop);
+            }
+
             // --- Forge button ---
             forgeBtn.addEventListener('click', () => {
                 initAudio();
@@ -1098,7 +1512,7 @@
             // --- Game Loop ---
             let lastTime = performance.now();
 
-            function gameLoop(time) {
+            function mainLoop(time) {
                 const dt = Math.min((time - lastTime) / 1000, 0.1);
                 lastTime = time;
 
@@ -1109,7 +1523,6 @@
                 ctx.clearRect(0, 0, w, h);
                 drawParticles(ctx, w, h);
 
-                // Ambient floating particles
                 if (Math.random() < 0.3 && particles.length < MAX_PARTICLES - 5) {
                     const px = Math.random() * w;
                     const py = h + 10;
@@ -1125,13 +1538,12 @@
                     });
                 }
 
-                requestAnimationFrame(gameLoop);
+                requestAnimationFrame(mainLoop);
             }
 
             init();
-            requestAnimationFrame(gameLoop);
+            requestAnimationFrame(mainLoop);
 
-            // Handle initial audio context
             document.addEventListener('click', initAudio, { once: true });
             document.addEventListener('touchend', initAudio, { once: true });
 
