@@ -1,0 +1,1142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Game Forge - Studio Simulator</title>
+    <style>
+        :root {
+            --bg: #0a0a14;
+            --panel: #141428;
+            --accent: #00e5ff;
+            --accent2: #b347ea;
+            --gold: #ffd740;
+            --text: #d0d0e8;
+            --dim: #6a6a8a;
+            --success: #69f0ae;
+            --danger: #ff5252;
+            --card-bg: #1a1a30;
+            --border: #2a2a45;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            font-family: 'Segoe UI', 'Courier New', monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-user-select: none;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            max-width: 800px;
+            max-height: 100vh;
+            background: radial-gradient(ellipse at 50% 30%, #1a1a3a 0%, #0a0a18 70%);
+            overflow: hidden;
+            border-left: 1px solid #1a1a40;
+            border-right: 1px solid #1a1a40;
+            display: flex;
+            flex-direction: column;
+        }
+
+        @media (min-width: 800px) {
+            #game-container {
+                border-radius: 20px;
+                max-height: 95vh;
+                box-shadow: 0 0 80px rgba(0, 229, 255, 0.08), 0 0 40px rgba(179, 71, 234, 0.06);
+            }
+        }
+
+        #particles-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        #ui-layer {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            padding: 12px 16px;
+            gap: 8px;
+        }
+
+        /* Header */
+        #header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+        #title-area {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        #logo-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: conic-gradient(var(--accent), var(--accent2), var(--accent));
+            animation: logo-spin 8s linear infinite;
+            box-shadow: 0 0 20px rgba(0, 229, 255, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+        @keyframes logo-spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+        #game-title {
+            font-size: 1.1em;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: 1px;
+            text-shadow: 0 0 20px var(--accent);
+        }
+        #stats {
+            display: flex;
+            gap: 14px;
+            align-items: center;
+        }
+        .stat-badge {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 6px 14px;
+            font-size: 0.8em;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-weight: 600;
+        }
+        .stat-badge .icon {
+            font-size: 1.1em;
+        }
+        #coins-badge {
+            border-color: #ffd74055;
+            color: var(--gold);
+        }
+        #level-badge {
+            border-color: #b347ea55;
+            color: #c77dff;
+        }
+
+        /* AI Status Bar */
+        #ai-status-bar {
+            flex-shrink: 0;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 10px 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-height: 44px;
+        }
+        #ai-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #1a1a35;
+            border: 2px solid var(--accent);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            flex-shrink: 0;
+            animation: pulse-glow 2s ease-in-out infinite;
+        }
+        @keyframes pulse-glow {
+            0%,
+            100% {
+                box-shadow: 0 0 8px rgba(0, 229, 255, 0.4);
+            }
+            50% {
+                box-shadow: 0 0 20px rgba(0, 229, 255, 0.9);
+            }
+        }
+        #ai-message {
+            color: #a0b0d0;
+            font-size: 0.85em;
+            flex: 1;
+            font-style: italic;
+            transition: opacity 0.3s;
+        }
+        #ai-thinking-dots {
+            display: none;
+            gap: 3px;
+            align-items: center;
+        }
+        #ai-thinking-dots .dot {
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: var(--accent);
+            animation: dot-bounce 0.6s ease-in-out infinite;
+        }
+        #ai-thinking-dots .dot:nth-child(2) {
+            animation-delay: 0.15s;
+        }
+        #ai-thinking-dots .dot:nth-child(3) {
+            animation-delay: 0.3s;
+        }
+        @keyframes dot-bounce {
+            0%,
+            100% {
+                transform: translateY(0);
+                opacity: 0.4;
+            }
+            50% {
+                transform: translateY(-8px);
+                opacity: 1;
+            }
+        }
+
+        /* Main area */
+        #main-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            min-height: 0;
+        }
+        #selection-panels {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            padding-right: 4px;
+        }
+        .panel-label {
+            font-size: 0.7em;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: var(--dim);
+            margin-bottom: 4px;
+            font-weight: 700;
+            padding-left: 4px;
+        }
+        .card-row {
+            display: flex;
+            gap: 8px;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            padding: 4px 0;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+        }
+        .card-row::-webkit-scrollbar {
+            display: none;
+        }
+        .card {
+            flex-shrink: 0;
+            width: 90px;
+            min-height: 70px;
+            background: var(--card-bg);
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            padding: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            position: relative;
+            font-size: 0.75em;
+            color: var(--text);
+        }
+        .card:hover {
+            border-color: #555;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+        }
+        .card:active {
+            transform: scale(0.95);
+        }
+        .card.selected {
+            border-color: var(--accent) !important;
+            box-shadow: 0 0 20px rgba(0, 229, 255, 0.35);
+            background: #1a2a40;
+            animation: selected-glow 1.5s ease-in-out infinite;
+        }
+        @keyframes selected-glow {
+            0%,
+            100% {
+                box-shadow: 0 0 15px rgba(0, 229, 255, 0.3);
+            }
+            50% {
+                box-shadow: 0 0 28px rgba(0, 229, 255, 0.6);
+            }
+        }
+        .card .card-icon {
+            font-size: 1.8em;
+        }
+        .card .card-name {
+            font-weight: 600;
+            font-size: 0.75em;
+            line-height: 1.1;
+        }
+        .card.locked {
+            opacity: 0.35;
+            pointer-events: none;
+            filter: grayscale(0.6);
+        }
+        .card .lock-icon {
+            position: absolute;
+            top: 4px;
+            right: 6px;
+            font-size: 0.7em;
+            color: #888;
+        }
+
+        /* Forge Button */
+        #forge-btn {
+            flex-shrink: 0;
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 14px;
+            font-size: 1em;
+            font-weight: 700;
+            letter-spacing: 1px;
+            cursor: pointer;
+            background: linear-gradient(135deg, #00b8d4, #7c3aed);
+            color: #fff;
+            text-transform: uppercase;
+            transition: all 0.25s;
+            box-shadow: 0 4px 24px rgba(124, 58, 237, 0.4);
+            position: relative;
+            overflow: hidden;
+            font-family: inherit;
+        }
+        #forge-btn:hover {
+            box-shadow: 0 8px 36px rgba(124, 58, 237, 0.6);
+            transform: translateY(-2px);
+        }
+        #forge-btn:active {
+            transform: scale(0.96);
+            transition: transform 0.1s;
+        }
+        #forge-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+        #forge-btn .btn-shimmer {
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 60%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.15), transparent);
+            animation: shimmer 3s infinite;
+        }
+        @keyframes shimmer {
+            0% {
+                left: -60%;
+            }
+            100% {
+                left: 160%;
+            }
+        }
+
+        /* Modal overlay */
+        #modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.75);
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            animation: fadeIn 0.3s;
+        }
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+        #modal {
+            background: var(--panel);
+            border: 2px solid var(--border);
+            border-radius: 20px;
+            padding: 24px;
+            max-width: 420px;
+            width: 90%;
+            text-align: center;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+            animation: popIn 0.35s cubic-bezier(0.22, 0.61, 0.36, 1);
+        }
+        @keyframes popIn {
+            from {
+                transform: scale(0.8);
+                opacity: 0;
+            }
+            to {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+        #modal h2 {
+            color: #fff;
+            margin-bottom: 8px;
+            font-size: 1.5em;
+            text-shadow: 0 0 20px var(--accent2);
+        }
+        #modal .game-result-icon {
+            font-size: 4em;
+            margin: 10px 0;
+            animation: bounce-in 0.5s 0.2s both;
+        }
+        @keyframes bounce-in {
+            0% {
+                transform: scale(0);
+            }
+            60% {
+                transform: scale(1.2);
+            }
+            100% {
+                transform: scale(1);
+            }
+        }
+        #modal .result-score {
+            font-size: 2.5em;
+            font-weight: 900;
+            background: linear-gradient(135deg, #ffd740, #ff9100);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        #modal .result-detail {
+            color: var(--text);
+            font-size: 0.9em;
+            margin: 8px 0;
+            line-height: 1.5;
+        }
+        #modal .result-tags {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin: 8px 0;
+        }
+        #modal .result-tag {
+            background: #252545;
+            border: 1px solid #3a3a60;
+            border-radius: 14px;
+            padding: 4px 12px;
+            font-size: 0.75em;
+            color: #b0b0d0;
+        }
+        #modal button {
+            margin-top: 14px;
+            padding: 12px 28px;
+            border: none;
+            border-radius: 25px;
+            font-weight: 700;
+            cursor: pointer;
+            font-size: 0.95em;
+            letter-spacing: 0.5px;
+            font-family: inherit;
+            transition: all 0.2s;
+        }
+        #modal .btn-close {
+            background: var(--accent);
+            color: #000;
+        }
+        #modal .btn-close:hover {
+            box-shadow: 0 0 25px rgba(0, 229, 255, 0.5);
+        }
+        #modal .btn-retry {
+            background: transparent;
+            border: 2px solid #555;
+            color: #ccc;
+            margin-left: 8px;
+        }
+
+        /* History */
+        #history-area {
+            flex-shrink: 0;
+            max-height: 80px;
+            overflow-y: auto;
+            background: rgba(20, 20, 40, 0.6);
+            border-radius: 10px;
+            padding: 6px 10px;
+            font-size: 0.7em;
+            color: var(--dim);
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+        #history-area .history-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 2px 4px;
+            border-radius: 4px;
+        }
+        #history-area .history-item .h-name {
+            color: #b0b0d0;
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        #history-area .history-item .h-score {
+            font-weight: 700;
+            color: var(--gold);
+            margin-left: 8px;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 3px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #333355;
+            border-radius: 10px;
+        }
+
+        /* Mobile tweaks */
+        @media (max-width: 500px) {
+            .card {
+                width: 72px;
+                min-height: 58px;
+                padding: 6px;
+                font-size: 0.7em;
+                border-radius: 10px;
+            }
+            .card .card-icon {
+                font-size: 1.5em;
+            }
+            .card .card-name {
+                font-size: 0.7em;
+            }
+            #game-title {
+                font-size: 0.9em;
+            }
+            #logo-icon {
+                width: 28px;
+                height: 28px;
+                font-size: 14px;
+            }
+            .stat-badge {
+                padding: 4px 10px;
+                font-size: 0.7em;
+            }
+            #forge-btn {
+                padding: 12px;
+                font-size: 0.85em;
+            }
+            #ai-message {
+                font-size: 0.73em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="particles-canvas"></canvas>
+        <div id="ui-layer">
+            <!-- Header -->
+            <div id="header">
+                <div id="title-area">
+                    <div id="logo-icon">🧠</div>
+                    <span id="game-title">AI GAME FORGE</span>
+                </div>
+                <div id="stats">
+                    <div class="stat-badge" id="coins-badge"><span class="icon">🪙</span><span id="coins-display">250</span></div>
+                    <div class="stat-badge" id="level-badge"><span class="icon">⚡</span>Lv.<span id="level-display">1</span></div>
+                </div>
+            </div>
+
+            <!-- AI Status -->
+            <div id="ai-status-bar">
+                <div id="ai-avatar">🤖</div>
+                <span id="ai-message">Select 3 cards and I'll forge a game!</span>
+                <div id="ai-thinking-dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+            </div>
+
+            <!-- Main Selection -->
+            <div id="main-area">
+                <div id="selection-panels">
+                    <div>
+                        <div class="panel-label">🎮 Genre</div>
+                        <div class="card-row" id="genre-row"></div>
+                    </div>
+                    <div>
+                        <div class="panel-label">🌍 Theme</div>
+                        <div class="card-row" id="theme-row"></div>
+                    </div>
+                    <div>
+                        <div class="panel-label">⚙️ Mechanic</div>
+                        <div class="card-row" id="mechanic-row"></div>
+                    </div>
+                </div>
+                <button id="forge-btn"><span class="btn-shimmer"></span>⚡ FORGE GAME</button>
+            </div>
+
+            <!-- History -->
+            <div id="history-area"><span style="color:#555;">📋 Recent games will appear here...</span></div>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            // --- Game State ---
+            const state = {
+                coins: 250,
+                level: 1,
+                xp: 0,
+                xpToNext: 100,
+                selectedGenre: null,
+                selectedTheme: null,
+                selectedMechanic: null,
+                history: [],
+                unlockedMechanics: 4, // start with 4 unlocked
+                unlockedThemes: 4,
+                unlockedGenres: 5,
+                isForging: false,
+            };
+
+            // --- Card Data ---
+            const genres = [
+                { id: 'rpg', name: 'RPG', icon: '⚔️', baseVal: 70 },
+                { id: 'platformer', name: 'Platformer', icon: '🏃', baseVal: 60 },
+                { id: 'puzzle', name: 'Puzzle', icon: '🧩', baseVal: 55 },
+                { id: 'shooter', name: 'Shooter', icon: '🎯', baseVal: 65 },
+                { id: 'strategy', name: 'Strategy', icon: '♟️', baseVal: 72 },
+                { id: 'roguelike', name: 'Roguelike', icon: '🗡️', baseVal: 78 },
+                { id: 'sim', name: 'Simulation', icon: '🏗️', baseVal: 50 },
+                { id: 'horror', name: 'Horror', icon: '👻', baseVal: 68 },
+            ];
+
+            const themes = [
+                { id: 'fantasy', name: 'Fantasy', icon: '🐉', baseVal: 75 },
+                { id: 'scifi', name: 'Sci-Fi', icon: '🚀', baseVal: 80 },
+                { id: 'cyberpunk', name: 'Cyberpunk', icon: '🌃', baseVal: 85 },
+                { id: 'postapoc', name: 'Post-Apoc', icon: '☢️', baseVal: 70 },
+                { id: 'ocean', name: 'Ocean', icon: '🌊', baseVal: 60 },
+                { id: 'space', name: 'Space', icon: '🌟', baseVal: 82 },
+                { id: 'mythology', name: 'Mythology', icon: '🏛️', baseVal: 73 },
+                { id: 'candy', name: 'Candy', icon: '🍬', baseVal: 45 },
+            ];
+
+            const mechanics = [
+                { id: 'crafting', name: 'Crafting', icon: '🔨', baseVal: 68 },
+                { id: 'stealth', name: 'Stealth', icon: '🕵️', baseVal: 62 },
+                { id: 'parkour', name: 'Parkour', icon: '🤸', baseVal: 58 },
+                { id: 'deckbuild', name: 'Deck-Building', icon: '🃏', baseVal: 76 },
+                { id: 'rhythm', name: 'Rhythm', icon: '🎵', baseVal: 55 },
+                { id: 'gravity', name: 'Gravity Manip', icon: '🧲', baseVal: 72 },
+                { id: 'timewarp', name: 'Time Warp', icon: '⏳', baseVal: 80 },
+                { id: 'fusion', name: 'Fusion', icon: '💥', baseVal: 74 },
+            ];
+
+            // --- DOM refs ---
+            const genreRow = document.getElementById('genre-row');
+            const themeRow = document.getElementById('theme-row');
+            const mechanicRow = document.getElementById('mechanic-row');
+            const forgeBtn = document.getElementById('forge-btn');
+            const aiMessage = document.getElementById('ai-message');
+            const aiThinkingDots = document.getElementById('ai-thinking-dots');
+            const coinsDisplay = document.getElementById('coins-display');
+            const levelDisplay = document.getElementById('level-display');
+            const historyArea = document.getElementById('history-area');
+            const particlesCanvas = document.getElementById('particles-canvas');
+            const ctx = particlesCanvas.getContext('2d');
+
+            // --- Audio Engine ---
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playBeep(freq, dur, type = 'sine', vol = 0.08, rampDown = true) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    gain.gain.setValueAtTime(vol, t);
+                    if (rampDown) gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(t);
+                    osc.stop(t + dur);
+                } catch (e) { /* ignore */ }
+            }
+
+            function sfxSelect() { playBeep(600, 0.1, 'sine', 0.06);
+                playBeep(900, 0.08, 'sine', 0.04, false); }
+
+            function sfxForge() { playBeep(200, 0.3, 'triangle', 0.1);
+                playBeep(350, 0.2, 'triangle', 0.08);
+                playBeep(500, 0.15, 'square', 0.06); }
+
+            function sfxSuccess() {
+                playBeep(523, 0.12, 'sine', 0.09);
+                playBeep(659, 0.12, 'sine', 0.08);
+                playBeep(784, 0.15, 'sine', 0.1);
+                playBeep(1047, 0.2, 'triangle', 0.12);
+            }
+
+            function sfxFail() { playBeep(150, 0.3, 'sawtooth', 0.06);
+                playBeep(100, 0.4, 'sawtooth', 0.05); }
+
+            function sfxClick() { playBeep(800, 0.04, 'square', 0.03); }
+
+            // --- Particles ---
+            let particles = [];
+            const MAX_PARTICLES = 50;
+
+            function spawnParticles(x, y, count, color) {
+                for (let i = 0; i < count; i++) {
+                    particles.push({
+                        x,
+                        y,
+                        vx: (Math.random() - 0.5) * 4,
+                        vy: (Math.random() - 0.5) * 4 - 2,
+                        life: 0.6 + Math.random() * 0.8,
+                        maxLife: 0.8 + Math.random() * 0.8,
+                        size: 1 + Math.random() * 3,
+                        color,
+                    });
+                }
+                if (particles.length > MAX_PARTICLES) particles = particles.slice(-MAX_PARTICLES);
+            }
+
+            function updateParticles(dt) {
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.life -= dt;
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+            }
+
+            function drawParticles(ctx, w, h) {
+                for (const p of particles) {
+                    const alpha = Math.max(0, p.life / p.maxLife);
+                    ctx.fillStyle = p.color.replace('1)', `${alpha})`).replace('rgb',
+                        'rgba');
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            // --- Resize canvas ---
+            function resizeCanvas() {
+                particlesCanvas.width = particlesCanvas.parentElement.clientWidth;
+                particlesCanvas.height = particlesCanvas.parentElement.clientHeight;
+            }
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+
+            // --- Render Cards ---
+            function renderCards() {
+                genreRow.innerHTML = '';
+                themeRow.innerHTML = '';
+                mechanicRow.innerHTML = '';
+
+                genres.forEach((g, i) => {
+                    const card = createCard(g, 'genre', i < state.unlockedGenres);
+                    genreRow.appendChild(card);
+                });
+                themes.forEach((t, i) => {
+                    const card = createCard(t, 'theme', i < state.unlockedThemes);
+                    themeRow.appendChild(card);
+                });
+                mechanics.forEach((m, i) => {
+                    const card = createCard(m, 'mechanic', i < state.unlockedMechanics);
+                    mechanicRow.appendChild(card);
+                });
+            }
+
+            function createCard(data, type, unlocked) {
+                const div = document.createElement('div');
+                div.className = 'card';
+                if (!unlocked) div.classList.add('locked');
+                div.innerHTML = `
+                    <span class="card-icon">${data.icon}</span>
+                    <span class="card-name">${data.name}</span>
+                    ${!unlocked ? '<span class="lock-icon">🔒</span>' : ''}
+                `;
+                if (unlocked) {
+                    div.addEventListener('click', (e) => {
+                        initAudio();
+                        sfxSelect();
+                        selectCard(type, data.id, div);
+                    });
+                    // Touch support
+                    div.addEventListener('touchend', (e) => {
+                        e.preventDefault();
+                        initAudio();
+                        sfxSelect();
+                        selectCard(type, data.id, div);
+                    });
+                }
+                // Highlight if selected
+                if ((type === 'genre' && state.selectedGenre === data.id) ||
+                    (type === 'theme' && state.selectedTheme === data.id) ||
+                    (type === 'mechanic' && state.selectedMechanic === data.id)) {
+                    div.classList.add('selected');
+                }
+                return div;
+            }
+
+            function selectCard(type, id, element) {
+                if (state.isForging) return;
+                // Deselect all in row
+                const row = element.parentElement;
+                row.querySelectorAll('.card').forEach(c => c.classList.remove('selected'));
+
+                if (type === 'genre') {
+                    state.selectedGenre = (state.selectedGenre === id) ? null : id;
+                } else if (type === 'theme') {
+                    state.selectedTheme = (state.selectedTheme === id) ? null : id;
+                } else if (type === 'mechanic') {
+                    state.selectedMechanic = (state.selectedMechanic === id) ? null : id;
+                }
+
+                if ((type === 'genre' && state.selectedGenre === id) ||
+                    (type === 'theme' && state.selectedTheme === id) ||
+                    (type === 'mechanic' && state.selectedMechanic === id)) {
+                    element.classList.add('selected');
+                }
+                updateAIHint();
+                updateForgeButton();
+            }
+
+            function updateAIHint() {
+                const count = (state.selectedGenre ? 1 : 0) + (state.selectedTheme ? 1 : 0) + (state
+                    .selectedMechanic ? 1 : 0);
+                if (count === 0) aiMessage.textContent = 'Select 3 cards and I\'ll forge a game!';
+                else if (count === 1) aiMessage.textContent = 'Interesting choice... 2 more to go!';
+                else if (count === 2) aiMessage.textContent = 'Almost there! One more card...';
+                else aiMessage.textContent = 'Ready to forge! Hit the button! ⚡';
+            }
+
+            function updateForgeButton() {
+                const count = (state.selectedGenre ? 1 : 0) + (state.selectedTheme ? 1 : 0) + (state
+                    .selectedMechanic ? 1 : 0);
+                forgeBtn.disabled = count < 3 || state.isForging;
+            }
+
+            // --- Forge Game ---
+            function forgeGame() {
+                if (state.isForging) return;
+                const count = (state.selectedGenre ? 1 : 0) + (state.selectedTheme ? 1 : 0) + (state
+                    .selectedMechanic ? 1 : 0);
+                if (count < 3) return;
+                if (state.coins < 30) {
+                    showQuickMessage('Not enough coins! Need 30 🪙', '#ff5252');
+                    sfxFail();
+                    return;
+                }
+
+                initAudio();
+                state.isForging = true;
+                state.coins -= 30;
+                updateCoinsDisplay();
+                updateForgeButton();
+
+                // Show thinking
+                aiMessage.textContent = '';
+                aiThinkingDots.style.display = 'flex';
+                forgeBtn.disabled = true;
+                forgeBtn.textContent = '⚙️ FORGING...';
+
+                sfxForge();
+
+                // Simulate AI processing time
+                const processingTime = 800 + Math.random() * 1200;
+                setTimeout(() => {
+                    finishForging();
+                }, processingTime);
+
+                // Spawn some particles near forge button
+                const btnRect = forgeBtn.getBoundingClientRect();
+                const cx = btnRect.left + btnRect.width / 2;
+                const cy = btnRect.top + btnRect.height / 2;
+                spawnParticles(cx, cy, 15, 'rgb(0,229,255)');
+            }
+
+            function finishForging() {
+                aiThinkingDots.style.display = 'none';
+                state.isForging = false;
+                forgeBtn.textContent = '⚡ FORGE GAME';
+                updateForgeButton();
+
+                const genreData = genres.find(g => g.id === state.selectedGenre);
+                const themeData = themes.find(t => t.id === state.selectedTheme);
+                const mechanicData = mechanics.find(m => m.id === state.selectedMechanic);
+
+                // Calculate score based on synergy
+                const baseScore = genreData.baseVal + themeData.baseVal + mechanicData.baseVal;
+                // AI "smartness" bonus based on level
+                const levelBonus = state.level * 8;
+                // Random factor (AI creativity)
+                const creativity = Math.floor(Math.random() * 30) - 10;
+                // Synergy bonus for certain combos
+                let synergyBonus = 0;
+                const comboKey = `${state.selectedGenre}|${state.selectedTheme}|${state.selectedMechanic}`;
+                const greatCombos = [
+                    'rpg|fantasy|crafting',
+                    'shooter|scifi|gravity',
+                    'platformer|candy|parkour',
+                    'roguelike|cyberpunk|deckbuild',
+                    'strategy|mythology|timewarp',
+                    'horror|postapoc|stealth',
+                    'puzzle|space|fusion',
+                    'sim|ocean|rhythm',
+                ];
+                if (greatCombos.includes(comboKey)) synergyBonus = 35;
+                else if (greatCombos.some(c => c.split('|').filter(x => comboKey.includes(x)).length >= 2))
+                    synergyBonus = 15;
+
+                const totalScore = Math.max(20, Math.min(300, baseScore + levelBonus + creativity + synergyBonus));
+                const rating = totalScore >= 240 ? '🔥 LEGENDARY' :
+                    totalScore >= 190 ? '🌟 Excellent' :
+                    totalScore >= 150 ? '👍 Great' :
+                    totalScore >= 110 ? '👌 Decent' :
+                    totalScore >= 70 ? '😐 Okay' : '💤 Meh';
+
+                // Generate game name
+                const nameParts = [
+                    themeData.name.split(' ')[0],
+                    genreData.name.split(' ')[0],
+                    mechanicData.name.split(' ')[0],
+                ];
+                const gameName = nameParts.join(' ') + ' ' + (['Tales', 'Quest', 'Chronicles', 'Legends', 'Rising',
+                    'Odyssey'
+                ][Math.floor(Math.random() * 6)]);
+
+                // Rewards
+                const coinReward = Math.floor(totalScore / 3) + Math.floor(Math.random() * 20);
+                state.coins += coinReward;
+                const xpGain = Math.floor(totalScore / 2);
+                state.xp += xpGain;
+
+                // Level up check
+                let leveledUp = false;
+                while (state.xp >= state.xpToNext) {
+                    state.xp -= state.xpToNext;
+                    state.level++;
+                    state.xpToNext = Math.floor(state.xpToNext * 1.5);
+                    leveledUp = true;
+                    // Unlock more cards
+                    if (state.level >= 3 && state.unlockedGenres < genres.length) state.unlockedGenres++;
+                    if (state.level >= 4 && state.unlockedThemes < themes.length) state.unlockedThemes++;
+                    if (state.level >= 5 && state.unlockedMechanics < mechanics.length) state.unlockedMechanics++;
+                }
+
+                updateCoinsDisplay();
+                updateLevelDisplay();
+                renderCards();
+
+                // Add to history
+                state.history.unshift({ name: gameName, score: totalScore, rating });
+                if (state.history.length > 20) state.history.pop();
+                updateHistory();
+
+                // Show result modal
+                showResultModal(gameName, totalScore, rating, coinReward, xpGain, leveledUp, genreData, themeData,
+                    mechanicData);
+
+                // Effects
+                sfxSuccess();
+                const w = window.innerWidth;
+                const h = window.innerHeight;
+                spawnParticles(w / 2, h / 2, 30, 'rgb(255,215,64)');
+                if (leveledUp) spawnParticles(w / 2, h / 2, 20, 'rgb(179,71,234)');
+
+                aiMessage.textContent = `"${gameName}" — ${rating}! I'm getting smarter... 🧠`;
+            }
+
+            function showQuickMessage(msg, color) {
+                aiMessage.textContent = msg;
+                aiMessage.style.color = color;
+                setTimeout(() => {
+                    aiMessage.style.color = '#a0b0d0';
+                    updateAIHint();
+                }, 1800);
+            }
+
+            function showResultModal(name, score, rating, coins, xp, leveledUp, g, t, m) {
+                // Remove existing modal
+                const existing = document.getElementById('modal-overlay');
+                if (existing) existing.remove();
+
+                const overlay = document.createElement('div');
+                overlay.id = 'modal-overlay';
+                overlay.innerHTML = `
+                    <div id="modal">
+                        <div class="game-result-icon">${g.icon}${t.icon}${m.icon}</div>
+                        <h2>${name}</h2>
+                        <div class="result-score">${score} pts</div>
+                        <div style="font-size:1.1em;color:#fff;font-weight:700;">${rating}</div>
+                        <div class="result-tags">
+                            <span class="result-tag">${g.name}</span>
+                            <span class="result-tag">${t.name}</span>
+                            <span class="result-tag">${m.name}</span>
+                        </div>
+                        <div class="result-detail">
+                            +${coins} 🪙 &nbsp;|&nbsp; +${xp} XP
+                            ${leveledUp ? '<br><span style="color:#c77dff;">🎉 LEVEL UP! Lv.'+state.level+'</span>' : ''}
+                            ${leveledUp && state.unlockedGenres>5 ? '<br><span style="color:#69f0ae;">🔓 New cards unlocked!</span>' : ''}
+                        </div>
+                        <button class="btn-close" id="modal-close-btn">✨ Continue</button>
+                    </div>
+                `;
+                document.body.appendChild(overlay);
+
+                overlay.addEventListener('click', (e) => {
+                    if (e.target === overlay) closeModal();
+                });
+                document.getElementById('modal-close-btn').addEventListener('click', closeModal);
+
+                function closeModal() {
+                    overlay.style.opacity = '0';
+                    overlay.style.transition = 'opacity 0.2s';
+                    setTimeout(() => overlay.remove(), 200);
+                    updateAIHint();
+                }
+            }
+
+            function updateCoinsDisplay() {
+                coinsDisplay.textContent = state.coins;
+            }
+
+            function updateLevelDisplay() {
+                levelDisplay.textContent = state.level;
+            }
+
+            function updateHistory() {
+                if (state.history.length === 0) {
+                    historyArea.innerHTML = '<span style="color:#555;">📋 Recent games will appear here...</span>';
+                    return;
+                }
+                historyArea.innerHTML = state.history.slice(0, 6).map(h => `
+                    <div class="history-item">
+                        <span class="h-name">${h.name}</span>
+                        <span class="h-score">${h.score}</span>
+                    </div>
+                `).join('');
+            }
+
+            // --- Forge button ---
+            forgeBtn.addEventListener('click', () => {
+                initAudio();
+                sfxClick();
+                forgeGame();
+            });
+            forgeBtn.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                initAudio();
+                sfxClick();
+                forgeGame();
+            });
+
+            // --- Initialize ---
+            function init() {
+                renderCards();
+                updateCoinsDisplay();
+                updateLevelDisplay();
+                updateForgeButton();
+                updateAIHint();
+                updateHistory();
+            }
+
+            // --- Game Loop ---
+            let lastTime = performance.now();
+
+            function gameLoop(time) {
+                const dt = Math.min((time - lastTime) / 1000, 0.1);
+                lastTime = time;
+
+                updateParticles(dt);
+
+                const w = particlesCanvas.width;
+                const h = particlesCanvas.height;
+                ctx.clearRect(0, 0, w, h);
+                drawParticles(ctx, w, h);
+
+                // Ambient floating particles
+                if (Math.random() < 0.3 && particles.length < MAX_PARTICLES - 5) {
+                    const px = Math.random() * w;
+                    const py = h + 10;
+                    particles.push({
+                        x: px,
+                        y: py,
+                        vx: (Math.random() - 0.5) * 0.6,
+                        vy: -0.6 - Math.random() * 1.2,
+                        life: 2 + Math.random() * 3,
+                        maxLife: 3,
+                        size: 1 + Math.random() * 2,
+                        color: 'rgb(100,160,255)',
+                    });
+                }
+
+                requestAnimationFrame(gameLoop);
+            }
+
+            init();
+            requestAnimationFrame(gameLoop);
+
+            // Handle initial audio context
+            document.addEventListener('click', initAudio, { once: true });
+            document.addEventListener('touchend', initAudio, { once: true });
+
+            console.log('🧠 AI Game Forge ready! Select genre, theme, and mechanic cards, then hit FORGE!');
+        })();
+    </script>
+</body>
+</html>
