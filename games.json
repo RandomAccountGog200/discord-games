@@ -673,5 +673,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-20T04:06:46.009Z",
     "updatedAt": "2026-07-20T04:06:46.009Z"
+  },
+  {
+    "slug": "pessi-vs-ferran-the-impossible-save",
+    "title": "Pessi vs Ferran - The Impossible Save",
+    "description": "a game where you are agentina playing as pessi but then FERRAN scores on you and you lose everytime",
+    "creator": "burger778",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-20T04:07:56.253Z",
+    "updatedAt": "2026-07-20T04:07:56.253Z"
   }
 ]
