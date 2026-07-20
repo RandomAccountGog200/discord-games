@@ -655,5 +655,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-20T04:04:22.115Z",
     "updatedAt": "2026-07-20T04:04:22.115Z"
+  },
+  {
+    "slug": "street-soccer-showdown",
+    "title": "⚽ Street Soccer Showdown",
+    "description": "make a futbal game or soccer and make it super god",
+    "creator": "burger778",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-20T04:06:23.671Z",
+    "updatedAt": "2026-07-20T04:06:23.671Z"
   }
 ]
