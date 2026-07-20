@@ -664,5 +664,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-20T04:06:23.671Z",
     "updatedAt": "2026-07-20T04:06:23.671Z"
+  },
+  {
+    "slug": "spain-campiones",
+    "title": "Spain Campiones ⚽",
+    "description": "spain campiones",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-20T04:06:46.009Z",
+    "updatedAt": "2026-07-20T04:06:46.009Z"
   }
 ]
