@@ -637,5 +637,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-16T06:26:05.461Z",
     "updatedAt": "2026-07-16T06:26:05.461Z"
+  },
+  {
+    "slug": "ai-game-forge-studio-simulator",
+    "title": "AI Game Forge - Studio Simulator",
+    "description": "where you are able to use an ai to make games and the ai is super smart and makes great games",
+    "creator": "kaipie16",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-20T04:03:38.964Z",
+    "updatedAt": "2026-07-20T04:03:38.964Z"
   }
 ]
