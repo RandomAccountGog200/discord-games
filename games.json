@@ -745,5 +745,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-26T22:38:29.314Z",
     "updatedAt": "2026-07-26T22:38:29.314Z"
+  },
+  {
+    "slug": "fjord-row-norwegian-rowing-adventure",
+    "title": "Fjord Row - Norwegian Rowing Adventure",
+    "description": "Norway row sim",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-26T22:39:58.925Z",
+    "updatedAt": "2026-07-26T22:39:58.925Z"
   }
 ]
