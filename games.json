@@ -691,5 +691,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-20T04:11:00.732Z",
     "updatedAt": "2026-07-20T04:11:00.732Z"
+  },
+  {
+    "slug": "yan-s-bassnanade",
+    "title": "Yan's Bassnanade",
+    "description": "Yan bassnanade",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-26T22:33:20.722Z",
+    "updatedAt": "2026-07-26T22:33:20.722Z"
   }
 ]
