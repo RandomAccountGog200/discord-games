@@ -736,5 +736,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-26T22:36:26.791Z",
     "updatedAt": "2026-07-26T22:36:26.791Z"
+  },
+  {
+    "slug": "jordan-money-ball",
+    "title": "Jordan $$$ - Money Ball",
+    "description": "Jordan based on $$$",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-26T22:38:29.314Z",
+    "updatedAt": "2026-07-26T22:38:29.314Z"
   }
 ]
