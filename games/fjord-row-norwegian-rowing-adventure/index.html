@@ -1,0 +1,1234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fjord Row - Norwegian Rowing Adventure</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a1628;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'Georgia', 'Times New Roman', serif;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        canvas {
+            display: block;
+            max-width: 100vw;
+            max-height: 100vh;
+            border-radius: 4px;
+            box-shadow: 0 0 60px rgba(80, 140, 200, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            // --- Audio Engine ---
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playSplash(volume = 0.3) {
+                if (!audioCtx) return;
+                const now = audioCtx.currentTime;
+                const duration = 0.25;
+                const bufferSize = audioCtx.sampleRate * duration;
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    const t = i / audioCtx.sampleRate;
+                    const env = Math.exp(-t * 18);
+                    data[i] = (Math.random() * 2 - 1) * env * volume;
+                }
+                const source = audioCtx.createBufferSource();
+                source.buffer = buffer;
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'bandpass';
+                filter.frequency.value = 800;
+                filter.Q.value = 1.5;
+                const gain = audioCtx.createGain();
+                gain.gain.setValueAtTime(volume * 0.8, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+                source.connect(filter);
+                filter.connect(gain);
+                gain.connect(audioCtx.destination);
+                source.start(now);
+            }
+
+            function playWhoosh(volume = 0.2) {
+                if (!audioCtx) return;
+                const now = audioCtx.currentTime;
+                const duration = 0.35;
+                const bufferSize = audioCtx.sampleRate * duration;
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    const t = i / audioCtx.sampleRate;
+                    const env = Math.exp(-t * 8) * (1 - Math.exp(-t * 30));
+                    data[i] = (Math.random() * 2 - 1) * env * volume;
+                }
+                const source = audioCtx.createBufferSource();
+                source.buffer = buffer;
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.value = 400;
+                const gain = audioCtx.createGain();
+                gain.gain.setValueAtTime(volume, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+                source.connect(filter);
+                filter.connect(gain);
+                gain.connect(audioCtx.destination);
+                source.start(now);
+            }
+
+            function playPerfectRow() {
+                if (!audioCtx) return;
+                const now = audioCtx.currentTime;
+                // Bright splash
+                const dur = 0.3;
+                const bufSize = audioCtx.sampleRate * dur;
+                const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+                const d = buf.getChannelData(0);
+                for (let i = 0; i < bufSize; i++) {
+                    const t = i / audioCtx.sampleRate;
+                    d[i] = (Math.random() * 2 - 1) * Math.exp(-t * 14) * 0.5;
+                }
+                const src = audioCtx.createBufferSource();
+                src.buffer = buf;
+                const filt = audioCtx.createBiquadFilter();
+                filt.type = 'bandpass';
+                filt.frequency.value = 1200;
+                filt.Q.value = 2;
+                const g = audioCtx.createGain();
+                g.gain.setValueAtTime(0.5, now);
+                g.gain.exponentialRampToValueAtTime(0.001, now + dur);
+                src.connect(filt);
+                filt.connect(g);
+                g.connect(audioCtx.destination);
+                src.start(now);
+
+                // Sub boom
+                const osc = audioCtx.createOscillator();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(80, now);
+                osc.frequency.exponentialRampToValueAtTime(30, now + 0.2);
+                const g2 = audioCtx.createGain();
+                g2.gain.setValueAtTime(0.25, now);
+                g2.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+                osc.connect(g2);
+                g2.connect(audioCtx.destination);
+                osc.start(now);
+                osc.stop(now + 0.25);
+            }
+
+            // --- Canvas Sizing ---
+            const GAME_WIDTH = 900;
+            const GAME_HEIGHT = 520;
+
+            function resizeCanvas() {
+                const ratio = GAME_WIDTH / GAME_HEIGHT;
+                let w = window.innerWidth;
+                let h = window.innerHeight;
+                if (w / h > ratio) {
+                    w = h * ratio;
+                } else {
+                    h = w / ratio;
+                }
+                canvas.style.width = w + 'px';
+                canvas.style.height = h + 'px';
+                canvas.width = GAME_WIDTH;
+                canvas.height = GAME_HEIGHT;
+            }
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+
+            // --- Game State ---
+            const WATER_LINE = 310; // Y position of water surface
+            const HORIZON_Y = 140;
+
+            let gameState = 'title'; // 'title' | 'playing' | 'gameover'
+            let distance = 0;
+            let highScore = parseInt(localStorage.getItem('fjordRowHighScore')) || 0;
+            let speed = 0;
+            let momentum = 60;
+            let worldOffset = 0;
+            let gameTime = 0;
+            let powerMeterPhase = 0;
+            let rowAnimTimer = 0;
+            let rowAnimDuration = 0;
+            let rowAnimPower = 0;
+            let oarAngle = 0;
+            let targetOarAngle = 0;
+            let boatBobOffset = 0;
+            let particles = [];
+            let rippleEffects = [];
+            let perfectStreak = 0;
+            let lastRowTime = 0;
+            let comboTextTimer = 0;
+            let comboTextValue = '';
+            let screenShake = 0;
+
+            // --- Input ---
+            let inputPressed = false;
+            let inputConsumed = false;
+
+            function handleInput() {
+                initAudio();
+                if (gameState === 'title') {
+                    startGame();
+                    return;
+                }
+                if (gameState === 'gameover') {
+                    restartGame();
+                    return;
+                }
+                if (gameState === 'playing') {
+                    if (!inputConsumed) {
+                        attemptRow();
+                        inputConsumed = true;
+                    }
+                }
+            }
+
+            canvas.addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                inputPressed = true;
+                inputConsumed = false;
+                handleInput();
+            });
+            canvas.addEventListener('pointerup', () => {
+                inputPressed = false;
+                inputConsumed = false;
+            });
+            document.addEventListener('keydown', (e) => {
+                if (e.code === 'Space' || e.code === 'KeyJ' || e.code === 'Enter') {
+                    e.preventDefault();
+                    if (!inputConsumed) {
+                        handleInput();
+                        inputConsumed = true;
+                    }
+                }
+            });
+            document.addEventListener('keyup', () => {
+                inputConsumed = false;
+            });
+
+            function startGame() {
+                gameState = 'playing';
+                distance = 0;
+                speed = 2;
+                momentum = 60;
+                worldOffset = 0;
+                gameTime = 0;
+                powerMeterPhase = 0;
+                rowAnimTimer = 0;
+                oarAngle = 0;
+                targetOarAngle = 0;
+                particles = [];
+                rippleEffects = [];
+                perfectStreak = 0;
+                comboTextTimer = 0;
+                comboTextValue = '';
+                screenShake = 0;
+                lastRowTime = 0;
+            }
+
+            function restartGame() {
+                startGame();
+                if (distance > highScore) {
+                    highScore = Math.floor(distance);
+                    localStorage.setItem('fjordRowHighScore', highScore);
+                }
+            }
+
+            function attemptRow() {
+                const indicatorPos = getPowerIndicator();
+                const absPos = Math.abs(indicatorPos);
+                let quality;
+                let powerBonus;
+                let momentumBonus;
+                let splashCount;
+
+                if (absPos < 0.22) {
+                    quality = 'perfect';
+                    powerBonus = 5.5;
+                    momentumBonus = 28;
+                    splashCount = 18;
+                    perfectStreak++;
+                    if (perfectStreak >= 3 && perfectStreak % 3 === 0) {
+                        comboTextTimer = 1.8;
+                        comboTextValue = perfectStreak >= 9 ? 'INCREDIBLE!' : perfectStreak >= 6 ? 'AMAZING!' :
+                            'GREAT RHYTHM!';
+                        powerBonus += 2;
+                        momentumBonus += 8;
+                    }
+                } else if (absPos < 0.45) {
+                    quality = 'good';
+                    powerBonus = 3;
+                    momentumBonus = 16;
+                    splashCount = 10;
+                    perfectStreak = 0;
+                } else if (absPos < 0.7) {
+                    quality = 'ok';
+                    powerBonus = 1.2;
+                    momentumBonus = 7;
+                    splashCount = 5;
+                    perfectStreak = 0;
+                } else {
+                    quality = 'poor';
+                    powerBonus = 0.4;
+                    momentumBonus = 3;
+                    splashCount = 2;
+                    perfectStreak = 0;
+                }
+
+                speed += powerBonus;
+                if (speed > 18) speed = 18;
+                momentum += momentumBonus;
+                if (momentum > 100) momentum = 100;
+
+                rowAnimTimer = 0.55;
+                rowAnimDuration = 0.55;
+                rowAnimPower = powerBonus;
+                targetOarAngle = -0.9;
+                lastRowTime = gameTime;
+
+                if (quality === 'perfect') {
+                    playPerfectRow();
+                    screenShake = Math.max(screenShake, powerBonus * 0.7);
+                } else if (quality === 'good') {
+                    playSplash(0.35);
+                    playWhoosh(0.15);
+                } else if (quality === 'ok') {
+                    playSplash(0.2);
+                } else {
+                    playSplash(0.08);
+                }
+
+                // Create splash particles
+                const boatCX = GAME_WIDTH / 2;
+                const boatY = WATER_LINE - 8;
+                for (let i = 0; i < splashCount; i++) {
+                    const side = (i % 2 === 0) ? -1 : 1;
+                    const spreadX = 15 + Math.random() * 35;
+                    const spreadY = 8 + Math.random() * 30;
+                    particles.push({
+                        x: boatCX + side * (25 + Math.random() * 20),
+                        y: boatY + Math.random() * 8,
+                        vx: side * spreadX * (0.4 + Math.random() * 0.8),
+                        vy: -spreadY * (0.6 + Math.random() * 1.2),
+                        life: 0.5 + Math.random() * 0.6,
+                        maxLife: 0.5 + Math.random() * 0.6,
+                        size: 1.2 + Math.random() * 3.5,
+                        color: Math.random() < 0.7 ?
+                            'rgba(200,220,255,ALPHA)' :
+                            'rgba(255,255,255,ALPHA)',
+                    });
+                }
+                // Ripple effects
+                for (let i = 0; i < 3; i++) {
+                    rippleEffects.push({
+                        x: boatCX + (Math.random() - 0.5) * 50,
+                        y: WATER_LINE + Math.random() * 4,
+                        radius: 8 + Math.random() * 15,
+                        maxRadius: 40 + Math.random() * 50,
+                        life: 0.7 + Math.random() * 0.5,
+                        maxLife: 0.7 + Math.random() * 0.5,
+                    });
+                }
+            }
+
+            function getPowerIndicator() {
+                // Triangle wave for consistent speed
+                const freq = 0.65;
+                let phase = (gameTime * freq) % 2;
+                if (phase > 1) phase = 2 - phase;
+                return (phase - 0.5) * 2; // -1 to 1
+            }
+
+            // --- Update ---
+            function update(dt) {
+                if (gameState !== 'playing') {
+                    // Still animate water and boat bob on title/gameover
+                    gameTime += dt;
+                    boatBobOffset = Math.sin(gameTime * 2.5) * 4 + Math.sin(gameTime * 1.7) * 2.5;
+                    return;
+                }
+
+                gameTime += dt;
+                const effectiveDt = Math.min(dt, 0.1);
+
+                // Speed decay
+                speed -= 0.4 * effectiveDt;
+                if (speed < 0.3) speed = 0.3;
+                if (speed > 18) speed = 18;
+
+                // Momentum decay
+                momentum -= 3.5 * effectiveDt;
+                if (momentum <= 0) {
+                    momentum = 0;
+                    endGame();
+                    return;
+                }
+                if (momentum > 100) momentum = 100;
+
+                // Update distance
+                distance += speed * effectiveDt;
+
+                // World scroll
+                worldOffset += speed * effectiveDt * 60;
+
+                // Boat bob
+                boatBobOffset = Math.sin(gameTime * 2.5) * 4 + Math.sin(gameTime * 1.7) * 2.5;
+                if (speed > 8) {
+                    boatBobOffset += Math.sin(gameTime * 5.5) * 1.5;
+                }
+
+                // Row animation
+                if (rowAnimTimer > 0) {
+                    rowAnimTimer -= effectiveDt;
+                    const progress = 1 - (rowAnimTimer / rowAnimDuration);
+                    if (progress < 0.25) {
+                        // Forward swing
+                        const p = progress / 0.25;
+                        oarAngle = -0.9 * p;
+                    } else if (progress < 0.55) {
+                        // Power stroke through water
+                        const p = (progress - 0.25) / 0.3;
+                        oarAngle = -0.9 + p * 1.7;
+                    } else {
+                        // Recovery
+                        const p = (progress - 0.55) / 0.45;
+                        oarAngle = 0.8 - p * 0.8;
+                    }
+                    if (rowAnimTimer <= 0) {
+                        oarAngle = 0;
+                        targetOarAngle = 0;
+                    }
+                } else {
+                    oarAngle += (targetOarAngle - oarAngle) * 8 * effectiveDt;
+                }
+
+                // Screen shake decay
+                if (screenShake > 0) {
+                    screenShake -= effectiveDt * 4;
+                    if (screenShake < 0) screenShake = 0;
+                }
+
+                // Combo text
+                if (comboTextTimer > 0) {
+                    comboTextTimer -= effectiveDt;
+                }
+
+                // Update particles
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.life -= effectiveDt;
+                    if (p.life <= 0) {
+                        particles.splice(i, 1);
+                        continue;
+                    }
+                    p.x += p.vx * effectiveDt;
+                    p.y += p.vy * effectiveDt;
+                    p.vy += 180 * effectiveDt;
+                    if (p.y > WATER_LINE + 5) {
+                        p.y = WATER_LINE + 5;
+                        p.vy *= -0.3;
+                        p.vx *= 0.5;
+                        if (Math.abs(p.vy) < 5) p.life = 0;
+                    }
+                }
+
+                // Update ripples
+                for (let i = rippleEffects.length - 1; i >= 0; i--) {
+                    const r = rippleEffects[i];
+                    r.life -= effectiveDt;
+                    if (r.life <= 0) {
+                        rippleEffects.splice(i, 1);
+                        continue;
+                    }
+                    r.radius = r.maxRadius * (1 - r.life / r.maxLife);
+                }
+            }
+
+            function endGame() {
+                gameState = 'gameover';
+                if (distance > highScore) {
+                    highScore = Math.floor(distance);
+                    localStorage.setItem('fjordRowHighScore', highScore);
+                }
+            }
+
+            // --- Render ---
+            function drawSky() {
+                const grad = ctx.createLinearGradient(0, 0, 0, HORIZON_Y + 100);
+                grad.addColorStop(0, '#1a2a4a');
+                grad.addColorStop(0.35, '#2c4a6e');
+                grad.addColorStop(0.7, '#4a7a9b');
+                grad.addColorStop(1, '#7ba8c4');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, GAME_WIDTH, WATER_LINE);
+
+                // Stars / faint dots in upper sky
+                ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                const starSeed = 42;
+                for (let i = 0; i < 60; i++) {
+                    const sx = ((i * 173 + starSeed) % GAME_WIDTH);
+                    const sy = 10 + ((i * 97 + starSeed * 3) % (HORIZON_Y - 30));
+                    const twinkle = 0.3 + 0.7 * Math.abs(Math.sin(gameTime * 1.3 + i * 2.7));
+                    ctx.globalAlpha = twinkle * 0.7;
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, 0.8 + Math.random() * 0.4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+
+                // Aurora borealis
+                drawAurora();
+            }
+
+            function drawAurora() {
+                const auroraY = 55 + Math.sin(gameTime * 0.3) * 20;
+                ctx.save();
+                for (let band = 0; band < 3; band++) {
+                    const baseY = auroraY + band * 18;
+                    const alpha = 0.08 + band * 0.04;
+                    ctx.beginPath();
+                    ctx.moveTo(0, baseY);
+                    for (let x = 0; x <= GAME_WIDTH; x += 15) {
+                        const y = baseY + Math.sin(x * 0.008 + gameTime * 0.5 + band * 2) * 25 +
+                            Math.sin(x * 0.02 + gameTime * 0.35) * 15 +
+                            Math.sin(x * 0.003 + gameTime * 0.2) * 40;
+                        ctx.lineTo(x, y);
+                    }
+                    ctx.lineTo(GAME_WIDTH, baseY + 60);
+                    ctx.lineTo(0, baseY + 60);
+                    ctx.closePath();
+                    const grad = ctx.createLinearGradient(0, baseY - 20, 0, baseY + 70);
+                    grad.addColorStop(0, `rgba(100,200,140,0)`);
+                    grad.addColorStop(0.3, `rgba(120,220,180,${alpha * 1.5})`);
+                    grad.addColorStop(0.6, `rgba(80,180,200,${alpha})`);
+                    grad.addColorStop(1, `rgba(40,100,160,0)`);
+                    ctx.fillStyle = grad;
+                    ctx.fill();
+                }
+                ctx.restore();
+            }
+
+            function drawMountains(layer, baseColor, highlightColor, parallaxFactor, heightRange, yBase) {
+                ctx.save();
+                const offset = worldOffset * parallaxFactor;
+                const w = GAME_WIDTH + 200;
+                const segments = 40;
+                const segWidth = w / segments;
+                const startX = -100 - (offset % w);
+
+                ctx.beginPath();
+                ctx.moveTo(startX - segWidth, WATER_LINE + 10);
+
+                const points = [];
+                for (let i = -1; i <= segments + 1; i++) {
+                    const x = startX + i * segWidth;
+                    const seed = i * 137 + layer * 251;
+                    const h = yBase - heightRange * (0.4 + 0.6 * noise(seed));
+                    points.push({ x, y: h });
+                }
+
+                // Smooth curve through points
+                ctx.moveTo(startX - segWidth, WATER_LINE + 10);
+                for (let i = 0; i < points.length - 1; i++) {
+                    const cpX = (points[i].x + points[i + 1].x) / 2;
+                    const cpY = points[i].y;
+                    ctx.quadraticCurveTo(points[i].x, points[i].y, cpX, (points[i].y + points[i + 1].y) / 2);
+                }
+                ctx.lineTo(points[points.length - 1].x, WATER_LINE + 10);
+                ctx.closePath();
+
+                const grad = ctx.createLinearGradient(0, yBase - heightRange, 0, WATER_LINE);
+                grad.addColorStop(0, highlightColor);
+                grad.addColorStop(0.3, baseColor);
+                grad.addColorStop(1, '#1a3040');
+                ctx.fillStyle = grad;
+                ctx.fill();
+
+                // Snow caps on some peaks
+                for (let i = 1; i < points.length - 2; i++) {
+                    const p = points[i];
+                    const prev = points[i - 1];
+                    const next = points[i + 1];
+                    if (p.y < prev.y + 5 && p.y < next.y + 5 && p.y < yBase - heightRange * 0.55) {
+                        ctx.beginPath();
+                        ctx.moveTo(p.x - segWidth * 0.6, p.y + 8);
+                        ctx.lineTo(p.x - segWidth * 0.25, p.y - 2);
+                        ctx.lineTo(p.x, p.y - 6);
+                        ctx.lineTo(p.x + segWidth * 0.25, p.y - 2);
+                        ctx.lineTo(p.x + segWidth * 0.6, p.y + 8);
+                        ctx.closePath();
+                        ctx.fillStyle = 'rgba(220,235,250,0.7)';
+                        ctx.fill();
+                    }
+                }
+
+                ctx.restore();
+            }
+
+            function noise(seed) {
+                const x = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+                return x - Math.floor(x);
+            }
+
+            function drawTrees(parallaxFactor, treeZoneY) {
+                ctx.save();
+                const offset = worldOffset * parallaxFactor;
+                const w = GAME_WIDTH + 300;
+                const startX = -150 - (offset % w);
+                const treeSpacing = 22;
+                const numTrees = Math.floor(w / treeSpacing);
+
+                for (let i = 0; i < numTrees; i++) {
+                    const x = startX + i * treeSpacing;
+                    const seed = i * 313 + 17;
+                    const treeH = 18 + noise(seed) * 35;
+                    const baseY = treeZoneY + noise(seed + 0.5) * 10;
+
+                    if (x < -30 || x > GAME_WIDTH + 30) continue;
+
+                    // Trunk
+                    ctx.fillStyle = '#2a1f14';
+                    ctx.fillRect(x - 2, baseY - treeH * 0.35, 4, treeH * 0.35);
+
+                    // Foliage - layered triangles
+                    const foliageBase = baseY - treeH * 0.3;
+                    const foliageHeight = treeH * 0.7;
+                    const foliageWidth = 10 + noise(seed + 1) * 8;
+
+                    for (let tier = 0; tier < 3; tier++) {
+                        const ty = foliageBase - tier * foliageHeight * 0.38;
+                        const tw = foliageWidth * (1 - tier * 0.22);
+                        const th = foliageHeight * 0.45;
+                        ctx.beginPath();
+                        ctx.moveTo(x, ty - th);
+                        ctx.lineTo(x - tw, ty + th * 0.3);
+                        ctx.lineTo(x + tw, ty + th * 0.3);
+                        ctx.closePath();
+                        const shade = 0.18 + tier * 0.06;
+                        ctx.fillStyle = `rgb(${Math.floor(22+shade*40)},${Math.floor(48+shade*55)},${Math.floor(20+shade*30)})`;
+                        ctx.fill();
+                    }
+                }
+                ctx.restore();
+            }
+
+            function drawWater() {
+                // Water base
+                const grad = ctx.createLinearGradient(0, WATER_LINE, 0, GAME_HEIGHT);
+                grad.addColorStop(0, '#2c5f7a');
+                grad.addColorStop(0.15, '#1e4d66');
+                grad.addColorStop(0.5, '#153a4f');
+                grad.addColorStop(1, '#0d2433');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, WATER_LINE, GAME_WIDTH, GAME_HEIGHT - WATER_LINE);
+
+                // Wave lines
+                ctx.strokeStyle = 'rgba(180,210,230,0.25)';
+                ctx.lineWidth = 1;
+                for (let wave = 0; wave < 8; wave++) {
+                    ctx.beginPath();
+                    const baseY = WATER_LINE + 8 + wave * 16;
+                    const amp = 3 + wave * 1.5;
+                    const freq = 0.015 - wave * 0.001;
+                    const phase = gameTime * (1.2 + wave * 0.3) + worldOffset * 0.02;
+                    for (let x = 0; x <= GAME_WIDTH; x += 8) {
+                        const y = baseY + Math.sin(x * freq + phase) * amp + Math.sin(x * freq * 2.3 + phase * 1.7) * amp *
+                            0.5;
+                        if (x === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.stroke();
+                }
+
+                // Shoreline reflections
+                ctx.fillStyle = 'rgba(60,100,130,0.3)';
+                ctx.beginPath();
+                for (let x = 0; x <= GAME_WIDTH; x += 10) {
+                    const y = WATER_LINE + 3 + Math.sin(x * 0.02 + gameTime * 0.8) * 2;
+                    if (x === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.lineTo(GAME_WIDTH, WATER_LINE + 25);
+                ctx.lineTo(0, WATER_LINE + 25);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            function drawBoat() {
+                const cx = GAME_WIDTH / 2;
+                const cy = WATER_LINE - 6 + boatBobOffset;
+
+                ctx.save();
+                ctx.translate(cx, cy);
+
+                // Screen shake
+                let shakeX = 0,
+                    shakeY = 0;
+                if (screenShake > 0) {
+                    shakeX = (Math.random() - 0.5) * screenShake * 2;
+                    shakeY = (Math.random() - 0.5) * screenShake * 2;
+                    ctx.translate(shakeX, shakeY);
+                }
+
+                // Hull shadow in water
+                ctx.fillStyle = 'rgba(0,20,30,0.35)';
+                ctx.beginPath();
+                ctx.ellipse(0, 10, 48, 10, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Boat hull
+                const hullGrad = ctx.createLinearGradient(0, -8, 0, 12);
+                hullGrad.addColorStop(0, '#c48b56');
+                hullGrad.addColorStop(0.4, '#a0683a');
+                hullGrad.addColorStop(0.8, '#6b3a1f');
+                hullGrad.addColorStop(1, '#3d1f0e');
+                ctx.fillStyle = hullGrad;
+                ctx.beginPath();
+                ctx.moveTo(-50, 4);
+                ctx.quadraticCurveTo(-40, -10, -10, -12);
+                ctx.quadraticCurveTo(10, -13, 35, -10);
+                ctx.quadraticCurveTo(50, -4, 48, 5);
+                ctx.quadraticCurveTo(40, 8, 25, 9);
+                ctx.quadraticCurveTo(0, 10, -25, 9);
+                ctx.quadraticCurveTo(-40, 8, -50, 4);
+                ctx.closePath();
+                ctx.fill();
+
+                // Hull highlight
+                ctx.strokeStyle = 'rgba(220,180,140,0.5)';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                // Gunwale / top edge
+                ctx.strokeStyle = '#7a4a2a';
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                ctx.moveTo(-46, 3);
+                ctx.quadraticCurveTo(-38, -9, -10, -11);
+                ctx.quadraticCurveTo(12, -12, 37, -9);
+                ctx.quadraticCurveTo(48, -2, 44, 4);
+                ctx.stroke();
+
+                // Plank lines
+                ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+                ctx.lineWidth = 0.8;
+                for (let plank = 1; plank <= 3; plank++) {
+                    const yOff = -10 + plank * 5;
+                    ctx.beginPath();
+                    ctx.moveTo(-44, yOff);
+                    ctx.quadraticCurveTo(0, yOff - 2, 40, yOff);
+                    ctx.stroke();
+                }
+
+                // Oarlocks (small circles on sides)
+                const lockX = 8;
+                const lockY = -6;
+                ctx.fillStyle = '#4a2a15';
+                ctx.beginPath();
+                ctx.arc(-lockX, lockY, 3.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(lockX, lockY, 3.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#2a1808';
+                ctx.lineWidth = 0.8;
+                ctx.stroke();
+
+                // Oars
+                drawOar(-lockX, lockY, -1);
+                drawOar(lockX, lockY, 1);
+
+                // Bow decoration (small curl)
+                ctx.fillStyle = '#8b5a3a';
+                ctx.beginPath();
+                ctx.moveTo(44, 4);
+                ctx.quadraticCurveTo(50, -6, 40, -10);
+                ctx.quadraticCurveTo(44, -4, 42, 2);
+                ctx.closePath();
+                ctx.fill();
+
+                ctx.restore();
+            }
+
+            function drawOar(pivotX, pivotY, side) {
+                const oarLength = 55;
+                const bladeLength = 16;
+                const bladeWidth = 7;
+                const angle = oarAngle * side;
+
+                ctx.save();
+                ctx.translate(pivotX, pivotY);
+                ctx.rotate(angle);
+
+                // Oar shaft
+                ctx.strokeStyle = '#c4956b';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(0, -oarLength);
+                ctx.stroke();
+
+                // Darker edge
+                ctx.strokeStyle = '#8b5a3a';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(1.2, 0);
+                ctx.lineTo(1.2, -oarLength);
+                ctx.stroke();
+
+                // Blade
+                const bladeTop = -oarLength;
+                ctx.fillStyle = '#d4a87c';
+                ctx.beginPath();
+                ctx.moveTo(-bladeWidth / 2, bladeTop);
+                ctx.quadraticCurveTo(-bladeWidth, bladeTop - bladeLength * 0.5, -bladeWidth * 0.6, bladeTop - bladeLength);
+                ctx.quadraticCurveTo(0, bladeTop - bladeLength - 3, bladeWidth * 0.6, bladeTop - bladeLength);
+                ctx.quadraticCurveTo(bladeWidth, bladeTop - bladeLength * 0.5, bladeWidth / 2, bladeTop);
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = '#a0704a';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+
+                // Blade center line
+                ctx.strokeStyle = 'rgba(139,90,58,0.5)';
+                ctx.lineWidth = 0.6;
+                ctx.beginPath();
+                ctx.moveTo(0, bladeTop - 2);
+                ctx.lineTo(0, bladeTop - bladeLength + 3);
+                ctx.stroke();
+
+                ctx.restore();
+            }
+
+            function drawParticles() {
+                for (const p of particles) {
+                    const alpha = p.life / p.maxLife;
+                    const color = p.color.replace('ALPHA', alpha.toFixed(2));
+                    ctx.fillStyle = color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Small glow
+                    if (p.size > 2) {
+                        ctx.fillStyle = color.replace(alpha.toFixed(2), (alpha * 0.3).toFixed(2));
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, p.size * alpha * 2.2, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            function drawRipples() {
+                for (const r of rippleEffects) {
+                    const alpha = r.life / r.maxLife;
+                    ctx.strokeStyle = `rgba(180,210,230,${alpha * 0.5})`;
+                    ctx.lineWidth = 1.2 * alpha;
+                    ctx.beginPath();
+                    ctx.ellipse(r.x, r.y, r.radius, r.radius * 0.4, 0, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+            }
+
+            function drawPowerMeter() {
+                const meterW = 280;
+                const meterH = 36;
+                const meterX = GAME_WIDTH / 2 - meterW / 2;
+                const meterY = GAME_HEIGHT - 65;
+
+                // Background
+                ctx.fillStyle = 'rgba(10,20,35,0.75)';
+                ctx.strokeStyle = 'rgba(180,200,220,0.5)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.roundRect(meterX - 5, meterY - 5, meterW + 10, meterH + 10, 8);
+                ctx.fill();
+                ctx.stroke();
+
+                // Zones
+                const zoneWidth = meterW / 2;
+                const cx = meterX + meterW / 2;
+                const cy = meterY + meterH / 2;
+
+                // Red zones (edges)
+                for (let side = 0; side < 2; side++) {
+                    const sx = side === 0 ? meterX : cx;
+                    const sw = zoneWidth * 0.35;
+                    const grad = ctx.createLinearGradient(sx, 0, sx + sw, 0);
+                    if (side === 0) {
+                        grad.addColorStop(0, 'rgba(200,50,40,0.7)');
+                        grad.addColorStop(1, 'rgba(220,150,40,0.5)');
+                    } else {
+                        grad.addColorStop(0, 'rgba(220,150,40,0.5)');
+                        grad.addColorStop(1, 'rgba(200,50,40,0.7)');
+                    }
+                    ctx.fillStyle = grad;
+                    ctx.fillRect(side === 0 ? meterX : cx + zoneWidth * 0.35, meterY,
+                        side === 0 ? zoneWidth * 0.35 : zoneWidth * 0.35, meterH);
+                }
+
+                // Yellow zones
+                for (let side = 0; side < 2; side++) {
+                    const sx = side === 0 ? meterX + zoneWidth * 0.35 : cx - zoneWidth * 0.25;
+                    const sw = zoneWidth * 0.25;
+                    ctx.fillStyle = 'rgba(220,170,40,0.5)';
+                    ctx.fillRect(sx, meterY, sw, meterH);
+                }
+
+                // Green zone (center)
+                const greenW = zoneWidth * 0.4;
+                ctx.fillStyle = 'rgba(60,200,100,0.55)';
+                ctx.fillRect(cx - greenW / 2, meterY, greenW, meterH);
+
+                // Center line
+                ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(cx, meterY);
+                ctx.lineTo(cx, meterY + meterH);
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // Indicator
+                const indicatorPos = gameState === 'playing' ? getPowerIndicator() : 0;
+                const indX = cx + indicatorPos * (meterW / 2);
+                const indY = cy;
+
+                // Glow
+                const glowGrad = ctx.createRadialGradient(indX, indY, 2, indX, indY, 14);
+                glowGrad.addColorStop(0, 'rgba(255,255,200,0.9)');
+                glowGrad.addColorStop(0.5, 'rgba(255,220,100,0.4)');
+                glowGrad.addColorStop(1, 'rgba(255,180,50,0)');
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(indX, indY, 14, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Indicator diamond
+                ctx.fillStyle = '#fff';
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(indX, indY - 10);
+                ctx.lineTo(indX + 7, indY);
+                ctx.lineTo(indX, indY + 10);
+                ctx.lineTo(indX - 7, indY);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+
+                // Label
+                ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                ctx.font = '11px Georgia, serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('TIMING', cx, meterY - 10);
+                ctx.fillText('PERFECT', cx, meterY + meterH + 16);
+            }
+
+            function drawUI() {
+                // Distance panel
+                const panelX = 15;
+                const panelY = 15;
+                ctx.fillStyle = 'rgba(10,20,35,0.7)';
+                ctx.strokeStyle = 'rgba(180,200,220,0.4)';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.roundRect(panelX, panelY, 155, 88, 10);
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.fillStyle = '#d4e8f5';
+                ctx.font = 'bold 16px Georgia, serif';
+                ctx.textAlign = 'left';
+                ctx.fillText('DISTANCE', panelX + 12, panelY + 26);
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 28px Georgia, serif';
+                ctx.fillText(Math.floor(distance) + ' m', panelX + 12, panelY + 56);
+
+                ctx.fillStyle = 'rgba(200,210,225,0.8)';
+                ctx.font = '11px Georgia, serif';
+                ctx.fillText('Best: ' + highScore + ' m', panelX + 12, panelY + 78);
+
+                // Momentum bar
+                const momBarX = GAME_WIDTH - 175;
+                const momBarY = 15;
+                ctx.fillStyle = 'rgba(10,20,35,0.7)';
+                ctx.strokeStyle = 'rgba(180,200,220,0.4)';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.roundRect(momBarX, momBarY, 160, 50, 10);
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.fillStyle = '#d4e8f5';
+                ctx.font = 'bold 12px Georgia, serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('MOMENTUM', momBarX + 80, momBarY + 16);
+
+                // Bar background
+                const barX = momBarX + 12;
+                const barY = momBarY + 22;
+                const barW = 136;
+                const barH = 14;
+                ctx.fillStyle = 'rgba(30,40,55,0.8)';
+                ctx.fillRect(barX, barY, barW, barH);
+                ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(barX, barY, barW, barH);
+
+                // Bar fill
+                const fillW = (momentum / 100) * barW;
+                const barGrad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+                barGrad.addColorStop(0, '#e04030');
+                barGrad.addColorStop(0.4, '#e0a030');
+                barGrad.addColorStop(0.7, '#60c040');
+                barGrad.addColorStop(1, '#30d060');
+                ctx.fillStyle = barGrad;
+                ctx.fillRect(barX, barY, fillW, barH);
+
+                // Speed
+                ctx.fillStyle = '#d4e8f5';
+                ctx.font = '11px Georgia, serif';
+                ctx.textAlign = 'right';
+                ctx.fillText('Speed: ' + speed.toFixed(1) + ' m/s', GAME_WIDTH - 20, momBarY + 62);
+
+                // Combo text
+                if (comboTextTimer > 0) {
+                    const alpha = Math.min(1, comboTextTimer);
+                    const scale = 1 + (1.8 - comboTextTimer) * 0.3;
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = '#ffd700';
+                    ctx.font = `bold ${Math.floor(22*scale)}px Georgia, serif`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(comboTextValue, GAME_WIDTH / 2, WATER_LINE - 70);
+                    ctx.restore();
+                }
+
+                // Perfect streak indicator
+                if (perfectStreak >= 3) {
+                    ctx.fillStyle = 'rgba(255,215,0,0.8)';
+                    ctx.font = 'bold 13px Georgia, serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🔥 x' + perfectStreak, GAME_WIDTH / 2, WATER_LINE - 50);
+                }
+            }
+
+            function drawTitleScreen() {
+                // Dim overlay
+                ctx.fillStyle = 'rgba(0,0,0,0.35)';
+                ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+                // Title box
+                const boxW = 500;
+                const boxH = 280;
+                const boxX = GAME_WIDTH / 2 - boxW / 2;
+                const boxY = GAME_HEIGHT / 2 - boxH / 2 - 20;
+                ctx.fillStyle = 'rgba(10,20,40,0.85)';
+                ctx.strokeStyle = 'rgba(180,200,230,0.6)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.roundRect(boxX, boxY, boxW, boxH, 16);
+                ctx.fill();
+                ctx.stroke();
+
+                // Decorative top border
+                const decoGrad = ctx.createLinearGradient(boxX, 0, boxX + boxW, 0);
+                decoGrad.addColorStop(0, 'rgba(100,180,220,0)');
+                decoGrad.addColorStop(0.3, 'rgba(160,210,240,0.7)');
+                decoGrad.addColorStop(0.5, 'rgba(200,230,255,0.9)');
+                decoGrad.addColorStop(0.7, 'rgba(160,210,240,0.7)');
+                decoGrad.addColorStop(1, 'rgba(100,180,220,0)');
+                ctx.strokeStyle = decoGrad;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(boxX + 30, boxY + 3);
+                ctx.lineTo(boxX + boxW - 30, boxY + 3);
+                ctx.stroke();
+
+                // Title
+                ctx.fillStyle = '#e8f4ff';
+                ctx.font = 'bold 42px Georgia, serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('FJORD ROW', GAME_WIDTH / 2, boxY + 70);
+
+                // Subtitle
+                ctx.fillStyle = '#b8d4e8';
+                ctx.font = 'italic 18px Georgia, serif';
+                ctx.fillText('A Norwegian Rowing Adventure', GAME_WIDTH / 2, boxY + 100);
+
+                // Instructions
+                ctx.fillStyle = '#d0dce8';
+                ctx.font = '15px Georgia, serif';
+                ctx.fillText('Time your strokes with the power meter!', GAME_WIDTH / 2, boxY + 145);
+                ctx.fillText('Click or tap when the indicator is in the green zone.', GAME_WIDTH / 2, boxY + 168);
+                ctx.fillText('Keep your momentum up to continue rowing.', GAME_WIDTH / 2, boxY + 191);
+
+                // Start prompt
+                const pulse = 0.6 + 0.4 * Math.sin(gameTime * 3);
+                ctx.fillStyle = `rgba(255,220,100,${pulse})`;
+                ctx.font = 'bold 20px Georgia, serif';
+                ctx.fillText('CLICK OR TAP TO START', GAME_WIDTH / 2, boxY + 240);
+            }
+
+            function drawGameOverScreen() {
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+                const boxW = 420;
+                const boxH = 260;
+                const boxX = GAME_WIDTH / 2 - boxW / 2;
+                const boxY = GAME_HEIGHT / 2 - boxH / 2 - 20;
+                ctx.fillStyle = 'rgba(10,20,40,0.9)';
+                ctx.strokeStyle = 'rgba(200,180,140,0.6)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.roundRect(boxX, boxY, boxW, boxH, 14);
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.fillStyle = '#f0c060';
+                ctx.font = 'bold 36px Georgia, serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER', GAME_WIDTH / 2, boxY + 55);
+
+                ctx.fillStyle = '#e8f4ff';
+                ctx.font = '22px Georgia, serif';
+                ctx.fillText('Distance: ' + Math.floor(distance) + ' meters', GAME_WIDTH / 2, boxY + 100);
+
+                if (Math.floor(distance) >= highScore && distance > 0) {
+                    ctx.fillStyle = '#ffd700';
+                    ctx.font = 'bold 18px Georgia, serif';
+                    ctx.fillText('★ NEW HIGH SCORE! ★', GAME_WIDTH / 2, boxY + 130);
+                } else {
+                    ctx.fillStyle = '#b8c8d8';
+                    ctx.font = '16px Georgia, serif';
+                    ctx.fillText('Best: ' + highScore + ' meters', GAME_WIDTH / 2, boxY + 130);
+                }
+
+                ctx.fillStyle = '#d0dce8';
+                ctx.font = '15px Georgia, serif';
+                ctx.fillText('You lost all momentum and drifted to a stop.', GAME_WIDTH / 2, boxY + 165);
+
+                const pulse = 0.6 + 0.4 * Math.sin(gameTime * 3);
+                ctx.fillStyle = `rgba(255,220,100,${pulse})`;
+                ctx.font = 'bold 19px Georgia, serif';
+                ctx.fillText('TAP TO ROW AGAIN', GAME_WIDTH / 2, boxY + 210);
+            }
+
+            // --- Main Game Loop ---
+            let lastTime = performance.now();
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt > 0.2) dt = 0.2; // Cap to avoid jumps
+                if (dt <= 0) dt = 0.016;
+                lastTime = timestamp;
+
+                update(dt);
+                render();
+
+                requestAnimationFrame(gameLoop);
+            }
+
+            function render() {
+                ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+                drawSky();
+
+                // Parallax mountains (far to near)
+                drawMountains(0, '#5a7d94', '#8aadc4', 0.08, 130, HORIZON_Y + 20);
+                drawMountains(1, '#4a6d84', '#7a9db4', 0.18, 150, HORIZON_Y + 30);
+                drawMountains(2, '#3a5a6e', '#5a8098', 0.30, 140, HORIZON_Y + 45);
+
+                // Trees on shores
+                drawTrees(0.35, WATER_LINE - 15);
+                drawTrees(0.25, WATER_LINE - 8);
+
+                // Distant shoreline
+                ctx.fillStyle = '#3a5a4a';
+                ctx.beginPath();
+                const shoreOff = worldOffset * 0.22;
+                ctx.moveTo(0, WATER_LINE + 2);
+                for (let x = 0; x <= GAME_WIDTH; x += 20) {
+                    const y = WATER_LINE + 2 + Math.sin((x + shoreOff) * 0.004) * 6;
+                    ctx.lineTo(x, y);
+                }
+                ctx.lineTo(GAME_WIDTH, WATER_LINE + 20);
+                ctx.lineTo(0, WATER_LINE + 20);
+                ctx.closePath();
+                ctx.fill();
+
+                drawWater();
+                drawRipples();
+                drawParticles();
+                drawBoat();
+                drawPowerMeter();
+                drawUI();
+
+                if (gameState === 'title') {
+                    drawTitleScreen();
+                } else if (gameState === 'gameover') {
+                    drawGameOverScreen();
+                }
+            }
+
+            // --- Polyfill roundRect ---
+            if (!ctx.roundRect) {
+                ctx.roundRect = function(x, y, w, h, r) {
+                    if (typeof r === 'number') r = { tl: r, tr: r, br: r, bl: r };
+                    ctx.beginPath();
+                    ctx.moveTo(x + r.tl, y);
+                    ctx.lineTo(x + w - r.tr, y);
+                    ctx.quadraticCurveTo(x + w, y, x + w, y + r.tr);
+                    ctx.lineTo(x + w, y + h - r.br);
+                    ctx.quadraticCurveTo(x + w, y + h, x + w - r.br, y + h);
+                    ctx.lineTo(x + r.bl, y + h);
+                    ctx.quadraticCurveTo(x, y + h, x, y + h - r.bl);
+                    ctx.lineTo(x, y + r.tl);
+                    ctx.quadraticCurveTo(x, y, x + r.tl, y);
+                    ctx.closePath();
+                };
+            }
+
+            // --- Start ---
+            resizeCanvas();
+            requestAnimationFrame(gameLoop);
+
+            console.log('🚣 Fjord Row ready! Row through the Norwegian fjords.');
+            console.log('Click/tap or press Space when the indicator is in the green zone.');
+            console.log('Maintain momentum to keep going. Good luck!');
+        })();
+    </script>
+</body>
+</html>
