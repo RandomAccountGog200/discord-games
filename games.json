@@ -754,5 +754,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-26T22:39:58.925Z",
     "updatedAt": "2026-07-26T22:39:58.925Z"
+  },
+  {
+    "slug": "catch-the-screams",
+    "title": "Catch the Screams 👻",
+    "description": "catch the screams in the air",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-26T22:40:51.367Z",
+    "updatedAt": "2026-07-26T22:40:51.367Z"
   }
 ]
