@@ -727,5 +727,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-26T22:35:17.310Z",
     "updatedAt": "2026-07-26T22:35:17.310Z"
+  },
+  {
+    "slug": "gibble-nibble",
+    "title": "Gibble Nibble",
+    "description": "gibble nibble",
+    "creator": "burger778",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-07-26T22:36:26.791Z",
+    "updatedAt": "2026-07-26T22:36:26.791Z"
   }
 ]
