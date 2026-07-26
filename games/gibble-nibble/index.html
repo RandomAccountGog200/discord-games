@@ -1,0 +1,1322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Gibble Nibble</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            height: 100dvh;
+            overflow: hidden;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            touch-action: manipulation;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        canvas {
+            display: block;
+            max-width: 100vw;
+            max-height: 100vh;
+            max-height: 100dvh;
+            aspect-ratio: 400 / 650;
+            border-radius: 16px;
+            box-shadow: 0 0 40px rgba(100, 180, 220, 0.35), 0 0 80px rgba(100, 160, 200, 0.15);
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+
+            // Internal game resolution
+            const GW = 400;
+            const GH = 650;
+            canvas.width = GW;
+            canvas.height = GH;
+
+            // Audio context
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            }
+
+            function playSound(freq, type, duration, vol = 0.25, freqEnd = null) {
+                if (!audioCtx) return;
+                try {
+                    const t = audioCtx.currentTime;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (freqEnd) {
+                        osc.frequency.exponentialRampToValueAtTime(freqEnd, t + duration);
+                    }
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                } catch (e) {
+                    // Silently ignore audio errors
+                }
+            }
+
+            function nomSound() { playSound(520, 'sine', 0.12, 0.3, 880); }
+
+            function bigNomSound() { playSound(400, 'triangle', 0.18, 0.35, 1000); }
+
+            function ouchSound() { playSound(150, 'sawtooth', 0.25, 0.2, 60); }
+
+            function missSound() { playSound(300, 'sine', 0.2, 0.15, 180); }
+
+            function gameOverSound() {
+                playSound(400, 'square', 0.3, 0.15, 250);
+                setTimeout(() => playSound(250, 'square', 0.3, 0.2, 100), 180);
+                setTimeout(() => playSound(120, 'sawtooth', 0.4, 0.35, 40), 400);
+            }
+
+            function comboBeep() { playSound(700, 'sine', 0.08, 0.2, 1100); }
+
+            // Game state
+            let gameState = 'start'; // 'start' | 'playing' | 'gameover'
+            let score = 0;
+            let lives = 5;
+            let comboCount = 0;
+            let comboTimer = 0;
+            let difficultyLevel = 0;
+            let spawnTimer = 0;
+            let spawnInterval = 1.3;
+            let screenShake = 0;
+            let shakeX = 0;
+            let shakeY = 0;
+
+            // Gibble
+            const gibble = {
+                x: GW / 2,
+                y: 555,
+                radius: 34,
+                targetX: GW / 2,
+                velocityX: 0,
+                mouthOpen: 0,
+                mouthOpenTarget: 0,
+                eatAnimTimer: 0,
+                squishX: 1,
+                squishY: 1,
+                eyeLookX: 0,
+                eyeLookY: 0,
+                wobblePhase: 0,
+            };
+
+            // Items
+            let items = [];
+            // Particles
+            let particles = [];
+            // Floating background sparkles
+            let bgSparkles = [];
+
+            // Input
+            let keysHeld = {};
+            let mouseX = null;
+            let touchX = null;
+            let usePointer = false;
+
+            // Initialize background sparkles
+            function initBgSparkles() {
+                bgSparkles = [];
+                for (let i = 0; i < 35; i++) {
+                    bgSparkles.push({
+                        x: Math.random() * GW,
+                        y: Math.random() * GH,
+                        size: Math.random() * 2.5 + 0.8,
+                        speed: Math.random() * 0.4 + 0.1,
+                        opacity: Math.random() * 0.5 + 0.2,
+                        twinkle: Math.random() * Math.PI * 2,
+                        twinkleSpeed: Math.random() * 0.03 + 0.01,
+                    });
+                }
+            }
+            initBgSparkles();
+
+            // Reset game
+            function resetGame() {
+                score = 0;
+                lives = 5;
+                comboCount = 0;
+                comboTimer = 0;
+                difficultyLevel = 0;
+                spawnTimer = 0;
+                spawnInterval = 1.3;
+                screenShake = 0;
+                shakeX = 0;
+                shakeY = 0;
+                items = [];
+                particles = [];
+                gibble.x = GW / 2;
+                gibble.y = 555;
+                gibble.targetX = GW / 2;
+                gibble.velocityX = 0;
+                gibble.mouthOpen = 0;
+                gibble.mouthOpenTarget = 0;
+                gibble.eatAnimTimer = 0;
+                gibble.squishX = 1;
+                gibble.squishY = 1;
+                gibble.eyeLookX = 0;
+                gibble.eyeLookY = 0;
+                gibble.wobblePhase = 0;
+                mouseX = null;
+                touchX = null;
+                usePointer = false;
+                initBgSparkles();
+            }
+
+            // Spawn an item
+            function spawnItem() {
+                const isGood = Math.random() < (0.82 - difficultyLevel * 0.04);
+                const x = 30 + Math.random() * (GW - 60);
+                const radius = 16 + Math.random() * 8;
+                const speed = 1.4 + difficultyLevel * 0.45 + Math.random() * 0.6;
+                const rotation = Math.random() * Math.PI * 2;
+                const rotSpeed = (Math.random() - 0.5) * 0.06;
+
+                let type, color, innerColor, badgeColor;
+                if (isGood) {
+                    const types = ['cookie', 'apple', 'cupcake', 'candy', 'berry'];
+                    type = types[Math.floor(Math.random() * types.length)];
+                    switch (type) {
+                        case 'cookie':
+                            color = '#d4a054';
+                            innerColor = '#b8782e';
+                            badgeColor = '#8b5a2b';
+                            break;
+                        case 'apple':
+                            color = '#e8453c';
+                            innerColor = '#c0392b';
+                            badgeColor = '#5d9c3e';
+                            break;
+                        case 'cupcake':
+                            color = '#f9a8c8';
+                            innerColor = '#e882a0';
+                            badgeColor = '#fcd34d';
+                            break;
+                        case 'candy':
+                            color = '#ff6b9d';
+                            innerColor = '#e55a8a';
+                            badgeColor = '#fff176';
+                            break;
+                        case 'berry':
+                            color = '#7b4fbf';
+                            innerColor = '#5e35a8';
+                            badgeColor = '#a5d6a7';
+                            break;
+                        default:
+                            color = '#f0c060';
+                            innerColor = '#d49030';
+                            badgeColor = '#c07820';
+                    }
+                } else {
+                    const types = ['rotten', 'poison', 'spike'];
+                    type = types[Math.floor(Math.random() * types.length)];
+                    switch (type) {
+                        case 'rotten':
+                            color = '#6b7b3a';
+                            innerColor = '#4a5528';
+                            badgeColor = '#3d3315';
+                            break;
+                        case 'poison':
+                            color = '#8e3b9e';
+                            innerColor = '#5c1d6e';
+                            badgeColor = '#b8ff60';
+                            break;
+                        case 'spike':
+                            color = '#4a4a4a';
+                            innerColor = '#2a2a2a';
+                            badgeColor = '#8b0000';
+                            break;
+                        default:
+                            color = '#6b4060';
+                            innerColor = '#4a2040';
+                            badgeColor = '#302010';
+                    }
+                }
+
+                items.push({
+                    x,
+                    y: -30 - Math.random() * 60,
+                    radius,
+                    speed,
+                    rotation,
+                    rotSpeed,
+                    isGood,
+                    type,
+                    color,
+                    innerColor,
+                    badgeColor,
+                    wobbleAmp: Math.random() * 2 + 1,
+                    wobbleFreq: Math.random() * 3 + 2,
+                    wobbleOffset: Math.random() * Math.PI * 2,
+                });
+            }
+
+            // Spawn particles
+            function spawnParticles(x, y, count, colorBase, isGood) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * 5 + 2;
+                    const hueShift = (Math.random() - 0.5) * 40;
+                    particles.push({
+                        x,
+                        y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - (isGood ? 2 : 0.5),
+                        life: 0.5 + Math.random() * 0.6,
+                        maxLife: 0.5 + Math.random() * 0.6,
+                        size: 2 + Math.random() * 4.5,
+                        color: colorBase,
+                        hueShift,
+                    });
+                }
+            }
+
+            // Draw heart shape
+            function drawHeart(ctx, cx, cy, size) {
+                ctx.beginPath();
+                const s = size;
+                ctx.moveTo(cx, cy + s * 0.35);
+                ctx.bezierCurveTo(cx, cy - s * 0.1, cx - s * 0.9, cy - s * 0.1, cx - s * 0.9, cy + s * 0.3);
+                ctx.bezierCurveTo(cx - s * 0.9, cy + s * 0.65, cx, cy + s * 0.85, cx, cy + s);
+                ctx.bezierCurveTo(cx, cy + s * 0.85, cx + s * 0.9, cy + s * 0.65, cx + s * 0.9, cy + s * 0.3);
+                ctx.bezierCurveTo(cx + s * 0.9, cy - s * 0.1, cx, cy - s * 0.1, cx, cy + s * 0.35);
+                ctx.closePath();
+            }
+
+            // Draw the Gibble
+            function drawGibble(ctx, g) {
+                ctx.save();
+                const cx = g.x;
+                const cy = g.y;
+                const r = g.radius;
+                const sqX = g.squishX;
+                const sqY = g.squishY;
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                ctx.beginPath();
+                ctx.ellipse(cx, cy + r * 0.75, r * 0.7 * sqX, r * 0.18 * sqY, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body gradient
+                const bodyGrad = ctx.createRadialGradient(cx - r * 0.2, cy - r * 0.3, r * 0.1, cx, cy, r);
+                bodyGrad.addColorStop(0, '#a8e6f0');
+                bodyGrad.addColorStop(0.45, '#5cc4d4');
+                bodyGrad.addColorStop(0.8, '#2d9ab5');
+                bodyGrad.addColorStop(1, '#1a6f85');
+
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.ellipse(cx, cy, r * sqX, r * sqY, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Subtle body highlight
+                const hlGrad = ctx.createRadialGradient(cx - r * 0.25, cy - r * 0.35, r * 0.05, cx, cy, r * 0.85);
+                hlGrad.addColorStop(0, 'rgba(255,255,255,0.5)');
+                hlGrad.addColorStop(1, 'rgba(255,255,255,0)');
+                ctx.fillStyle = hlGrad;
+                ctx.beginPath();
+                ctx.ellipse(cx, cy, r * sqX * 0.9, r * sqY * 0.9, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Blush spots
+                const blushGrad1 = ctx.createRadialGradient(cx - r * 0.5, cy + r * 0.05, r * 0.05, cx - r * 0.5, cy + r *
+                    0.05, r * 0.28);
+                blushGrad1.addColorStop(0, 'rgba(255,150,160,0.55)');
+                blushGrad1.addColorStop(1, 'rgba(255,150,160,0)');
+                ctx.fillStyle = blushGrad1;
+                ctx.beginPath();
+                ctx.arc(cx - r * 0.5, cy + r * 0.05, r * 0.28, 0, Math.PI * 2);
+                ctx.fill();
+
+                const blushGrad2 = ctx.createRadialGradient(cx + r * 0.5, cy + r * 0.05, r * 0.05, cx + r * 0.5, cy + r *
+                    0.05, r * 0.28);
+                blushGrad2.addColorStop(0, 'rgba(255,150,160,0.55)');
+                blushGrad2.addColorStop(1, 'rgba(255,150,160,0)');
+                ctx.fillStyle = blushGrad2;
+                ctx.beginPath();
+                ctx.arc(cx + r * 0.5, cy + r * 0.05, r * 0.28, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Eyes
+                const eyeY = cy - r * 0.22;
+                const eyeSpacing = r * 0.48;
+                const eyeW = r * 0.38;
+                const eyeH = r * 0.5;
+
+                // Eye whites
+                for (let side = -1; side <= 1; side += 2) {
+                    const ex = cx + side * eyeSpacing;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.ellipse(ex, eyeY, eyeW, eyeH, 0, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Subtle eye shadow
+                    ctx.fillStyle = 'rgba(200,220,230,0.3)';
+                    ctx.beginPath();
+                    ctx.ellipse(ex, eyeY + eyeH * 0.1, eyeW * 0.85, eyeH * 0.7, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Pupils (track items)
+                const lookDist = 70;
+                let lookNX = 0,
+                    lookNY = -0.3;
+                if (g.eyeLookX !== 0 || g.eyeLookY !== 0) {
+                    const lx = g.eyeLookX - cx;
+                    const ly = g.eyeLookY - eyeY;
+                    const ld = Math.sqrt(lx * lx + ly * ly) || 1;
+                    const clampD = Math.min(ld, lookDist);
+                    lookNX = (lx / ld) * (clampD / lookDist) * 0.55;
+                    lookNY = (ly / ld) * (clampD / lookDist) * 0.55;
+                }
+
+                for (let side = -1; side <= 1; side += 2) {
+                    const ex = cx + side * eyeSpacing;
+                    const pupilR = eyeW * 0.48;
+                    const px = ex + lookNX * eyeW * 0.5;
+                    const py = eyeY + lookNY * eyeH * 0.4;
+
+                    ctx.fillStyle = '#1a1a1a';
+                    ctx.beginPath();
+                    ctx.arc(px, py, pupilR, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Highlight
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.arc(px - pupilR * 0.25, py - pupilR * 0.35, pupilR * 0.32, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Small secondary highlight
+                    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                    ctx.beginPath();
+                    ctx.arc(px + pupilR * 0.2, py + pupilR * 0.25, pupilR * 0.13, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Mouth
+                const mouthY = cy + r * 0.18;
+                const mouthOpen = g.mouthOpen;
+                const mouthW = r * 0.55;
+
+                if (mouthOpen < 0.05) {
+                    // Closed smile
+                    ctx.strokeStyle = '#3a2030';
+                    ctx.lineWidth = 2.2;
+                    ctx.lineCap = 'round';
+                    ctx.beginPath();
+                    ctx.arc(cx, mouthY, mouthW * 0.7, 0.15, Math.PI - 0.15);
+                    ctx.stroke();
+                } else if (mouthOpen < 0.5) {
+                    // Partially open
+                    const openness = mouthOpen;
+                    const arcR = mouthW * 0.7;
+                    ctx.fillStyle = '#5a3040';
+                    ctx.beginPath();
+                    ctx.arc(cx, mouthY - openness * r * 0.2, arcR, 0.1 + openness * 0.3, Math.PI - 0.1 - openness * 0.3);
+                    ctx.lineTo(cx + arcR * Math.cos(Math.PI - 0.1 - openness * 0.3), mouthY - openness * r * 0.2 + arcR * Math
+                        .sin(Math.PI - 0.1 - openness * 0.3));
+                    ctx.arc(cx, mouthY - openness * r * 0.2, arcR, Math.PI - 0.1 - openness * 0.3, 0.1 + openness * 0.3,
+                        true);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.strokeStyle = '#3a2030';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                } else {
+                    // Wide open nom
+                    const openness = Math.min(mouthOpen, 1.3);
+                    const ovalRY = r * 0.25 * openness;
+                    const ovalRX = mouthW * 0.75;
+                    ctx.fillStyle = '#4a2535';
+                    ctx.beginPath();
+                    ctx.ellipse(cx, mouthY - r * 0.08, ovalRX, ovalRY, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#2a1018';
+                    ctx.lineWidth = 2.5;
+                    ctx.stroke();
+                    // Tongue
+                    if (openness > 0.7) {
+                        ctx.fillStyle = '#e87080';
+                        ctx.beginPath();
+                        ctx.ellipse(cx, mouthY - r * 0.02, ovalRX * 0.55, ovalRY * 0.5, 0, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+
+                // Feet
+                const footY = cy + r * sqY * 0.82;
+                const footSpread = r * 0.55;
+                for (let side = -1; side <= 1; side += 2) {
+                    const fx = cx + side * footSpread;
+                    const footSquish = 1 + (g.velocityX * side * 0.003);
+                    ctx.fillStyle = '#1a5f70';
+                    ctx.beginPath();
+                    ctx.ellipse(fx, footY, r * 0.2 * Math.max(0.7, footSquish), r * 0.13 * Math.min(1.3, 1 / Math.max(0.7,
+                        footSquish)), 0, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                ctx.restore();
+            }
+
+            // Draw an item
+            function drawItem(ctx, item) {
+                ctx.save();
+                ctx.translate(item.x, item.y);
+                ctx.rotate(item.rotation + Math.sin(item.wobbleOffset + performance.now() * 0.003 * item.wobbleFreq) *
+                    item.wobbleAmp * 0.04);
+
+                const r = item.radius;
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.25)';
+                ctx.beginPath();
+                ctx.arc(2, 2, r, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Main body
+                const grad = ctx.createRadialGradient(-r * 0.2, -r * 0.3, r * 0.1, 0, 0, r);
+                grad.addColorStop(0, item.color);
+                grad.addColorStop(0.7, item.innerColor);
+                grad.addColorStop(1, item.badgeColor);
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(0, 0, r, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Details based on type
+                if (item.isGood) {
+                    switch (item.type) {
+                        case 'cookie':
+                            // Chocolate chips
+                            ctx.fillStyle = '#5a3a1a';
+                            for (let i = 0; i < 5; i++) {
+                                const cx2 = (Math.cos(i * 1.3 + 0.7) * r * 0.55);
+                                const cy2 = (Math.sin(i * 1.3 + 0.7) * r * 0.55);
+                                ctx.beginPath();
+                                ctx.arc(cx2, cy2, r * 0.2, 0, Math.PI * 2);
+                                ctx.fill();
+                            }
+                            break;
+                        case 'apple':
+                            // Stem
+                            ctx.fillStyle = '#5d9c3e';
+                            ctx.fillRect(-r * 0.08, -r * 0.9, r * 0.16, r * 0.45);
+                            ctx.beginPath();
+                            ctx.ellipse(0, -r * 0.88, r * 0.2, r * 0.13, 0.3, 0, Math.PI * 2);
+                            ctx.fill();
+                            // Shine
+                            ctx.fillStyle = 'rgba(255,255,255,0.35)';
+                            ctx.beginPath();
+                            ctx.arc(-r * 0.25, -r * 0.3, r * 0.22, 0, Math.PI * 2);
+                            ctx.fill();
+                            break;
+                        case 'cupcake':
+                            // Frosting top
+                            ctx.fillStyle = '#fcd34d';
+                            ctx.beginPath();
+                            ctx.arc(0, -r * 0.25, r * 0.7, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.fillStyle = '#fbbf24';
+                            ctx.beginPath();
+                            ctx.arc(0, -r * 0.35, r * 0.45, 0, Math.PI * 2);
+                            ctx.fill();
+                            // Cherry
+                            ctx.fillStyle = '#e8453c';
+                            ctx.beginPath();
+                            ctx.arc(0, -r * 0.55, r * 0.24, 0, Math.PI * 2);
+                            ctx.fill();
+                            break;
+                        case 'candy':
+                            // Swirl lines
+                            ctx.strokeStyle = '#fff176';
+                            ctx.lineWidth = r * 0.18;
+                            ctx.lineCap = 'round';
+                            for (let a = 0; a < 3; a++) {
+                                ctx.beginPath();
+                                ctx.arc(0, 0, r * 0.5 + a * r * 0.12, a * 1.2, a * 1.2 + Math.PI * 1.4);
+                                ctx.stroke();
+                            }
+                            break;
+                        case 'berry':
+                            // Small bumps
+                            ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                            for (let i = 0; i < 6; i++) {
+                                const bx = Math.cos(i * Math.PI / 3) * r * 0.65;
+                                const by = Math.sin(i * Math.PI / 3) * r * 0.65;
+                                ctx.beginPath();
+                                ctx.arc(bx, by, r * 0.25, 0, Math.PI * 2);
+                                ctx.fill();
+                            }
+                            break;
+                    }
+                } else {
+                    switch (item.type) {
+                        case 'rotten':
+                            // Mold spots
+                            ctx.fillStyle = '#8b9b5a';
+                            for (let i = 0; i < 4; i++) {
+                                const mx = Math.cos(i * 1.8) * r * 0.5;
+                                const my = Math.sin(i * 1.8) * r * 0.5;
+                                ctx.beginPath();
+                                ctx.arc(mx, my, r * 0.25, 0, Math.PI * 2);
+                                ctx.fill();
+                            }
+                            // X mark
+                            ctx.strokeStyle = '#3d3315';
+                            ctx.lineWidth = r * 0.15;
+                            ctx.beginPath();
+                            ctx.moveTo(-r * 0.5, -r * 0.5);
+                            ctx.lineTo(r * 0.5, r * 0.5);
+                            ctx.moveTo(r * 0.5, -r * 0.5);
+                            ctx.lineTo(-r * 0.5, r * 0.5);
+                            ctx.stroke();
+                            break;
+                        case 'poison':
+                            // Bubbles
+                            ctx.fillStyle = '#b8ff60';
+                            for (let i = 0; i < 5; i++) {
+                                const bx2 = Math.cos(i * 1.4 + 0.5) * r * 0.55;
+                                const by2 = Math.sin(i * 1.4 + 0.5) * r * 0.55;
+                                ctx.beginPath();
+                                ctx.arc(bx2, by2, r * 0.16, 0, Math.PI * 2);
+                                ctx.fill();
+                            }
+                            ctx.fillStyle = 'rgba(200,255,100,0.5)';
+                            ctx.beginPath();
+                            ctx.arc(0, -r * 0.3, r * 0.35, 0, Math.PI * 2);
+                            ctx.fill();
+                            break;
+                        case 'spike':
+                            // Spikes
+                            ctx.fillStyle = '#6a0000';
+                            for (let i = 0; i < 7; i++) {
+                                const angle = i * Math.PI * 2 / 7;
+                                const sx = Math.cos(angle) * r * 0.85;
+                                const sy = Math.sin(angle) * r * 0.85;
+                                ctx.beginPath();
+                                ctx.moveTo(sx, sy);
+                                ctx.lineTo(sx + Math.cos(angle) * r * 0.5, sy + Math.sin(angle) * r * 0.5);
+                                ctx.lineTo(sx - Math.sin(angle) * r * 0.2, sy + Math.cos(angle) * r * 0.2);
+                                ctx.closePath();
+                                ctx.fill();
+                            }
+                            break;
+                    }
+                }
+
+                // Rim highlight
+                ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                ctx.beginPath();
+                ctx.arc(-r * 0.25, -r * 0.3, r * 0.4, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.restore();
+            }
+
+            // Draw particle
+            function drawParticle(ctx, p) {
+                const alpha = p.life / p.maxLife;
+                ctx.fillStyle = `hsla(${p.hueShift + 30}, 80%, 60%, ${alpha})`;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Update game
+            function update(dt) {
+                if (gameState !== 'playing') return;
+
+                // Clamp dt
+                const clampedDt = Math.min(dt, 0.1);
+                const dtScale = clampedDt / (1 / 60); // normalize to 60fps
+
+                // Screen shake decay
+                if (screenShake > 0) {
+                    screenShake -= clampedDt * 4;
+                    shakeX = (Math.random() - 0.5) * screenShake * 10;
+                    shakeY = (Math.random() - 0.5) * screenShake * 10;
+                    if (screenShake < 0) {
+                        screenShake = 0;
+                        shakeX = 0;
+                        shakeY = 0;
+                    }
+                }
+
+                // Combo timer
+                if (comboTimer > 0) {
+                    comboTimer -= clampedDt;
+                    if (comboTimer <= 0) {
+                        comboCount = 0;
+                        comboTimer = 0;
+                    }
+                }
+
+                // Difficulty based on score
+                difficultyLevel = Math.floor(score / 80);
+                spawnInterval = Math.max(0.55, 1.3 - difficultyLevel * 0.08);
+
+                // Spawn items
+                spawnTimer += clampedDt;
+                while (spawnTimer >= spawnInterval) {
+                    spawnTimer -= spawnInterval;
+                    spawnItem();
+                    // Sometimes spawn extra
+                    if (Math.random() < 0.25 + difficultyLevel * 0.04) {
+                        setTimeout(() => {
+                            if (gameState === 'playing') spawnItem();
+                        }, 150 + Math.random() * 250);
+                    }
+                }
+
+                // Update Gibble target
+                if (usePointer && (mouseX !== null || touchX !== null)) {
+                    const ptrX = touchX !== null ? touchX : mouseX;
+                    gibble.targetX = ptrX;
+                }
+                if (keysHeld['ArrowLeft'] || keysHeld['KeyA'] || keysHeld['a']) {
+                    gibble.targetX -= 320 * clampedDt;
+                    usePointer = false;
+                    mouseX = null;
+                    touchX = null;
+                }
+                if (keysHeld['ArrowRight'] || keysHeld['KeyD'] || keysHeld['d']) {
+                    gibble.targetX += 320 * clampedDt;
+                    usePointer = false;
+                    mouseX = null;
+                    touchX = null;
+                }
+                gibble.targetX = Math.max(gibble.radius, Math.min(GW - gibble.radius, gibble.targetX));
+
+                // Smooth Gibble movement
+                const moveSpeed = 18;
+                const dx = gibble.targetX - gibble.x;
+                gibble.velocityX = dx * moveSpeed;
+                gibble.x += gibble.velocityX * clampedDt;
+                gibble.x = Math.max(gibble.radius, Math.min(GW - gibble.radius, gibble.x));
+
+                // Squish based on velocity
+                const absVX = Math.abs(gibble.velocityX);
+                const targetSquishX = 1 + absVX * 0.0012;
+                const targetSquishY = 1 - absVX * 0.0008;
+                gibble.squishX += (targetSquishX - gibble.squishX) * 10 * clampedDt;
+                gibble.squishY += (targetSquishY - gibble.squishY) * 10 * clampedDt;
+                gibble.squishX = Math.max(0.75, Math.min(1.35, gibble.squishX));
+                gibble.squishY = Math.max(0.7, Math.min(1.25, gibble.squishY));
+
+                // Wobble
+                gibble.wobblePhase += clampedDt * 4;
+
+                // Find nearest item for eye tracking
+                let nearestItem = null;
+                let nearestDist = Infinity;
+                for (const item of items) {
+                    const dist = Math.sqrt((item.x - gibble.x) ** 2 + (item.y - gibble.y) ** 2);
+                    if (dist < nearestDist) {
+                        nearestDist = dist;
+                        nearestItem = item;
+                    }
+                }
+                if (nearestItem && nearestDist < 140) {
+                    gibble.eyeLookX += (nearestItem.x - gibble.eyeLookX) * 8 * clampedDt;
+                    gibble.eyeLookY += (nearestItem.y - gibble.eyeLookY) * 8 * clampedDt;
+                } else {
+                    gibble.eyeLookX += (gibble.x - gibble.eyeLookX) * 4 * clampedDt;
+                    gibble.eyeLookY += (gibble.y - 40 - gibble.eyeLookY) * 4 * clampedDt;
+                }
+
+                // Mouth target based on nearby good items
+                let mouthTarget = 0;
+                const nibbleZoneRadius = 55;
+                for (const item of items) {
+                    if (!item.isGood) continue;
+                    const dx2 = item.x - gibble.x;
+                    const dy2 = item.y - (gibble.y - 18);
+                    const dist2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+                    if (dist2 < nibbleZoneRadius) {
+                        const closeness = 1 - dist2 / nibbleZoneRadius;
+                        mouthTarget = Math.max(mouthTarget, closeness * 1.1);
+                    }
+                }
+                gibble.mouthOpenTarget = mouthTarget;
+                const mouthSpeed = mouthTarget > gibble.mouthOpen ? 14 : 8;
+                gibble.mouthOpen += (gibble.mouthOpenTarget - gibble.mouthOpen) * mouthSpeed * clampedDt;
+                if (gibble.eatAnimTimer > 0) {
+                    gibble.eatAnimTimer -= clampedDt;
+                    gibble.mouthOpen = Math.max(gibble.mouthOpen, gibble.eatAnimTimer * 2.5);
+                }
+                gibble.mouthOpen = Math.max(0, Math.min(1.4, gibble.mouthOpen));
+
+                // Update items
+                for (let i = items.length - 1; i >= 0; i--) {
+                    const item = items[i];
+                    item.y += item.speed * dtScale;
+                    item.rotation += item.rotSpeed * dtScale;
+                    item.wobbleOffset += clampedDt * item.wobbleFreq;
+
+                    // Check if item is in nibble zone
+                    const dx3 = item.x - gibble.x;
+                    const dy3 = item.y - (gibble.y - 18);
+                    const dist3 = Math.sqrt(dx3 * dx3 + dy3 * dy3);
+                    const catchRadius = 44;
+
+                    if (dist3 < catchRadius && item.y > gibble.y - 55 && item.y < gibble.y + 25) {
+                        // Caught!
+                        if (item.isGood) {
+                            // NOM!
+                            score += 10;
+                            comboCount++;
+                            comboTimer = 1.8;
+                            if (comboCount >= 5 && comboCount % 5 === 0) {
+                                score += 25;
+                                comboBeep();
+                                spawnParticles(item.x, item.y, 25, '#ffdd57', true);
+                            } else if (comboCount >= 3) {
+                                bigNomSound();
+                                spawnParticles(item.x, item.y, 18, '#ffbb33', true);
+                            } else {
+                                nomSound();
+                                spawnParticles(item.x, item.y, 12, '#ffe0a0', true);
+                            }
+                            gibble.eatAnimTimer = 0.3;
+                            gibble.mouthOpen = 1.3;
+                            gibble.squishX = 1.2;
+                            gibble.squishY = 0.75;
+                        } else {
+                            // OUCH! Bad item
+                            lives--;
+                            ouchSound();
+                            screenShake = Math.max(screenShake, 0.6);
+                            spawnParticles(item.x, item.y, 20, '#6b2040', false);
+                            comboCount = 0;
+                            comboTimer = 0;
+                            gibble.eatAnimTimer = 0.15;
+                            gibble.mouthOpen = 0.8;
+                            gibble.squishX = 0.7;
+                            gibble.squishY = 1.3;
+                        }
+                        items.splice(i, 1);
+                        continue;
+                    }
+
+                    // Item fell off screen
+                    if (item.y > GH + 40) {
+                        if (item.isGood) {
+                            // Missed a good item
+                            lives--;
+                            missSound();
+                            screenShake = Math.max(screenShake, 0.35);
+                            comboCount = 0;
+                            comboTimer = 0;
+                            spawnParticles(item.x, GH, 8, '#ff8888', false);
+                        }
+                        items.splice(i, 1);
+                        continue;
+                    }
+                }
+
+                // Check game over
+                if (lives <= 0) {
+                    gameState = 'gameover';
+                    gameOverSound();
+                    screenShake = 0.8;
+                    shakeX = (Math.random() - 0.5) * 16;
+                    shakeY = (Math.random() - 0.5) * 16;
+                }
+
+                // Update particles
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx * dtScale;
+                    p.y += p.vy * dtScale;
+                    p.vy += 1.5 * clampedDt; // gravity
+                    p.life -= clampedDt;
+                    if (p.life <= 0) {
+                        particles.splice(i, 1);
+                    }
+                }
+
+                // Update background sparkles
+                for (const s of bgSparkles) {
+                    s.y -= s.speed * dtScale;
+                    s.twinkle += s.twinkleSpeed * dtScale;
+                    if (s.y < -10) {
+                        s.y = GH + 10;
+                        s.x = Math.random() * GW;
+                    }
+                }
+            }
+
+            // Draw everything
+            function draw() {
+                ctx.clearRect(0, 0, GW, GH);
+
+                // Apply screen shake
+                let offsetX = shakeX;
+                let offsetY = shakeY;
+                if (gameState === 'gameover' && screenShake > 0.1) {
+                    offsetX = (Math.random() - 0.5) * screenShake * 12;
+                    offsetY = (Math.random() - 0.5) * screenShake * 12;
+                }
+
+                ctx.save();
+                ctx.translate(offsetX, offsetY);
+
+                // Background gradient
+                const bgGrad = ctx.createLinearGradient(0, 0, 0, GH);
+                bgGrad.addColorStop(0, '#e8f4f8');
+                bgGrad.addColorStop(0.35, '#d4ecf4');
+                bgGrad.addColorStop(0.7, '#b8dff0');
+                bgGrad.addColorStop(1, '#8ec8db');
+                ctx.fillStyle = bgGrad;
+                ctx.fillRect(-10, -10, GW + 20, GH + 20);
+
+                // Background sparkles
+                for (const s of bgSparkles) {
+                    const alpha = s.opacity * (0.6 + 0.4 * Math.sin(s.twinkle));
+                    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Subtle cloud-like shapes
+                ctx.fillStyle = 'rgba(255,255,255,0.25)';
+                for (let i = 0; i < 4; i++) {
+                    const cx2 = (i * 110 + 40 + Math.sin(performance.now() * 0.0002 + i) * 25) % (GW + 80) - 40;
+                    const cy2 = 70 + i * 100;
+                    ctx.beginPath();
+                    ctx.ellipse(cx2, cy2, 55, 22, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.ellipse(cx2 - 30, cy2 - 8, 35, 18, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.ellipse(cx2 + 28, cy2 - 5, 38, 16, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Draw items
+                for (const item of items) {
+                    drawItem(ctx, item);
+                }
+
+                // Draw particles
+                for (const p of particles) {
+                    drawParticle(ctx, p);
+                }
+
+                // Draw Gibble
+                drawGibble(ctx, gibble);
+
+                // Ground line
+                ctx.strokeStyle = 'rgba(100,140,160,0.3)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(0, GH - 25);
+                ctx.lineTo(GW, GH - 25);
+                ctx.stroke();
+                ctx.fillStyle = 'rgba(120,160,180,0.2)';
+                ctx.fillRect(0, GH - 25, GW, 30);
+
+                ctx.restore();
+
+                // UI (not affected by shake)
+                drawUI();
+            }
+
+            function drawUI() {
+                // Score
+                ctx.fillStyle = '#2c3e50';
+                ctx.font = 'bold 22px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText(`Score: ${score}`, 18, 36);
+
+                // Combo
+                if (comboCount >= 3 && comboTimer > 0) {
+                    const comboAlpha = Math.min(1, comboTimer / 0.4);
+                    ctx.fillStyle = `rgba(255,140,30,${comboAlpha})`;
+                    ctx.font = 'bold 18px "Segoe UI", system-ui, sans-serif';
+                    ctx.fillText(`${comboCount}x COMBO!`, 18, 60);
+                }
+
+                // Hearts
+                const heartSize = 13;
+                const heartStartX = GW - 20 - (heartSize * 2.8 * 5);
+                const heartY = 32;
+                for (let i = 0; i < 5; i++) {
+                    const hx = heartStartX + i * heartSize * 2.8;
+                    if (i < lives) {
+                        // Full heart
+                        const hg = ctx.createRadialGradient(hx, heartY - heartSize * 0.2, heartSize * 0.1, hx, heartY,
+                            heartSize);
+                        hg.addColorStop(0, '#ff5e7a');
+                        hg.addColorStop(0.7, '#d42a4a');
+                        hg.addColorStop(1, '#8b1a30');
+                        ctx.fillStyle = hg;
+                        drawHeart(ctx, hx, heartY, heartSize);
+                        ctx.fill();
+                        // Shine
+                        ctx.fillStyle = 'rgba(255,255,255,0.45)';
+                        ctx.beginPath();
+                        ctx.arc(hx - heartSize * 0.2, heartY - heartSize * 0.35, heartSize * 0.22, 0, Math.PI * 2);
+                        ctx.fill();
+                    } else {
+                        // Empty heart
+                        ctx.fillStyle = 'rgba(80,60,70,0.35)';
+                        drawHeart(ctx, hx, heartY, heartSize);
+                        ctx.fill();
+                        ctx.strokeStyle = 'rgba(120,80,90,0.5)';
+                        ctx.lineWidth = 1.5;
+                        drawHeart(ctx, hx, heartY, heartSize);
+                        ctx.stroke();
+                    }
+                }
+
+                // Combo indicator near Gibble
+                if (comboCount >= 5 && comboTimer > 0 && gameState === 'playing') {
+                    const comboAlpha2 = Math.min(1, comboTimer / 0.5);
+                    ctx.fillStyle = `rgba(255,200,40,${comboAlpha2})`;
+                    ctx.font = 'bold 26px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`${comboCount}x`, gibble.x, gibble.y - gibble.radius - 35);
+                }
+            }
+
+            function drawStartScreen() {
+                // Background
+                const bgGrad = ctx.createLinearGradient(0, 0, 0, GH);
+                bgGrad.addColorStop(0, '#1a2a40');
+                bgGrad.addColorStop(0.5, '#2c4a60');
+                bgGrad.addColorStop(1, '#1a3040');
+                ctx.fillStyle = bgGrad;
+                ctx.fillRect(0, 0, GW, GH);
+
+                // Floating sparkles
+                for (const s of bgSparkles) {
+                    s.y -= s.speed * 0.02;
+                    s.twinkle += s.twinkleSpeed * 0.02;
+                    if (s.y < -10) { s.y = GH + 10;
+                        s.x = Math.random() * GW; }
+                    const alpha = s.opacity * (0.6 + 0.4 * Math.sin(s.twinkle));
+                    ctx.fillStyle = `rgba(200,230,255,${alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(s.x, s.y, s.size * 1.3, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Title glow
+                const glowGrad = ctx.createRadialGradient(GW / 2, 180, 30, GW / 2, 180, 200);
+                glowGrad.addColorStop(0, 'rgba(255,200,120,0.5)');
+                glowGrad.addColorStop(1, 'rgba(255,200,120,0)');
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(GW / 2, 180, 200, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Title
+                ctx.fillStyle = '#ffd580';
+                ctx.font = 'bold 52px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = 'rgba(255,180,60,0.7)';
+                ctx.shadowBlur = 20;
+                ctx.fillText('Gibble', GW / 2, 160);
+                ctx.fillText('Nibble', GW / 2, 215);
+                ctx.shadowBlur = 0;
+
+                // Subtitle
+                ctx.fillStyle = '#c8e8f8';
+                ctx.font = '18px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('Catch the yummy treats!', GW / 2, 255);
+
+                // Draw a cute Gibble in the center
+                const demoGibble = {
+                    x: GW / 2,
+                    y: 380,
+                    radius: 38,
+                    squishX: 1,
+                    squishY: 1,
+                    velocityX: 0,
+                    mouthOpen: 0.25,
+                    eyeLookX: GW / 2,
+                    eyeLookY: 340,
+                };
+                drawGibble(ctx, demoGibble);
+
+                // Floating demo items around
+                const demoItems = [
+                    { x: GW / 2 - 90, y: 310, radius: 18, rotation: 0.3, type: 'cookie', color: '#d4a054',
+                        innerColor: '#b8782e', badgeColor: '#8b5a2b', isGood: true, wobbleOffset: 0,
+                    wobbleFreq: 2, wobbleAmp: 1 },
+                    { x: GW / 2 + 80, y: 340, radius: 17, rotation: -0.4, type: 'apple', color: '#e8453c',
+                        innerColor: '#c0392b', badgeColor: '#5d9c3e', isGood: true, wobbleOffset: 1.5,
+                    wobbleFreq: 3, wobbleAmp: 1.2 },
+                    { x: GW / 2 - 40, y: 295, radius: 16, rotation: 0.7, type: 'cupcake', color: '#f9a8c8',
+                        innerColor: '#e882a0', badgeColor: '#fcd34d', isGood: true, wobbleOffset: 3, wobbleFreq: 2.5,
+                        wobbleAmp: 0.8 },
+                ];
+                for (const di of demoItems) {
+                    drawItem(ctx, di);
+                }
+
+                // Instructions
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 17px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('🎮 Arrow Keys or Mouse/Touch to move', GW / 2, 470);
+                ctx.fillText('🍪 Catch good food · ☠️ Avoid bad stuff', GW / 2, 495);
+                ctx.fillText('❤️ 5 lives — don\'t let good food fall!', GW / 2, 520);
+
+                // Start prompt
+                const pulse = 0.7 + 0.3 * Math.sin(performance.now() * 0.004);
+                ctx.fillStyle = `rgba(255,220,140,${pulse})`;
+                ctx.font = 'bold 24px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('Tap or press SPACE to start!', GW / 2, 580);
+
+                // Bad item warning
+                const badDemo = { x: GW / 2 + 130, y: 365, radius: 17, rotation: 0.2, type: 'poison', color: '#8e3b9e',
+                    innerColor: '#5c1d6e', badgeColor: '#b8ff60', isGood: false, wobbleOffset: 2, wobbleFreq: 3,
+                    wobbleAmp: 1 };
+                drawItem(ctx, badDemo);
+                ctx.fillStyle = '#ffaaaa';
+                ctx.font = '14px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('← Dodge these!', GW / 2 + 130, 395);
+            }
+
+            function drawGameOverScreen() {
+                // Semi-transparent overlay
+                ctx.fillStyle = 'rgba(0,0,0,0.65)';
+                ctx.fillRect(0, 0, GW, GH);
+
+                // Panel
+                const panelGrad = ctx.createLinearGradient(GW / 2 - 150, GH / 2 - 100, GW / 2 + 150, GH / 2 + 100);
+                panelGrad.addColorStop(0, '#3a2040');
+                panelGrad.addColorStop(1, '#1a2030');
+                ctx.fillStyle = panelGrad;
+                ctx.beginPath();
+                ctx.roundRect(GW / 2 - 150, GH / 2 - 100, 300, 200, 20);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(255,180,100,0.6)';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+
+                // Game Over text
+                ctx.fillStyle = '#ff9070';
+                ctx.font = 'bold 38px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = 'rgba(255,80,40,0.6)';
+                ctx.shadowBlur = 15;
+                ctx.fillText('Game Over!', GW / 2, GH / 2 - 35);
+                ctx.shadowBlur = 0;
+
+                // Final score
+                ctx.fillStyle = '#ffe0c0';
+                ctx.font = 'bold 22px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText(`Final Score: ${score}`, GW / 2, GH / 2 + 10);
+
+                // Sad Gibble
+                const sadGibble = {
+                    x: GW / 2,
+                    y: GH / 2 + 55,
+                    radius: 25,
+                    squishX: 1,
+                    squishY: 0.85,
+                    velocityX: 0,
+                    mouthOpen: 0,
+                    eyeLookX: GW / 2,
+                    eyeLookY: GH / 2 + 30,
+                };
+                drawGibble(ctx, sadGibble);
+
+                // Restart prompt
+                const pulse2 = 0.7 + 0.3 * Math.sin(performance.now() * 0.005);
+                ctx.fillStyle = `rgba(255,210,150,${pulse2})`;
+                ctx.font = 'bold 20px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('Tap or press SPACE to restart', GW / 2, GH / 2 + 115);
+            }
+
+            // Main game loop
+            let lastTime = performance.now();
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.2) dt = 0.2; // Cap to avoid jumps
+                lastTime = timestamp;
+
+                if (gameState === 'playing') {
+                    update(dt);
+                }
+
+                // Always update sparkles
+                if (gameState !== 'playing') {
+                    for (const s of bgSparkles) {
+                        s.y -= s.speed * 0.015;
+                        s.twinkle += s.twinkleSpeed * 0.015;
+                        if (s.y < -10) { s.y = GH + 10;
+                            s.x = Math.random() * GW; }
+                    }
+                }
+
+                // Draw based on state
+                if (gameState === 'start') {
+                    drawStartScreen();
+                } else if (gameState === 'playing') {
+                    draw();
+                } else if (gameState === 'gameover') {
+                    draw();
+                    drawGameOverScreen();
+                    // Decay shake
+                    if (screenShake > 0) {
+                        screenShake -= dt * 3;
+                        if (screenShake < 0) screenShake = 0;
+                    }
+                }
+
+                requestAnimationFrame(gameLoop);
+            }
+
+            // Input handling
+            window.addEventListener('keydown', (e) => {
+                initAudio();
+                keysHeld[e.code] = true;
+                if (e.code === 'Space') {
+                    e.preventDefault();
+                    if (gameState === 'start') {
+                        resetGame();
+                        gameState = 'playing';
+                    } else if (gameState === 'gameover') {
+                        resetGame();
+                        gameState = 'playing';
+                    }
+                }
+                if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+                    e.preventDefault();
+                }
+            });
+
+            window.addEventListener('keyup', (e) => {
+                keysHeld[e.code] = false;
+            });
+
+            canvas.addEventListener('mousemove', (e) => {
+                initAudio();
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = GW / rect.width;
+                mouseX = (e.clientX - rect.left) * scaleX;
+                usePointer = true;
+                touchX = null;
+            });
+
+            canvas.addEventListener('mouseleave', () => {
+                mouseX = null;
+            });
+
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                initAudio();
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = GW / rect.width;
+                touchX = (e.touches[0].clientX - rect.left) * scaleX;
+                usePointer = true;
+                mouseX = null;
+                if (gameState === 'start') {
+                    resetGame();
+                    gameState = 'playing';
+                } else if (gameState === 'gameover') {
+                    resetGame();
+                    gameState = 'playing';
+                }
+            }, { passive: false });
+
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = GW / rect.width;
+                touchX = (e.touches[0].clientX - rect.left) * scaleX;
+                usePointer = true;
+                mouseX = null;
+            }, { passive: false });
+
+            canvas.addEventListener('touchend', () => {
+                touchX = null;
+            });
+
+            canvas.addEventListener('click', (e) => {
+                initAudio();
+                if (gameState === 'start') {
+                    resetGame();
+                    gameState = 'playing';
+                } else if (gameState === 'gameover') {
+                    resetGame();
+                    gameState = 'playing';
+                }
+                // Also update mouse position
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = GW / rect.width;
+                mouseX = (e.clientX - rect.left) * scaleX;
+                usePointer = true;
+            });
+
+            // Prevent scrolling on mobile
+            document.addEventListener('touchmove', function(e) {
+                if (e.target === canvas || canvas.contains(e.target)) {
+                    e.preventDefault();
+                }
+            }, { passive: false });
+
+            // roundRect polyfill if needed
+            if (!ctx.roundRect) {
+                ctx.roundRect = function(x, y, w, h, r) {
+                    if (typeof r === 'number') r = { tl: r, tr: r, br: r, bl: r };
+                    ctx.beginPath();
+                    ctx.moveTo(x + r.tl, y);
+                    ctx.lineTo(x + w - r.tr, y);
+                    ctx.quadraticCurveTo(x + w, y, x + w, y + r.tr);
+                    ctx.lineTo(x + w, y + h - r.br);
+                    ctx.quadraticCurveTo(x + w, y + h, x + w - r.br, y + h);
+                    ctx.lineTo(x + r.bl, y + h);
+                    ctx.quadraticCurveTo(x, y + h, x, y + h - r.bl);
+                    ctx.lineTo(x, y + r.tl);
+                    ctx.quadraticCurveTo(x, y, x + r.tl, y);
+                    ctx.closePath();
+                };
+            }
+
+            // Start the loop
+            requestAnimationFrame(gameLoop);
+        })();
+    </script>
+</body>
+</html>
