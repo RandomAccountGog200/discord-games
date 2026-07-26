@@ -1,0 +1,1264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>🏠 ONE BIG HOUSE - Family Chaos Manager</title>
+    <style>
+        :root {
+            --bg: #1a1a2e;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Segoe UI', 'Trebuchet MS', sans-serif;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-user-select: none;
+            user-select: none;
+            cursor: pointer;
+        }
+        #game-wrapper {
+            position: relative;
+            width: 100%;
+            max-width: 950px;
+            aspect-ratio: 4/3;
+            max-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        canvas {
+            display: block;
+            border-radius: 16px;
+            box-shadow: 0 0 60px rgba(255, 140, 0, 0.35), 0 0 120px rgba(255, 100, 0, 0.2);
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-wrapper">
+        <canvas id="game"></canvas>
+    </div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+            const wrapper = document.getElementById('game-wrapper');
+
+            // --- Audio Setup ---
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+            }
+
+            function playBeep(freq, dur, type = 'sine', vol = 0.08) {
+                if (!audioCtx) return;
+                try {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                    osc.frequency.exponentialRampToValueAtTime(freq * 0.5, audioCtx.currentTime + dur);
+                    gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(audioCtx.currentTime);
+                    osc.stop(audioCtx.currentTime + dur);
+                } catch (e) {}
+            }
+
+            function playCalm() { playBeep(600, 0.15, 'sine', 0.06);
+                playBeep(900, 0.1, 'sine', 0.04); }
+
+            function playAgitated() { playBeep(200, 0.3, 'square', 0.07);
+                playBeep(150, 0.2, 'triangle', 0.05); }
+
+            function playBottle() {
+                playBeep(400, 0.2, 'sine', 0.08);
+                setTimeout(() => playBeep(600, 0.2, 'sine', 0.08), 150);
+                setTimeout(() => playBeep(800, 0.2, 'sine', 0.08), 300);
+                setTimeout(() => playBeep(1000, 0.3, 'sine', 0.1), 450);
+            }
+
+            function playGameOver() {
+                playBeep(300, 0.4, 'sawtooth', 0.06);
+                setTimeout(() => playBeep(200, 0.5, 'sawtooth', 0.06), 400);
+                setTimeout(() => playBeep(100, 0.7, 'sawtooth', 0.07), 800);
+            }
+
+            // --- Canvas Sizing ---
+            const W = 900;
+            const H = 675;
+
+            function resize() {
+                const ww = window.innerWidth;
+                const wh = window.innerHeight;
+                const scale = Math.min(ww / W, wh / H);
+                canvas.width = W;
+                canvas.height = H;
+                canvas.style.width = (W * scale) + 'px';
+                canvas.style.height = (H * scale) + 'px';
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            // --- Family Members Data ---
+            const familyMembers = [
+                { id: 'sis1', short: 'Georgina S.', full: 'Georgina Snapchat12', category: 'Sister',
+                    color: '#ff6b9d', emoji: '👧' },
+                { id: 'cous1', short: 'Ricketypoo', full: 'Ricketypoo', category: 'Cousin', color: '#ff9f43',
+                    emoji: '🧒' },
+                { id: 'cous2', short: 'Kakakalakapoom', full: 'Kakakalakapoom', category: 'Cousin', color: '#feca57',
+                    emoji: '👦' },
+                { id: 'bro1', short: 'Staircase Bro #1', full: "I'm a Staircase, I am the Quavius Third Monkey Boy 12345 Doorsteps Ooh Ooh Ah Ah",
+                    category: 'Brother', color: '#54a0ff', emoji: '🐒' },
+                { id: 'bro2', short: 'Staircase Bro #2', full: "I'm a Staircase, I am the Quavius Third Monkey Boy 12345 Doorsteps Ooh Ooh Ah Ah",
+                    category: 'Brother', color: '#5f27cd', emoji: '🐵' },
+                { id: 'dad1', short: 'Ryan R. x Emilia', full: 'Ryan Roberts x Emilia (dad)', category: 'Parent',
+                    color: '#1dd1a1', emoji: '👨' },
+                { id: 'mom2', short: 'Lil Cringe Poppin', full: 'Lil Cringe Poppinsodainhaler (second mom)',
+                    category: 'Parent', color: '#f368e0', emoji: '👩' },
+                { id: 'aunt1', short: 'Auntie Merry Xmas', full: 'Auntie Merry Christmas 99', category: 'Aunt',
+                    color: '#ff6348', emoji: '🎄' },
+                { id: 'unc1', short: 'Openingnope S.', full: 'Openingnope Scoutepo', category: 'Uncle',
+                color: '#7bed9f', emoji: '🔍' },
+                { id: 'unc2', short: 'Animaniacs Uncle', full: 'The entire Animaniacs "Nations of the World" song uncle',
+                    category: 'Uncle', color: '#70a1ff', emoji: '🎵' },
+                { id: 'unc3', short: 'Lil Hat Gas', full: 'Lil Hat Gas (your 5698th uncle 😭)', category: 'Uncle',
+                    color: '#a4b0be', emoji: '🎩' },
+                { id: 'gran1', short: 'Granny 3🤑8', full: 'Granny 3🤑🤑🤑🤑8', category: 'Grandparent', color: '#ffa502',
+                    emoji: '👵' },
+                { id: 'gran2', short: 'John Pork', full: 'John Pork', category: 'Grandparent', color: '#ff6b81',
+                    emoji: '🐷' },
+                { id: 'gran3', short: 'Little Bearzy', full: 'Little Bearzy Oh My God No Don\'t Jump in the Water 1 2 3',
+                    category: 'Grandparent', color: '#eccc68', emoji: '🐻' },
+                { id: 'gran4', short: 'Yamalbalsy', full: 'Yamalbalsybearstinkman', category: 'Grandparent',
+                    color: '#8e44ad', emoji: '🧸' },
+                { id: 'ext1', short: 'Jersey Opened', full: 'Jersey Opened (helper sister)', category: 'Extended Family',
+                    color: '#2ed573', emoji: '🏈' },
+                { id: 'ext2', short: 'Kate (456)', full: 'Kate (456 Squid Game family member)',
+                    category: 'Extended Family', color: '#e84118', emoji: '🦑' },
+                { id: 'ext3', short: 'Gonggiplay Dae Ho', full: 'Realistic Gonggiplay Dae Ho (Greek plate cleaner legend 😤)',
+                    category: 'Extended Family', color: '#00d2d3', emoji: '🍽️' },
+                { id: 'ext4', short: 'Katy Perry', full: 'Katy Perry (family mentality trainer)', category: 'Extended Family',
+                    color: '#ff9ff3', emoji: '🌟' },
+                { id: 'ext5', short: 'ChatGPT (19)', full: 'ChatGPT (19-year-old family member)',
+                    category: 'Extended Family', color: '#10ac84', emoji: '🤖' },
+                { id: 'ext6', short: 'Yummy Cake Juice', full: '19 Year Old Yummy Cake Juice 456 Parrowww Stop You Have the Not Die in Games...',
+                    category: 'Extended Family', color: '#fdcb6e', emoji: '🎂' },
+                { id: 'anc1', short: 'Argentina Messi', full: 'Argentina Messi Goofy Pessi I Don\'t Know What I\'m Saying',
+                    category: 'Ancestor', color: '#74b9ff', emoji: '⚽' },
+                { id: 'anc2', short: 'Battle Armor Surrey', full: 'Battle Armor Surrey United 2012', category: 'Ancestor',
+                    color: '#636e72', emoji: '🛡️' },
+                { id: 'anc3', short: 'Ricala', full: 'Ricala', category: 'Ancestor', color: '#dfe6e9', emoji: '👻' },
+                { id: 'next1', short: 'Liverpool Kai', full: 'Liverpool Kai Oh No Barça Don\'t Eat Me (niece)',
+                    category: 'Next Generation', color: '#e056a0', emoji: '👶' },
+                { id: 'next2', short: '2yo Son 👶', full: 'Your 2-year-old son 👶', category: 'Next Generation',
+                    color: '#ffcccc', emoji: '🍼' },
+                { id: 'pet1', short: 'Richard Rice Ball', full: 'Richard Rice Ball (pet rat 🐀)', category: 'Pet',
+                    color: '#bdc3c7', emoji: '🐀' },
+                { id: 'pet2', short: 'Puskas Award Dog', full: 'Puskas Award with Ronaldo Sui 123 I like Speedy ChatGPT wants to pee (dog 🐶)',
+                    category: 'Pet', color: '#c0392b', emoji: '🐶' },
+                { id: 'leg1', short: 'Fogger Voice Note', full: 'Fogger Voice Note (father figure 💯)', category: 'Legendary',
+                    color: '#f1c40f', emoji: '💯' },
+            ];
+
+            // --- Game State ---
+            const TOTAL_WINDOWS = 16;
+            let activeCharacters = [];
+            let score = 0;
+            let highScore = parseInt(localStorage.getItem('oneBigHouseHighScore')) || 0;
+            let chaosMeter = 0;
+            const MAX_CHAOS = 100;
+            let gameOver = false;
+            let gameStarted = false;
+            let tickTimer = 0;
+            let difficultyLevel = 1;
+            let bottleActive = false;
+            let bottleX = 0;
+            let bottleY = 0;
+            let bottleTimer = 0;
+            let bottleAlpha = 0;
+            let bottleSparkles = [];
+            let particles = [];
+            let speechBubbles = [];
+            let shakeAmount = 0;
+            let comboCount = 0;
+            let comboTimer = 0;
+            let lastInteractionTime = 0;
+            let houseGlowPulse = 0;
+            const windowAssignments = [];
+
+            // --- House Geometry ---
+            const houseX = 70;
+            const houseY = 55;
+            const houseW = 760;
+            const houseH = 530;
+            const floorHeights = [380, 280, 195, 115]; // y positions of floor bottoms (ground, 1st, 2nd, attic)
+            const floorYCenters = [430, 330, 240, 155]; // center y for each floor's windows
+            const windowsPerFloor = [5, 5, 4, 2]; // windows per floor
+
+            // Precompute window positions
+            const windowPositions = [];
+            const windowWidth = 52;
+            const windowHeight = 58;
+            const roofY = 30;
+            const roofPeakY = -5;
+
+            function computeWindowPositions() {
+                windowPositions.length = 0;
+                for (let f = 0; f < 4; f++) {
+                    const count = windowsPerFloor[f];
+                    const cy = floorYCenters[f];
+                    const totalW = count * windowWidth + (count - 1) * 18;
+                    const startX = houseX + (houseW - totalW) / 2;
+                    for (let w = 0; w < count; w++) {
+                        windowPositions.push({
+                            x: startX + w * (windowWidth + 18),
+                            y: cy - windowHeight / 2,
+                            w: windowWidth,
+                            h: windowHeight,
+                            floor: f,
+                            index: windowPositions.length,
+                        });
+                    }
+                }
+                // Add 2 basement windows
+                const baseCY = 500;
+                const baseTotalW = 2 * 40 + 20;
+                const baseStartX = houseX + (houseW - baseTotalW) / 2;
+                for (let w = 0; w < 2; w++) {
+                    windowPositions.push({
+                        x: baseStartX + w * 60,
+                        y: baseCY,
+                        w: 40,
+                        h: 32,
+                        floor: -1,
+                        index: windowPositions.length,
+                    });
+                }
+            }
+            computeWindowPositions();
+
+            // --- Assign Characters to Windows ---
+            function shuffleArray(arr) {
+                const a = [...arr];
+                for (let i = a.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [a[i], a[j]] = [a[j], a[i]];
+                }
+                return a;
+            }
+
+            function assignCharacters() {
+                windowAssignments.length = 0;
+                const shuffled = shuffleArray(familyMembers);
+                const numWindows = windowPositions.length;
+                for (let i = 0; i < numWindows; i++) {
+                    windowAssignments.push({
+                        character: shuffled[i % shuffled.length],
+                        chaosLevel: 0,
+                        isAgitated: false,
+                        agitationTimer: 0,
+                        windowIndex: i,
+                        bobOffset: Math.random() * Math.PI * 2,
+                    });
+                }
+                // Ensure all family members are in the pool for cycling
+                activeCharacters = [...windowAssignments];
+            }
+
+            function cycleCharacter(windowIdx) {
+                // Replace the character at this window with a random family member not currently active
+                const currentIds = new Set(activeCharacters.map(a => a.character.id));
+                const available = familyMembers.filter(m => !currentIds.has(m.id));
+                const pool = available.length > 0 ? available : familyMembers;
+                const newChar = pool[Math.floor(Math.random() * pool.length)];
+                const wp = windowPositions[windowIdx];
+                activeCharacters[windowIdx] = {
+                    character: newChar,
+                    chaosLevel: 0,
+                    isAgitated: false,
+                    agitationTimer: 0,
+                    windowIndex: windowIdx,
+                    bobOffset: Math.random() * Math.PI * 2,
+                };
+            }
+
+            // --- Particles ---
+            function spawnParticles(x, y, color, count = 15) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 1.5 + Math.random() * 5;
+                    particles.push({
+                        x,
+                        y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - 2,
+                        life: 0.5 + Math.random() * 0.8,
+                        maxLife: 0.5 + Math.random() * 0.8,
+                        color,
+                        size: 2 + Math.random() * 5,
+                    });
+                }
+            }
+
+            function spawnSparkles(x, y, count = 8) {
+                for (let i = 0; i < count; i++) {
+                    bottleSparkles.push({
+                        x: x + (Math.random() - 0.5) * 40,
+                        y: y + (Math.random() - 0.5) * 40,
+                        vx: (Math.random() - 0.5) * 3,
+                        vy: -2 - Math.random() * 4,
+                        life: 0.3 + Math.random() * 0.6,
+                        maxLife: 0.3 + Math.random() * 0.6,
+                        size: 1 + Math.random() * 3,
+                    });
+                }
+            }
+
+            // --- Speech Bubbles ---
+            function addSpeechBubble(x, y, text) {
+                speechBubbles.push({
+                    x,
+                    y,
+                    text,
+                    life: 1.8,
+                    maxLife: 1.8,
+                });
+                // Limit bubbles
+                if (speechBubbles.length > 4) speechBubbles.shift();
+            }
+
+            // --- Game Functions ---
+            function calmCharacter(index) {
+                if (index < 0 || index >= activeCharacters.length) return;
+                const ac = activeCharacters[index];
+                if (!ac.isAgitated && ac.chaosLevel < 20) return; // nothing to calm
+                const wasAgitated = ac.isAgitated;
+                ac.isAgitated = false;
+                ac.chaosLevel = Math.max(0, ac.chaosLevel - 40);
+                ac.agitationTimer = 0;
+
+                const wp = windowPositions[index];
+                const cx = wp.x + wp.w / 2;
+                const cy = wp.y + wp.h / 2;
+                spawnParticles(cx, cy, '#ffd700', wasAgitated ? 25 : 10);
+
+                if (wasAgitated) {
+                    comboCount++;
+                    comboTimer = 1.5;
+                    const bonus = comboCount > 1 ? comboCount * 5 : 0;
+                    score += 10 + bonus;
+                    playCalm();
+                    const quotes = [
+                        'Phew! Thanks!',
+                        'I was about to lose it!',
+                        'The deodorant bottle saved us!',
+                        'Calm down, everyone!',
+                        ac.character.short + ' is chill now',
+                        'Family peace restored!',
+                    ];
+                    addSpeechBubble(cx, cy - 25, quotes[Math.floor(Math.random() * quotes.length)]);
+                } else {
+                    score += 3;
+                    playBeep(500, 0.08, 'sine', 0.03);
+                }
+                chaosMeter = Math.max(0, chaosMeter - (wasAgitated ? 8 : 2));
+                lastInteractionTime = performance.now() / 1000;
+                cycleCharacter(index);
+            }
+
+            function activateBottle() {
+                if (bottleActive) return;
+                bottleActive = true;
+                bottleX = houseX + Math.random() * (houseW - 80) + 40;
+                bottleY = roofY + Math.random() * (houseH - roofY - 60) + 30;
+                bottleTimer = 5 + Math.random() * 4;
+                bottleAlpha = 1;
+                bottleSparkles = [];
+                spawnSparkles(bottleX, bottleY, 12);
+            }
+
+            function collectBottle() {
+                if (!bottleActive) return;
+                bottleActive = false;
+                bottleAlpha = 0;
+                spawnParticles(bottleX, bottleY, '#ffd700', 35);
+                spawnParticles(bottleX, bottleY, '#ff6bff', 25);
+                spawnParticles(bottleX, bottleY, '#ffffff', 20);
+                playBottle();
+                score += 50;
+                chaosMeter = Math.max(0, chaosMeter - 30);
+                // Calm all agitated characters
+                let calmedCount = 0;
+                for (let i = 0; i < activeCharacters.length; i++) {
+                    if (activeCharacters[i].isAgitated) {
+                        activeCharacters[i].isAgitated = false;
+                        activeCharacters[i].chaosLevel = Math.max(0, activeCharacters[i].chaosLevel - 50);
+                        activeCharacters[i].agitationTimer = 0;
+                        calmedCount++;
+                        cycleCharacter(i);
+                    }
+                }
+                addSpeechBubble(bottleX, bottleY - 20, '✨ THE DEODORANT BOTTLE OF THEM ALL TIMES ✨');
+                if (calmedCount > 0) {
+                    score += calmedCount * 15;
+                }
+                shakeAmount = 0;
+                comboCount = 0;
+            }
+
+            function resetGame() {
+                score = 0;
+                chaosMeter = 0;
+                gameOver = false;
+                gameStarted = true;
+                tickTimer = 0;
+                difficultyLevel = 1;
+                bottleActive = false;
+                bottleAlpha = 0;
+                bottleTimer = 0;
+                bottleSparkles = [];
+                particles = [];
+                speechBubbles = [];
+                shakeAmount = 0;
+                comboCount = 0;
+                comboTimer = 0;
+                lastInteractionTime = performance.now() / 1000;
+                assignCharacters();
+                activeCharacters = [...windowAssignments];
+            }
+
+            // --- Drawing Functions ---
+            function drawSky() {
+                const grad = ctx.createLinearGradient(0, 0, 0, H);
+                grad.addColorStop(0, '#1a1a3e');
+                grad.addColorStop(0.3, '#2d3561');
+                grad.addColorStop(0.6, '#4a6fa5');
+                grad.addColorStop(0.85, '#7eb8da');
+                grad.addColorStop(1, '#b8dff0');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, W, H);
+
+                // Stars
+                ctx.fillStyle = '#ffffff';
+                const starSeed = 42;
+                for (let i = 0; i < 60; i++) {
+                    const sx = ((i * 137 + starSeed) % W);
+                    const sy = ((i * 251 + starSeed * 3) % (H * 0.5));
+                    const twinkle = 0.3 + 0.7 * Math.abs(Math.sin(performance.now() / 1000 * 1.5 + i));
+                    ctx.globalAlpha = twinkle * 0.8;
+                    ctx.fillRect(sx, sy, 2, 2);
+                }
+                ctx.globalAlpha = 1;
+            }
+
+            function drawGround() {
+                const grad = ctx.createLinearGradient(0, houseY + houseH, 0, H);
+                grad.addColorStop(0, '#4a7c3f');
+                grad.addColorStop(0.3, '#3d6b34');
+                grad.addColorStop(1, '#2a4a20');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, houseY + houseH, W, H - houseY - houseH);
+
+                // Grass tufts
+                ctx.strokeStyle = '#5a9a4a';
+                ctx.lineWidth = 1.5;
+                for (let i = 0; i < 50; i++) {
+                    const gx = (i * 173 + 37) % W;
+                    const gy = houseY + houseH + 5 + ((i * 89) % 40);
+                    ctx.beginPath();
+                    ctx.moveTo(gx, gy);
+                    ctx.quadraticCurveTo(gx + 4, gy - 12, gx + 8, gy);
+                    ctx.stroke();
+                }
+
+                // Path to door
+                const doorX = houseX + houseW / 2 - 20;
+                const doorY = houseY + houseH - 30;
+                ctx.fillStyle = '#c9b896';
+                ctx.beginPath();
+                ctx.moveTo(doorX - 15, H);
+                ctx.lineTo(doorX - 5, doorY + 15);
+                ctx.lineTo(doorX + 45, doorY + 15);
+                ctx.lineTo(doorX + 65, H);
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = '#a89880';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+
+            function drawHouse() {
+                // Apply shake
+                const sx = (Math.random() - 0.5) * shakeAmount;
+                const sy = (Math.random() - 0.5) * shakeAmount;
+                ctx.save();
+                ctx.translate(sx, sy);
+
+                // Main house body
+                const bodyGrad = ctx.createLinearGradient(houseX, 0, houseX + houseW, 0);
+                bodyGrad.addColorStop(0, '#fdf5e6');
+                bodyGrad.addColorStop(0.5, '#fffef5');
+                bodyGrad.addColorStop(1, '#f5ecd7');
+                ctx.fillStyle = bodyGrad;
+                ctx.fillRect(houseX, houseY, houseW, houseH);
+                ctx.strokeStyle = '#c4b896';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(houseX, houseY, houseW, houseH);
+
+                // Roof
+                const roofOverhang = 25;
+                ctx.fillStyle = '#5c3d2e';
+                ctx.beginPath();
+                ctx.moveTo(houseX - roofOverhang, houseY);
+                ctx.lineTo(houseX + houseW / 2, roofPeakY);
+                ctx.lineTo(houseX + houseW + roofOverhang, houseY);
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = '#3e2215';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+
+                // Roof ridge highlight
+                ctx.strokeStyle = '#7a5540';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(houseX - roofOverhang + 5, houseY - 2);
+                ctx.lineTo(houseX + houseW / 2, roofPeakY + 2);
+                ctx.lineTo(houseX + houseW + roofOverhang - 5, houseY - 2);
+                ctx.stroke();
+
+                // Chimney
+                const chimX = houseX + houseW * 0.75;
+                const chimW = 35;
+                const chimH = 70;
+                ctx.fillStyle = '#8b5e3c';
+                ctx.fillRect(chimX, houseY - chimH + 15, chimW, chimH);
+                ctx.strokeStyle = '#5a3020';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(chimX, houseY - chimH + 15, chimW, chimH);
+                // Chimney cap
+                ctx.fillStyle = '#4a2a18';
+                ctx.fillRect(chimX - 5, houseY - chimH + 10, chimW + 10, 12);
+
+                // Floor dividers
+                for (let f = 0; f < 4; f++) {
+                    const fy = floorHeights[f];
+                    ctx.strokeStyle = '#d4c5a9';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([8, 4]);
+                    ctx.beginPath();
+                    ctx.moveTo(houseX + 10, fy);
+                    ctx.lineTo(houseX + houseW - 10, fy);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+
+                // Door
+                const doorW = 38;
+                const doorH = 65;
+                const doorX = houseX + houseW / 2 - doorW / 2;
+                const doorY = houseY + houseH - doorH;
+                const doorGrad = ctx.createLinearGradient(doorX, 0, doorX + doorW, 0);
+                doorGrad.addColorStop(0, '#6b3a2a');
+                doorGrad.addColorStop(1, '#8b4a3a');
+                ctx.fillStyle = doorGrad;
+                ctx.fillRect(doorX, doorY, doorW, doorH);
+                ctx.strokeStyle = '#3e1a10';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(doorX, doorY, doorW, doorH);
+                // Door knob
+                ctx.fillStyle = '#f1c40f';
+                ctx.beginPath();
+                ctx.arc(doorX + doorW - 10, doorY + doorH / 2, 5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#c49b0e';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                // Door arch
+                ctx.fillStyle = '#fdf5e6';
+                ctx.fillRect(doorX + 3, doorY + 3, doorW - 6, doorH - 6);
+                ctx.fillStyle = '#6b3a2a';
+                ctx.fillRect(doorX + 6, doorY + 6, doorW - 12, doorH - 12);
+
+                // Welcome mat
+                ctx.fillStyle = '#a0522d';
+                ctx.fillRect(doorX - 4, doorY + doorH - 2, doorW + 8, 8);
+                ctx.fillStyle = '#8b4513';
+                ctx.font = '7px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('WELCOME', doorX + doorW / 2, doorY + doorH + 6);
+
+                ctx.restore();
+            }
+
+            function drawWindows() {
+                for (let i = 0; i < windowPositions.length; i++) {
+                    const wp = windowPositions[i];
+                    const ac = activeCharacters[i];
+                    const isAgitated = ac && ac.isAgitated;
+                    const chaosRatio = ac ? ac.chaosLevel / 100 : 0;
+
+                    // Window glow
+                    if (isAgitated) {
+                        const glowGrad = ctx.createRadialGradient(wp.x + wp.w / 2, wp.y + wp.h / 2, wp.w * 0.3, wp.x + wp.w /
+                            2, wp.y + wp.h / 2, wp.w * 1.2);
+                        glowGrad.addColorStop(0, 'rgba(255,80,30,0.7)');
+                        glowGrad.addColorStop(1, 'rgba(255,80,30,0)');
+                        ctx.fillStyle = glowGrad;
+                        ctx.fillRect(wp.x - wp.w * 0.6, wp.y - wp.h * 0.4, wp.w * 2.2, wp.h * 1.8);
+                    } else if (chaosRatio > 0.3) {
+                        const glowGrad = ctx.createRadialGradient(wp.x + wp.w / 2, wp.y + wp.h / 2, wp.w * 0.2, wp.x + wp.w /
+                            2, wp.y + wp.h / 2, wp.w * 0.8);
+                        const alpha = chaosRatio * 0.5;
+                        glowGrad.addColorStop(0, `rgba(255,200,50,${alpha})`);
+                        glowGrad.addColorStop(1, 'rgba(255,200,50,0)');
+                        ctx.fillStyle = glowGrad;
+                        ctx.fillRect(wp.x - wp.w * 0.4, wp.y - wp.h * 0.3, wp.w * 1.8, wp.h * 1.6);
+                    }
+
+                    // Window frame
+                    const frameGrad = ctx.createLinearGradient(wp.x, wp.y, wp.x, wp.y + wp.h);
+                    frameGrad.addColorStop(0, '#e8dcc8');
+                    frameGrad.addColorStop(1, '#c4b088');
+                    ctx.fillStyle = frameGrad;
+                    ctx.fillRect(wp.x, wp.y, wp.w, wp.h);
+                    ctx.strokeStyle = '#8a7050';
+                    ctx.lineWidth = 2.5;
+                    ctx.strokeRect(wp.x, wp.y, wp.w, wp.h);
+
+                    // Window inner (glass)
+                    const innerPad = 5;
+                    const glassX = wp.x + innerPad;
+                    const glassY = wp.y + innerPad;
+                    const glassW = wp.w - innerPad * 2;
+                    const glassH = wp.h - innerPad * 2;
+
+                    let glassColor;
+                    if (isAgitated) {
+                        glassColor = '#ff6b3d';
+                    } else if (chaosRatio > 0.4) {
+                        const t = chaosRatio;
+                        const r = Math.floor(255 * (0.3 + t * 0.7));
+                        const g = Math.floor(200 * (1 - t * 0.7));
+                        const b = Math.floor(150 * (1 - t));
+                        glassColor = `rgb(${r},${g},${b})`;
+                    } else {
+                        glassColor = '#ffeedd';
+                    }
+                    ctx.fillStyle = glassColor;
+                    ctx.fillRect(glassX, glassY, glassW, glassH);
+
+                    // Window cross
+                    ctx.strokeStyle = '#d4c5a9';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(glassX + glassW / 2, glassY);
+                    ctx.lineTo(glassX + glassW / 2, glassY + glassH);
+                    ctx.moveTo(glassX, glassY + glassH / 2);
+                    ctx.lineTo(glassX + glassW, glassY + glassH / 2);
+                    ctx.stroke();
+
+                    // Character inside window
+                    if (ac) {
+                        const charX = glassX + glassW / 2;
+                        const charY = glassY + glassH / 2 - 2;
+                        const bob = Math.sin(performance.now() / 1000 * 3 + ac.bobOffset) * (isAgitated ? 6 : 2);
+
+                        // Character body
+                        const charSize = Math.min(glassW, glassH) * 0.35;
+                        ctx.fillStyle = ac.character.color;
+                        ctx.beginPath();
+                        ctx.arc(charX, charY + bob, charSize, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+                        ctx.lineWidth = 1.5;
+                        ctx.stroke();
+
+                        // Simple face
+                        ctx.fillStyle = '#fff';
+                        ctx.beginPath();
+                        ctx.arc(charX - charSize * 0.3, charY + bob - charSize * 0.2, charSize * 0.22, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.beginPath();
+                        ctx.arc(charX + charSize * 0.3, charY + bob - charSize * 0.2, charSize * 0.22, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = '#111';
+                        ctx.beginPath();
+                        ctx.arc(charX - charSize * 0.28, charY + bob - charSize * 0.18, charSize * 0.1, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.beginPath();
+                        ctx.arc(charX + charSize * 0.32, charY + bob - charSize * 0.18, charSize * 0.1, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        // Mouth
+                        ctx.strokeStyle = '#111';
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        if (isAgitated) {
+                            ctx.arc(charX, charY + bob + charSize * 0.25, charSize * 0.2, 0, Math.PI);
+                        } else {
+                            ctx.arc(charX, charY + bob + charSize * 0.1, charSize * 0.15, 0.1, Math.PI - 0.1);
+                        }
+                        ctx.stroke();
+
+                        // Agitation indicator (exclamation mark)
+                        if (isAgitated) {
+                            const exX = charX + charSize + 4;
+                            const exY = charY + bob - charSize;
+                            ctx.fillStyle = '#ff0000';
+                            ctx.font = `bold ${charSize*1.2}px sans-serif`;
+                            ctx.textAlign = 'center';
+                            ctx.fillText('❗', exX, exY);
+                        }
+                    }
+
+                    // Window sill
+                    ctx.fillStyle = '#b8a080';
+                    ctx.fillRect(wp.x - 3, wp.y + wp.h, wp.w + 6, 6);
+                    ctx.strokeStyle = '#8a7050';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(wp.x - 3, wp.y + wp.h, wp.w + 6, 6);
+                }
+            }
+
+            function drawDeodorantBottle() {
+                if (!bottleActive) return;
+                const floatOffset = Math.sin(performance.now() / 1000 * 2.5) * 8;
+                const bx = bottleX;
+                const by = bottleY + floatOffset;
+
+                // Sparkles
+                for (const sp of bottleSparkles) {
+                    const alpha = sp.life / sp.maxLife;
+                    ctx.fillStyle = `rgba(255,215,0,${alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(sp.x, sp.y, sp.size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Glow
+                const glowGrad = ctx.createRadialGradient(bx, by, 5, bx, by, 45);
+                glowGrad.addColorStop(0, 'rgba(255,215,0,0.9)');
+                glowGrad.addColorStop(0.4, 'rgba(255,180,0,0.5)');
+                glowGrad.addColorStop(1, 'rgba(255,150,0,0)');
+                ctx.fillStyle = glowGrad;
+                ctx.fillRect(bx - 50, by - 50, 100, 100);
+
+                // Bottle body
+                ctx.save();
+                ctx.translate(bx, by);
+                const bottleBob = Math.sin(performance.now() / 1000 * 5) * 3;
+                ctx.rotate(bottleBob * 0.05);
+
+                // Bottle shape
+                ctx.fillStyle = '#e8d5f5';
+                ctx.strokeStyle = '#9b59b6';
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                ctx.roundRect(-10, -18, 20, 36, 5);
+                ctx.fill();
+                ctx.stroke();
+
+                // Bottle neck
+                ctx.fillStyle = '#d4b8e8';
+                ctx.fillRect(-5, -28, 10, 12);
+                ctx.strokeStyle = '#9b59b6';
+                ctx.strokeRect(-5, -28, 10, 12);
+
+                // Spray nozzle
+                ctx.fillStyle = '#f1c40f';
+                ctx.fillRect(-3, -33, 6, 7);
+                ctx.strokeStyle = '#c49b0e';
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(-3, -33, 6, 7);
+
+                // Star on bottle
+                ctx.fillStyle = '#ffd700';
+                ctx.font = 'bold 14px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('✨', 0, 2);
+
+                // Label
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(-7, -8, 14, 10);
+                ctx.fillStyle = '#9b59b6';
+                ctx.font = 'bold 5px sans-serif';
+                ctx.fillText('DEODORANT', 0, -1);
+
+                ctx.restore();
+            }
+
+            function drawParticles() {
+                for (const p of particles) {
+                    const alpha = p.life / p.maxLife;
+                    ctx.fillStyle = p.color.replace(')', `,${alpha})`).replace('rgb',
+                        'rgba');
+                    if (p.color.startsWith('#')) {
+                        ctx.globalAlpha = alpha;
+                        ctx.fillStyle = p.color;
+                    }
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+            }
+
+            function drawSpeechBubbles() {
+                for (const sb of speechBubbles) {
+                    const alpha = Math.min(1, sb.life / sb.maxLife);
+                    const floatY = sb.y - (1 - sb.life / sb.maxLife) * 25;
+                    ctx.globalAlpha = alpha;
+
+                    // Measure text
+                    ctx.font = 'bold 11px "Segoe UI", sans-serif';
+                    const metrics = ctx.measureText(sb.text);
+                    const tw = metrics.width;
+                    const th = 16;
+                    const bx = sb.x - tw / 2 - 10;
+                    const by = floatY - th - 12;
+
+                    // Bubble
+                    ctx.fillStyle = '#fff';
+                    ctx.strokeStyle = '#333';
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.roundRect(bx, by, tw + 20, th + 14, 10);
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // Tail
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.moveTo(sb.x - 5, floatY);
+                    ctx.lineTo(sb.x + 5, floatY);
+                    ctx.lineTo(sb.x, floatY + 10);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // Text
+                    ctx.fillStyle = '#222';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(sb.text, sb.x, by + th + 5);
+                    ctx.textAlign = 'start';
+                }
+                ctx.globalAlpha = 1;
+            }
+
+            function drawUI() {
+                // Score
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(10, 8, 200, 50);
+                ctx.strokeStyle = '#ffd700';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(10, 8, 200, 50);
+
+                ctx.fillStyle = '#ffd700';
+                ctx.font = 'bold 18px "Segoe UI", sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText(`⭐ Score: ${score}`, 22, 34);
+                ctx.fillStyle = '#fff';
+                ctx.font = '11px "Segoe UI", sans-serif';
+                ctx.fillText(`Best: ${highScore}`, 22, 50);
+
+                // Chaos meter
+                const meterX = W - 190;
+                const meterY = 8;
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(meterX, meterY, 180, 50);
+                ctx.strokeStyle = '#ff4444';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(meterX, meterY, 180, 50);
+
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 13px "Segoe UI", sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText('🔥 CHAOS METER', meterX + 8, meterY + 18);
+
+                // Bar
+                const barX = meterX + 8;
+                const barY = meterY + 26;
+                const barW = 164;
+                const barH = 16;
+                ctx.fillStyle = '#333';
+                ctx.fillRect(barX, barY, barW, barH);
+                const chaosRatio = chaosMeter / MAX_CHAOS;
+                const barGrad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+                barGrad.addColorStop(0, '#4caf50');
+                barGrad.addColorStop(0.5, '#ff9800');
+                barGrad.addColorStop(1, '#f44336');
+                ctx.fillStyle = barGrad;
+                ctx.fillRect(barX, barY, barW * chaosRatio, barH);
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(barX, barY, barW, barH);
+
+                // Combo display
+                if (comboCount > 1 && comboTimer > 0) {
+                    const comboAlpha = Math.min(1, comboTimer / 0.3);
+                    ctx.fillStyle = `rgba(255,215,0,${comboAlpha})`;
+                    ctx.font = 'bold 22px "Segoe UI", sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`COMBO x${comboCount}!`, W / 2, 40);
+                    ctx.textAlign = 'start';
+                }
+
+                // Difficulty
+                ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                ctx.font = '10px "Segoe UI", sans-serif';
+                ctx.textAlign = 'right';
+                ctx.fillText(`Difficulty: Lv.${difficultyLevel}`, W - 20, H - 12);
+                ctx.textAlign = 'start';
+
+                // Instructions
+                if (!gameOver && gameStarted) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+                    ctx.font = '11px "Segoe UI", sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🖱️ Click glowing windows to calm family members | ✨ Catch the Deodorant Bottle!',
+                        W / 2, H - 12);
+                    ctx.textAlign = 'start';
+                }
+            }
+
+            function drawGameOver() {
+                ctx.fillStyle = 'rgba(0,0,0,0.75)';
+                ctx.fillRect(0, 0, W, H);
+
+                ctx.fillStyle = '#ffd700';
+                ctx.font = 'bold 42px "Segoe UI", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('🏠 CHAOS OVERFLOW! 🏠', W / 2, H / 2 - 60);
+
+                ctx.fillStyle = '#fff';
+                ctx.font = '22px "Segoe UI", sans-serif';
+                ctx.fillText(`Final Score: ${score}`, W / 2, H / 2 - 5);
+
+                if (score > highScore) {
+                    ctx.fillStyle = '#ffd700';
+                    ctx.font = 'bold 20px "Segoe UI", sans-serif';
+                    ctx.fillText('🏆 NEW HIGH SCORE! 🏆', W / 2, H / 2 + 30);
+                }
+
+                ctx.fillStyle = '#ff9f43';
+                ctx.font = 'bold 24px "Segoe UI", sans-serif';
+                const pulse = 1 + Math.sin(performance.now() / 1000 * 3) * 0.15;
+                ctx.fillText('Click or Tap to Restart', W / 2, H / 2 + 70 + Math.sin(performance.now() / 1000 * 4) * 5);
+
+                ctx.fillStyle = '#ccc';
+                ctx.font = '14px "Segoe UI", sans-serif';
+                ctx.fillText('The family needs you back in the big house!', W / 2, H / 2 + 105);
+                ctx.textAlign = 'start';
+            }
+
+            function drawTitleScreen() {
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, W, H);
+
+                ctx.fillStyle = '#ffd700';
+                ctx.font = 'bold 36px "Segoe UI", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('🏠 ONE BIG HOUSE 🏠', W / 2, H / 2 - 80);
+
+                ctx.fillStyle = '#fff';
+                ctx.font = '18px "Segoe UI", sans-serif';
+                ctx.fillText('Family Chaos Manager', W / 2, H / 2 - 40);
+
+                const names = [
+                    'Georgina Snapchat12', 'Ricketypoo', 'Kakakalakapoom',
+                    'I\'m a Staircase... (x2)', 'Ryan Roberts x Emilia',
+                    'Lil Cringe Poppinsodainhaler', 'Auntie Merry Christmas 99',
+                    'Openingnope Scoutepo', 'Animaniacs Uncle', 'Lil Hat Gas',
+                    'Granny 3🤑8', 'John Pork', 'Little Bearzy...',
+                    'Yamalbalsybearstinkman', 'Jersey Opened', 'Kate (456)',
+                    'Gonggiplay Dae Ho', 'Katy Perry', 'ChatGPT (19)',
+                    'Yummy Cake Juice 456...', 'Argentina Messi Goofy Pessi...',
+                    'Battle Armor Surrey', 'Ricala', 'Liverpool Kai...',
+                    '2-year-old son 👶', 'Richard Rice Ball 🐀',
+                    'Puskas Award Dog 🐶', 'Fogger Voice Note 💯',
+                ];
+                ctx.fillStyle = '#ff9f43';
+                ctx.font = '11px "Segoe UI", sans-serif';
+                const lineY = H / 2;
+                const cols = 4;
+                const rowH = 18;
+                for (let i = 0; i < Math.min(names.length, 28); i++) {
+                    const col = i % cols;
+                    const row = Math.floor(i / cols);
+                    const nx = W / 2 - 280 + col * 150;
+                    const ny = lineY + row * rowH;
+                    ctx.fillText('• ' + names[i], nx, ny);
+                }
+
+                ctx.fillStyle = '#ffd700';
+                ctx.font = 'bold 22px "Segoe UI", sans-serif';
+                const pulse = 1 + Math.sin(performance.now() / 1000 * 3) * 0.1;
+                ctx.fillText('✨ Click to Start! ✨', W / 2, H / 2 + 150 + Math.sin(performance.now() / 1000 * 4) * 6);
+
+                ctx.fillStyle = '#fff';
+                ctx.font = '13px "Segoe UI", sans-serif';
+                ctx.fillText('All 28+ family members in ONE big house!', W / 2, H / 2 + 180);
+                ctx.fillText('Keep the chaos under control!', W / 2, H / 2 + 198);
+                ctx.textAlign = 'start';
+            }
+
+            // --- Main Game Loop ---
+            function update(dt) {
+                if (gameOver || !gameStarted) return;
+
+                const now = performance.now() / 1000;
+
+                // Update difficulty
+                difficultyLevel = 1 + Math.floor(score / 200);
+                const agitationRate = 0.3 + difficultyLevel * 0.12;
+                const chaosDecayRate = 0.5 + difficultyLevel * 0.05;
+
+                // Update characters
+                for (let i = 0; i < activeCharacters.length; i++) {
+                    const ac = activeCharacters[i];
+                    if (!ac) continue;
+
+                    // Random agitation increase
+                    if (!ac.isAgitated) {
+                        ac.chaosLevel += (Math.random() * agitationRate * dt);
+                        if (ac.chaosLevel > 70 + Math.random() * 25) {
+                            ac.isAgitated = true;
+                            ac.agitationTimer = 3 + Math.random() * 4;
+                            spawnParticles(
+                                windowPositions[i].x + windowPositions[i].w / 2,
+                                windowPositions[i].y + windowPositions[i].h / 2,
+                                '#ff4444', 8
+                            );
+                            playAgitated();
+                        }
+                    } else {
+                        ac.agitationTimer -= dt;
+                        ac.chaosLevel += agitationRate * 2 * dt;
+                        if (ac.agitationTimer <= 0 && ac.chaosLevel > 95) {
+                            // Chaos event - character causes a scene
+                            chaosMeter += 5 + Math.random() * 8;
+                            ac.chaosLevel = 60;
+                            ac.isAgitated = false;
+                            ac.agitationTimer = 0;
+                            shakeAmount = Math.max(shakeAmount, 6);
+                            spawnParticles(
+                                windowPositions[i].x + windowPositions[i].w / 2,
+                                windowPositions[i].y + windowPositions[i].h / 2,
+                                '#ff0000', 20
+                            );
+                            playAgitated();
+                            cycleCharacter(i);
+                        }
+                    }
+                    ac.chaosLevel = Math.min(100, Math.max(0, ac.chaosLevel));
+                }
+
+                // Count agitated members
+                const agitatedCount = activeCharacters.filter(a => a && a.isAgitated).length;
+                chaosMeter += agitatedCount * 0.4 * dt;
+                chaosMeter -= chaosDecayRate * dt * (1 - agitatedCount / Math.max(1, activeCharacters.length));
+                chaosMeter = Math.max(0, Math.min(MAX_CHAOS, chaosMeter));
+
+                // Shake decay
+                shakeAmount = Math.max(0, shakeAmount - 4 * dt);
+
+                // Combo timer
+                if (comboTimer > 0) {
+                    comboTimer -= dt;
+                    if (comboTimer <= 0) comboCount = 0;
+                }
+
+                // Bottle logic
+                if (!bottleActive && Math.random() < 0.015 * dt && chaosMeter > 20) {
+                    activateBottle();
+                }
+                if (bottleActive) {
+                    bottleTimer -= dt;
+                    if (bottleTimer <= 0) {
+                        bottleActive = false;
+                        bottleAlpha = 0;
+                        bottleSparkles = [];
+                    }
+                    if (bottleTimer < 1.5) {
+                        bottleAlpha = bottleTimer / 1.5;
+                    }
+                    // Update sparkles
+                    for (const sp of bottleSparkles) {
+                        sp.x += sp.vx * dt * 60;
+                        sp.y += sp.vy * dt * 60;
+                        sp.life -= dt;
+                    }
+                    bottleSparkles = bottleSparkles.filter(sp => sp.life > 0);
+                    if (bottleActive && Math.random() < 0.3) {
+                        spawnSparkles(bottleX, bottleY, 1);
+                    }
+                }
+
+                // Update particles
+                for (const p of particles) {
+                    p.x += p.vx * dt * 60;
+                    p.y += p.vy * dt * 60;
+                    p.life -= dt;
+                }
+                particles = particles.filter(p => p.life > 0);
+
+                // Update speech bubbles
+                for (const sb of speechBubbles) {
+                    sb.life -= dt;
+                }
+                speechBubbles = speechBubbles.filter(sb => sb.life > 0);
+
+                // Check game over
+                if (chaosMeter >= MAX_CHAOS) {
+                    gameOver = true;
+                    chaosMeter = MAX_CHAOS;
+                    shakeAmount = 15;
+                    playGameOver();
+                    if (score > highScore) {
+                        highScore = score;
+                        localStorage.setItem('oneBigHouseHighScore', highScore);
+                    }
+                }
+
+                // Occasional bottle sparkle cleanup
+                if (bottleSparkles.length > 40) bottleSparkles.splice(0, bottleSparkles.length - 40);
+            }
+
+            function draw() {
+                ctx.clearRect(0, 0, W, H);
+                drawSky();
+                drawGround();
+                drawHouse();
+                drawWindows();
+                drawDeodorantBottle();
+                drawParticles();
+                drawSpeechBubbles();
+                drawUI();
+
+                if (!gameStarted) {
+                    drawTitleScreen();
+                } else if (gameOver) {
+                    drawGameOver();
+                }
+            }
+
+            function gameLoop(timestamp) {
+                const dt = Math.min(0.1, (timestamp - (gameLoop.lastTime || timestamp)) / 1000);
+                gameLoop.lastTime = timestamp;
+                update(dt);
+                draw();
+                requestAnimationFrame(gameLoop);
+            }
+            gameLoop.lastTime = 0;
+
+            // --- Input Handling ---
+            function getCanvasPos(e) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = W / rect.width;
+                const scaleY = H / rect.height;
+                return {
+                    x: (e.clientX - rect.left) * scaleX,
+                    y: (e.clientY - rect.top) * scaleY,
+                };
+            }
+
+            function handleClick(e) {
+                initAudio();
+                const pos = getCanvasPos(e);
+
+                if (!gameStarted) {
+                    resetGame();
+                    gameStarted = true;
+                    lastInteractionTime = performance.now() / 1000;
+                    return;
+                }
+
+                if (gameOver) {
+                    resetGame();
+                    return;
+                }
+
+                // Check bottle click
+                if (bottleActive) {
+                    const dx = pos.x - bottleX;
+                    const dy = pos.y - bottleY;
+                    if (Math.sqrt(dx * dx + dy * dy) < 35) {
+                        collectBottle();
+                        return;
+                    }
+                }
+
+                // Check window clicks
+                for (let i = 0; i < windowPositions.length; i++) {
+                    const wp = windowPositions[i];
+                    if (pos.x >= wp.x - 8 && pos.x <= wp.x + wp.w + 8 &&
+                        pos.y >= wp.y - 8 && pos.y <= wp.y + wp.h + 12) {
+                        calmCharacter(i);
+                        return;
+                    }
+                }
+
+                // Clicked elsewhere - small penalty feedback
+                playBeep(300, 0.05, 'square', 0.02);
+            }
+
+            canvas.addEventListener('click', handleClick);
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                if (e.touches.length > 0) {
+                    handleClick(e.touches[0]);
+                }
+            }, { passive: false });
+
+            // --- Start ---
+            assignCharacters();
+            activeCharacters = [...windowAssignments];
+            gameStarted = false;
+            gameOver = false;
+            score = 0;
+            chaosMeter = 0;
+            requestAnimationFrame(gameLoop);
+
+            console.log('🏠 ONE BIG HOUSE - Family Chaos Manager ready!');
+            console.log('✨ All family members are in the big house!');
+            console.log('👆 Click glowing windows to calm family members');
+            console.log('🧴 Catch the Deodorant Bottle of Them All Times for a big bonus!');
+        })();
+    </script>
+</body>
+</html>
