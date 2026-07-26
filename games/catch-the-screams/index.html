@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Catch the Screams 👻</title>
+    <style>
+        :root {
+            --bg: #0a0a14;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            cursor: none;
+        }
+
+        canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        #ui-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            pointer-events: none;
+            z-index: 10;
+            display: flex;
+            justify-content: space-between;
+            padding: 16px 20px;
+        }
+
+        .ui-panel {
+            background: rgba(10, 10, 30, 0.7);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 16px;
+            padding: 10px 18px;
+            color: #fff;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            text-shadow: 0 0 10px rgba(200, 180, 255, 0.6);
+            transition: all 0.2s ease;
+        }
+
+        .ui-panel .label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            opacity: 0.7;
+        }
+        .ui-panel .value {
+            font-size: 26px;
+            font-weight: 700;
+            line-height: 1;
+        }
+        #score-panel .value {
+            color: #ffd700;
+        }
+        #lives-panel .value {
+            color: #ff6b8a;
+        }
+        #combo-panel {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            opacity: 0;
+            transition: all 0.3s ease;
+            text-align: center;
+            pointer-events: none;
+        }
+        #combo-panel.active {
+            opacity: 1;
+            animation: comboPop 0.5s ease-out;
+        }
+        @keyframes comboPop {
+            0% {
+                transform: translate(-50%, -50%) scale(0.5);
+                opacity: 0;
+            }
+            50% {
+                transform: translate(-50%, -50%) scale(1.3);
+                opacity: 1;
+            }
+            100% {
+                transform: translate(-50%, -50%) scale(1);
+                opacity: 0.9;
+            }
+        }
+
+        #instructions {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 14px;
+            letter-spacing: 1px;
+            pointer-events: none;
+            z-index: 10;
+            text-align: center;
+            transition: opacity 1s ease;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div id="ui-overlay">
+        <div class="ui-panel" id="score-panel">
+            <div class="label">Score</div>
+            <div class="value" id="score-value">0</div>
+        </div>
+        <div class="ui-panel" id="lives-panel">
+            <div class="label">Lives</div>
+            <div class="value" id="lives-value">5</div>
+        </div>
+    </div>
+    <div id="combo-panel" class="ui-panel">
+        <div class="value" id="combo-value" style="color:#ff9d5c;"></div>
+    </div>
+    <div id="instructions">🎤 Move to catch the screams!</div>
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            const scoreEl = document.getElementById('score-value');
+            const livesEl = document.getElementById('lives-value');
+            const comboPanel = document.getElementById('combo-panel');
+            const comboValueEl = document.getElementById('combo-value');
+            const instructionsEl = document.getElementById('instructions');
+
+            let W, H;
+
+            function resize() {
+                W = canvas.width = window.innerWidth;
+                H = canvas.height = window.innerHeight;
+            }
+            resize();
+            window.addEventListener('resize', () => {
+                resize();
+                initStars();
+            });
+
+            // === AUDIO SYSTEM ===
+            let audioCtx = null;
+
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            }
+
+            function playCatchSound() {
+                if (!audioCtx) return;
+                const now = audioCtx.currentTime;
+                // Pleasant chime
+                const osc1 = audioCtx.createOscillator();
+                const osc2 = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc1.type = 'sine';
+                osc1.frequency.setValueAtTime(520, now);
+                osc1.frequency.exponentialRampToValueAtTime(880, now + 0.08);
+                osc1.frequency.exponentialRampToValueAtTime(1040, now + 0.15);
+                osc2.type = 'sine';
+                osc2.frequency.setValueAtTime(660, now);
+                osc2.frequency.exponentialRampToValueAtTime(1100, now + 0.1);
+                gain.gain.setValueAtTime(0.25, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                osc1.connect(gain);
+                osc2.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc1.start(now);
+                osc2.start(now);
+                osc1.stop(now + 0.35);
+                osc2.stop(now + 0.35);
+            }
+
+            function playMissSound() {
+                if (!audioCtx) return;
+                const now = audioCtx.currentTime;
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(200, now);
+                osc.frequency.exponentialRampToValueAtTime(60, now + 0.4);
+                gain.gain.setValueAtTime(0.18, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.setValueAtTime(400, now);
+                filter.frequency.exponentialRampToValueAtTime(100, now + 0.3);
+                osc.connect(filter);
+                filter.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(now);
+                osc.stop(now + 0.55);
+            }
+
+            function playComboSound(comboLevel) {
+                if (!audioCtx) return;
+                const now = audioCtx.currentTime;
+                const baseFreq = 400 + comboLevel * 150;
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(baseFreq, now);
+                osc.frequency.exponentialRampToValueAtTime(baseFreq * 1.8, now + 0.12);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(now);
+                osc.stop(now + 0.3);
+            }
+
+            function playGameOverSound() {
+                if (!audioCtx) return;
+                const now = audioCtx.currentTime;
+                const notes = [300, 240, 190, 140, 90];
+                notes.forEach((freq, i) => {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(freq, now + i * 0.15);
+                    gain.gain.setValueAtTime(0.2, now + i * 0.15);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.15 + 0.3);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(now + i * 0.15);
+                    osc.stop(now + i * 0.15 + 0.35);
+                });
+            }
+
+            // === STARS BACKGROUND ===
+            let stars = [];
+
+            function initStars() {
+                stars = [];
+                const count = Math.floor((W * H) / 1800);
+                for (let i = 0; i < count; i++) {
+                    stars.push({
+                        x: Math.random() * W,
+                        y: Math.random() * H,
+                        r: Math.random() * 1.8 + 0.4,
+                        twinkleSpeed: Math.random() * 0.02 + 0.005,
+                        twinkleOffset: Math.random() * Math.PI * 2,
+                        baseAlpha: Math.random() * 0.7 + 0.3,
+                        hue: 200 + Math.random() * 60,
+                    });
+                }
+            }
+            initStars();
+
+            function drawStars(time) {
+                stars.forEach(s => {
+                    const alpha = s.baseAlpha + Math.sin(time * s.twinkleSpeed + s.twinkleOffset) * 0.3;
+                    const a = Math.max(0.15, Math.min(1, alpha));
+                    ctx.fillStyle = `hsla(${s.hue}, 60%, 80%, ${a})`;
+                    ctx.beginPath();
+                    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Glow for brighter stars
+                    if (s.r > 1.2 && a > 0.6) {
+                        ctx.fillStyle = `hsla(${s.hue}, 80%, 90%, ${a * 0.4})`;
+                        ctx.beginPath();
+                        ctx.arc(s.x, s.y, s.r * 3, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                });
+            }
+
+            // === PARTICLES ===
+            let particles = [];
+
+            function spawnParticles(x, y, count, color, spread, life) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * spread + spread * 0.3;
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        life: life + Math.random() * life * 0.5,
+                        maxLife: life * 1.5,
+                        r: Math.random() * 3 + 1.5,
+                        color: color,
+                    });
+                }
+            }
+
+            function updateParticles(dt) {
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.vy += 30 * dt; // gravity
+                    p.life -= dt;
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+            }
+
+            function drawParticles() {
+                particles.forEach(p => {
+                    const alpha = Math.max(0, p.life / p.maxLife);
+                    const r = p.r * alpha;
+                    ctx.fillStyle = p.color.replace('1)', `${alpha})`).replace('rgb',
+                        'rgba');
+                    ctx.shadowColor = p.color.replace('1)', `${alpha * 0.7})`).replace('rgb', 'rgba');
+                    ctx.shadowBlur = r * 4;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                });
+            }
+
+            // === SCREAM ENTITIES ===
+            let screams = [];
+            const screamThemes = [
+                { name: 'Wail', color: 'rgb(180, 100, 255)', glow: 'rgb(140, 60, 240)', points: 10, speed: 0.7,
+                    size: 28 },
+                { name: 'Shriek', color: 'rgb(255, 90, 130)', glow: 'rgb(240, 40, 80)', points: 20, speed: 1.3,
+                    size: 22 },
+                { name: 'Howl', color: 'rgb(100, 200, 255)', glow: 'rgb(50, 150, 240)', points: 15, speed: 0.9,
+                size: 32 },
+                { name: 'Screech', color: 'rgb(255, 180, 60)', glow: 'rgb(255, 140, 20)', points: 30, speed: 1.6,
+                    size: 18 },
+                { name: 'Golden Scream', color: 'rgb(255, 220, 80)', glow: 'rgb(255, 200, 30)', points: 50, speed: 1.8,
+                    size: 20 },
+            ];
+
+            function spawnScream() {
+                const theme = screamThemes[Math.floor(Math.random() * screamThemes.length)];
+                // Spawn from top or sides, heading generally downward
+                const spawnEdge = Math.random();
+                let x, y, vx, vy;
+                const speed = theme.speed * (60 + Math.random() * 100);
+
+                if (spawnEdge < 0.6) {
+                    // Spawn from top
+                    x = Math.random() * W;
+                    y = -40 - Math.random() * 60;
+                    vx = (Math.random() - 0.5) * speed * 1.2;
+                    vy = speed * (0.5 + Math.random() * 0.7);
+                } else if (spawnEdge < 0.8) {
+                    // Spawn from left
+                    x = -40;
+                    y = Math.random() * H * 0.6;
+                    vx = speed * (0.6 + Math.random() * 0.8);
+                    vy = (Math.random() - 0.3) * speed * 0.8;
+                } else {
+                    // Spawn from right
+                    x = W + 40;
+                    y = Math.random() * H * 0.6;
+                    vx = -speed * (0.6 + Math.random() * 0.8);
+                    vy = (Math.random() - 0.3) * speed * 0.8;
+                }
+
+                screams.push({
+                    x: x,
+                    y: y,
+                    vx: vx,
+                    vy: vy,
+                    theme: theme,
+                    radius: theme.size,
+                    pulsePhase: Math.random() * Math.PI * 2,
+                    rings: [],
+                    ringTimer: 0,
+                    ringInterval: 0.25 + Math.random() * 0.5,
+                    alive: true,
+                    caught: false,
+                    missed: false,
+                    wavySeed: Math.random() * 100,
+                });
+            }
+
+            function updateScreams(dt) {
+                screams.forEach(s => {
+                    if (!s.alive) return;
+                    s.x += s.vx * dt;
+                    s.y += s.vy * dt;
+                    s.pulsePhase += dt * 4;
+                    s.ringTimer += dt;
+
+                    // Spawn expanding rings
+                    if (s.ringTimer >= s.ringInterval) {
+                        s.ringTimer -= s.ringInterval;
+                        s.rings.push({ radius: s.radius * 0.3, opacity: 0.8, maxRadius: s.radius * 3.5 });
+                        if (s.rings.length > 5) s.rings.shift();
+                    }
+
+                    // Update rings
+                    for (let i = s.rings.length - 1; i >= 0; i--) {
+                        s.rings[i].radius += dt * 80;
+                        s.rings[i].opacity -= dt * 1.6;
+                        if (s.rings[i].opacity <= 0 || s.rings[i].radius > s.rings[i].maxRadius) {
+                            s.rings.splice(i, 1);
+                        }
+                    }
+
+                    // Magnetic pull toward catcher when nearby
+                    const dx = catcher.x - s.x;
+                    const dy = catcher.y - s.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const pullRange = catcher.catchRadius * 2.5;
+                    if (dist < pullRange && dist > 0 && s.y < catcher.y) {
+                        const pullStrength = (1 - dist / pullRange) * 200;
+                        s.vx += (dx / dist) * pullStrength * dt;
+                        s.vy += (dy / dist) * pullStrength * dt * 0.5;
+                    }
+
+                    // Check if caught
+                    if (!s.caught && !s.missed && s.y > catcher.y - catcher.catchRadius * 0.7 &&
+                        s.y < catcher.y + catcher.catchRadius * 0.9 &&
+                        Math.abs(s.x - catcher.x) < catcher.catchRadius + s.radius * 0.6) {
+                        s.caught = true;
+                        s.alive = false;
+                        handleCatch(s);
+                    }
+
+                    // Check if missed (passed below catcher)
+                    if (!s.caught && !s.missed && s.y > catcher.y + catcher.catchRadius * 1.5) {
+                        s.missed = true;
+                        s.alive = false;
+                        handleMiss(s);
+                    }
+
+                    // Remove if far off screen
+                    if (s.y > H + 150 || s.y < -200 || s.x > W + 200 || s.x < -200) {
+                        if (!s.missed && !s.caught && s.y > catcher.y + catcher.catchRadius * 1.5) {
+                            s.missed = true;
+                            handleMiss(s);
+                        }
+                        s.alive = false;
+                    }
+                });
+
+                // Clean up
+                screams = screams.filter(s => s.alive || (s.caught || s.missed) && s.rings.length === 0);
+                // Keep recently handled screams briefly for visual cleanup
+                screams = screams.filter(s => {
+                    if (!s.alive && s.rings.length === 0) return false;
+                    return true;
+                });
+                // Actually, let's just remove non-alive screams that have no active rings
+                for (let i = screams.length - 1; i >= 0; i--) {
+                    if (!screams[i].alive && screams[i].rings.length === 0 &&
+                        (screams[i].caught || screams[i].missed)) {
+                        screams.splice(i, 1);
+                    }
+                }
+            }
+
+            function drawScream(s) {
+                if (!s.alive && s.rings.length === 0) return;
+                const { x, y, theme, radius, pulsePhase, rings, wavySeed } = s;
+                const alpha = s.alive ? 1 : Math.max(0, s.rings.reduce((a, r) => Math.max(a, r.opacity), 0));
+
+                if (alpha <= 0.02) return;
+
+                ctx.save();
+                ctx.globalAlpha = alpha;
+
+                // Draw expanding rings
+                rings.forEach(ring => {
+                    const ringAlpha = ring.opacity * alpha;
+                    ctx.strokeStyle = theme.glow.replace('rgb', 'rgba').replace(')', `, ${ringAlpha})`);
+                    ctx.lineWidth = 2.5;
+                    ctx.shadowColor = theme.glow.replace('rgb', 'rgba').replace(')', `, ${ringAlpha * 0.6})`);
+                    ctx.shadowBlur = 8;
+                    ctx.beginPath();
+                    ctx.arc(x, y, ring.radius, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.shadowBlur = 0;
+                });
+
+                // Draw wavy body
+                const pulseAmount = Math.sin(pulsePhase) * 4 + Math.cos(pulsePhase * 1.7) * 2;
+                const baseR = radius + pulseAmount;
+
+                // Outer glow
+                const glowGrad = ctx.createRadialGradient(x, y, baseR * 0.5, x, y, baseR * 2.2);
+                glowGrad.addColorStop(0, theme.glow.replace('rgb', 'rgba').replace(')', ', 0.7)'));
+                glowGrad.addColorStop(0.5, theme.glow.replace('rgb', 'rgba').replace(')', ', 0.3)'));
+                glowGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = glowGrad;
+                ctx.beginPath();
+                ctx.arc(x, y, baseR * 2.2, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Wavy body
+                ctx.fillStyle = theme.color.replace('rgb', 'rgba').replace(')', ', 0.85)');
+                ctx.strokeStyle = theme.glow.replace('rgb', 'rgba').replace(')', ', 0.9)');
+                ctx.lineWidth = 2;
+                ctx.shadowColor = theme.glow;
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                const segments = 40;
+                for (let i = 0; i <= segments; i++) {
+                    const angle = (i / segments) * Math.PI * 2;
+                    const wave = Math.sin(angle * 6 + wavySeed + pulsePhase * 0.8) * 5 +
+                        Math.cos(angle * 4 + wavySeed * 1.3) * 3 +
+                        Math.sin(angle * 8 + pulsePhase) * 2;
+                    const r = baseR + wave;
+                    const px = x + Math.cos(angle) * r;
+                    const py = y + Math.sin(angle) * r;
+                    if (i === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                }
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+
+                // Inner bright core
+                const coreGrad = ctx.createRadialGradient(x, y, 0, x, y, baseR * 0.5);
+                coreGrad.addColorStop(0, 'rgba(255,255,255,0.8)');
+                coreGrad.addColorStop(0.4, theme.color.replace('rgb', 'rgba').replace(')', ', 0.5)'));
+                coreGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = coreGrad;
+                ctx.beginPath();
+                ctx.arc(x, y, baseR * 0.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.restore();
+            }
+
+            // === CATCHER ===
+            const catcher = {
+                x: W / 2,
+                y: H * 0.82,
+                targetX: W / 2,
+                catchRadius: 55,
+                bobPhase: 0,
+                glowIntensity: 0,
+            };
+
+            function updateCatcher(dt) {
+                // Smooth follow
+                const dx = catcher.targetX - catcher.x;
+                catcher.x += dx * Math.min(1, 12 * dt);
+                catcher.bobPhase += dt * 2.5;
+                catcher.y = H * 0.82 + Math.sin(catcher.bobPhase) * 4;
+                // Fade glow
+                catcher.glowIntensity = Math.max(0, catcher.glowIntensity - dt * 3);
+                // Update catch radius based on canvas size
+                catcher.catchRadius = Math.min(W, H) * 0.085;
+                catcher.catchRadius = Math.max(40, Math.min(75, catcher.catchRadius));
+            }
+
+            function drawCatcher() {
+                const { x, y, catchRadius, glowIntensity, bobPhase } = catcher;
+                const r = catchRadius;
+
+                // Catching field glow
+                const fieldAlpha = 0.15 + glowIntensity * 0.4;
+                const fieldGrad = ctx.createRadialGradient(x, y - r * 0.3, r * 0.2, x, y, r * 1.4);
+                fieldGrad.addColorStop(0, `rgba(180,160,255,${fieldAlpha})`);
+                fieldGrad.addColorStop(0.6, `rgba(120,100,220,${fieldAlpha * 0.6})`);
+                fieldGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = fieldGrad;
+                ctx.beginPath();
+                ctx.arc(x, y - r * 0.1, r * 1.4, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Energy wisps rotating
+                const wispCount = 3;
+                for (let i = 0; i < wispCount; i++) {
+                    const wispAngle = bobPhase * 0.7 + (i / wispCount) * Math.PI * 2;
+                    const wispDist = r * 0.75;
+                    const wx = x + Math.cos(wispAngle) * wispDist;
+                    const wy = y - r * 0.2 + Math.sin(wispAngle) * wispDist * 0.6;
+                    ctx.fillStyle = 'rgba(200,180,255,0.5)';
+                    ctx.shadowColor = 'rgba(180,150,255,0.7)';
+                    ctx.shadowBlur = 8;
+                    ctx.beginPath();
+                    ctx.arc(wx, wy, r * 0.15, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                }
+
+                // Outer ring
+                const ringGrad = ctx.createLinearGradient(x, y - r, x, y + r);
+                ringGrad.addColorStop(0, 'rgba(200,170,255,0.9)');
+                ringGrad.addColorStop(0.5, 'rgba(140,100,220,0.7)');
+                ringGrad.addColorStop(1, 'rgba(80,50,160,0.5)');
+                ctx.strokeStyle = ringGrad;
+                ctx.lineWidth = 4;
+                ctx.shadowColor = 'rgba(160,120,255,0.8)';
+                ctx.shadowBlur = 20 + glowIntensity * 15;
+                ctx.beginPath();
+                ctx.arc(x, y, r, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+
+                // Inner ring
+                ctx.strokeStyle = 'rgba(220,200,255,0.7)';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.arc(x, y, r * 0.75, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Center dot
+                const dotGrad = ctx.createRadialGradient(x, y, 0, x, y, r * 0.25);
+                dotGrad.addColorStop(0, 'rgba(255,255,255,0.9)');
+                dotGrad.addColorStop(0.5, 'rgba(200,180,255,0.6)');
+                dotGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = dotGrad;
+                ctx.beginPath();
+                ctx.arc(x, y, r * 0.25, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Top highlight arc
+                ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(x, y, r * 0.9, -Math.PI * 0.7, -Math.PI * 0.3);
+                ctx.stroke();
+            }
+
+            // === GAME STATE ===
+            let score = 0;
+            let lives = 5;
+            let combo = 0;
+            let maxCombo = 0;
+            let gameOver = false;
+            let difficulty = 1;
+            let spawnTimer = 0;
+            let spawnInterval = 1.6;
+            let shakeAmount = 0;
+            let screenFlash = 0;
+            let gameTime = 0;
+
+            function resetGame() {
+                score = 0;
+                lives = 5;
+                combo = 0;
+                maxCombo = 0;
+                gameOver = false;
+                difficulty = 1;
+                spawnTimer = 0;
+                spawnInterval = 1.6;
+                shakeAmount = 0;
+                screenFlash = 0;
+                gameTime = 0;
+                screams = [];
+                particles = [];
+                catcher.x = W / 2;
+                catcher.targetX = W / 2;
+                catcher.glowIntensity = 0;
+                updateUI();
+                comboPanel.classList.remove('active');
+                instructionsEl.style.opacity = '1';
+                setTimeout(() => { instructionsEl.style.opacity = '0'; }, 4000);
+            }
+
+            function updateUI() {
+                scoreEl.textContent = score;
+                livesEl.textContent = '❤️'.repeat(Math.max(0, lives));
+                if (lives <= 0) livesEl.textContent = '💔';
+            }
+
+            function handleCatch(s) {
+                combo++;
+                if (combo > maxCombo) maxCombo = combo;
+                const comboMultiplier = 1 + Math.floor(combo / 5) * 0.5;
+                const points = Math.floor(s.theme.points * comboMultiplier);
+                score += points;
+                catcher.glowIntensity = 1;
+                screenFlash = 0.3;
+                spawnParticles(s.x, s.y, 25, s.theme.glow, 180, 0.7);
+                playCatchSound();
+
+                if (combo > 1 && combo % 5 === 0) {
+                    playComboSound(Math.floor(combo / 5));
+                    comboPanel.classList.remove('active');
+                    void comboPanel.offsetWidth;
+                    comboValueEl.textContent = `${combo}x COMBO!`;
+                    comboPanel.classList.add('active');
+                    setTimeout(() => comboPanel.classList.remove('active'), 1200);
+                }
+
+                updateUI();
+                updateDifficulty();
+            }
+
+            function handleMiss(s) {
+                combo = 0;
+                lives--;
+                shakeAmount = 8;
+                screenFlash = 0.5;
+                spawnParticles(s.x, s.y, 15, 'rgb(255,60,60)', 100, 0.5);
+                playMissSound();
+                updateUI();
+                comboPanel.classList.remove('active');
+
+                if (lives <= 0) {
+                    endGame();
+                }
+            }
+
+            function updateDifficulty() {
+                difficulty = 1 + Math.floor(score / 150);
+                spawnInterval = Math.max(0.35, 1.6 - difficulty * 0.12);
+            }
+
+            function endGame() {
+                gameOver = true;
+                playGameOverSound();
+                spawnParticles(catcher.x, catcher.y, 60, 'rgb(255,100,100)', 250, 1.2);
+                spawnParticles(catcher.x, catcher.y, 40, 'rgb(255,200,100)', 200, 1);
+                shakeAmount = 20;
+                screenFlash = 0.8;
+            }
+
+            function drawGameOverOverlay() {
+                // Dark overlay
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, W, H);
+
+                // Title
+                ctx.fillStyle = '#fff';
+                ctx.shadowColor = 'rgba(255,100,100,0.8)';
+                ctx.shadowBlur = 30;
+                ctx.font = `bold ${Math.min(W*0.07, 48)}px "Segoe UI", system-ui, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER', W / 2, H * 0.35);
+                ctx.shadowBlur = 0;
+
+                // Score
+                ctx.fillStyle = '#ffd700';
+                ctx.font = `bold ${Math.min(W*0.04, 28)}px "Segoe UI", system-ui, sans-serif`;
+                ctx.fillText(`Final Score: ${score}`, W / 2, H * 0.46);
+
+                // Max combo
+                ctx.fillStyle = '#ff9d5c';
+                ctx.font = `${Math.min(W*0.03, 20)}px "Segoe UI", system-ui, sans-serif`;
+                ctx.fillText(`Best Combo: ${maxCombo}x`, W / 2, H * 0.53);
+
+                // Restart button
+                const btnW = Math.min(220, W * 0.4);
+                const btnH = 56;
+                const btnX = W / 2 - btnW / 2;
+                const btnY = H * 0.62;
+                const btnGrad = ctx.createLinearGradient(btnX, btnY, btnX, btnY + btnH);
+                btnGrad.addColorStop(0, 'rgba(140,100,240,0.8)');
+                btnGrad.addColorStop(1, 'rgba(80,40,180,0.8)');
+                ctx.fillStyle = btnGrad;
+                ctx.strokeStyle = 'rgba(200,180,255,0.8)';
+                ctx.lineWidth = 3;
+                ctx.shadowColor = 'rgba(150,120,255,0.6)';
+                ctx.shadowBlur = 20;
+                ctx.beginPath();
+                ctx.roundRect(btnX, btnY, btnW, btnH, 28);
+                ctx.fill();
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+
+                ctx.fillStyle = '#fff';
+                ctx.font = `bold ${Math.min(W*0.035, 22)}px "Segoe UI", system-ui, sans-serif`;
+                ctx.fillText('🔄 Play Again', W / 2, btnY + btnH / 2 + 7);
+
+                // Store button bounds for click detection
+                catcher._restartBtn = { x: btnX, y: btnY, w: btnW, h: btnH };
+            }
+
+            // === INPUT ===
+            let mouseActive = false;
+
+            function handlePointer(x, y) {
+                initAudio();
+                if (gameOver) {
+                    const btn = catcher._restartBtn;
+                    if (btn && x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
+                        resetGame();
+                    }
+                    return;
+                }
+                mouseActive = true;
+                catcher.targetX = Math.max(catcher.catchRadius, Math.min(W - catcher.catchRadius, x));
+            }
+
+            canvas.addEventListener('mousemove', (e) => {
+                handlePointer(e.clientX, e.clientY);
+            });
+            canvas.addEventListener('mousedown', (e) => {
+                handlePointer(e.clientX, e.clientY);
+            });
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                handlePointer(e.touches[0].clientX, e.touches[0].clientY);
+            }, { passive: false });
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                handlePointer(e.touches[0].clientX, e.touches[0].clientY);
+            }, { passive: false });
+            canvas.addEventListener('click', (e) => {
+                initAudio();
+                if (gameOver) {
+                    handlePointer(e.clientX, e.clientY);
+                }
+            });
+
+            // Keyboard
+            const keys = {};
+            window.addEventListener('keydown', (e) => {
+                keys[e.key] = true;
+                initAudio();
+                if (gameOver && (e.key === ' ' || e.key === 'Enter' || e.key === 'r')) {
+                    resetGame();
+                }
+            });
+            window.addEventListener('keyup', (e) => {
+                keys[e.key] = false;
+            });
+
+            function handleKeyboard(dt) {
+                if (gameOver) return;
+                const speed = 450;
+                if (keys['ArrowLeft'] || keys['a'] || keys['A']) {
+                    catcher.targetX -= speed * dt;
+                    mouseActive = false;
+                }
+                if (keys['ArrowRight'] || keys['d'] || keys['D']) {
+                    catcher.targetX += speed * dt;
+                    mouseActive = false;
+                }
+                catcher.targetX = Math.max(catcher.catchRadius, Math.min(W - catcher.catchRadius, catcher.targetX));
+            }
+
+            // === GAME LOOP ===
+            let lastTime = performance.now();
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.2) dt = 0.2; // Cap to avoid jumps
+                lastTime = timestamp;
+
+                handleKeyboard(dt);
+
+                if (!gameOver) {
+                    gameTime += dt;
+                    updateCatcher(dt);
+
+                    // Spawn screams
+                    spawnTimer += dt;
+                    if (spawnTimer >= spawnInterval) {
+                        spawnTimer -= spawnInterval;
+                        spawnScream();
+                        // Occasionally spawn extra
+                        if (Math.random() < 0.25 && difficulty > 2) {
+                            setTimeout(() => { if (!gameOver) spawnScream(); }, 150 + Math.random() * 300);
+                        }
+                    }
+
+                    updateScreams(dt);
+                    updateParticles(dt);
+
+                    // Decay shake and flash
+                    shakeAmount = Math.max(0, shakeAmount - dt * 30);
+                    screenFlash = Math.max(0, screenFlash - dt * 3);
+
+                    // Update difficulty
+                    updateDifficulty();
+                } else {
+                    updateParticles(dt);
+                    shakeAmount = Math.max(0, shakeAmount - dt * 15);
+                    screenFlash = Math.max(0, screenFlash - dt * 1.5);
+                }
+
+                // === RENDER ===
+                ctx.clearRect(0, 0, W, H);
+
+                // Screen shake
+                let sx = 0,
+                    sy = 0;
+                if (shakeAmount > 0.1) {
+                    sx = (Math.random() - 0.5) * shakeAmount * 2;
+                    sy = (Math.random() - 0.5) * shakeAmount * 2;
+                }
+                ctx.save();
+                ctx.translate(sx, sy);
+
+                // Background gradient
+                const bgGrad = ctx.createRadialGradient(W / 2, H * 0.3, 0, W / 2, H, Math.max(W, H));
+                bgGrad.addColorStop(0, '#1a1a3a');
+                bgGrad.addColorStop(0.5, '#0d0d22');
+                bgGrad.addColorStop(1, '#050510');
+                ctx.fillStyle = bgGrad;
+                ctx.fillRect(-20, -20, W + 40, H + 40);
+
+                // Stars
+                drawStars(gameTime);
+
+                // Draw screams
+                screams.forEach(s => drawScream(s));
+
+                // Draw catcher
+                if (!gameOver) {
+                    drawCatcher();
+                }
+
+                // Draw particles
+                drawParticles();
+
+                // Screen flash
+                if (screenFlash > 0.01) {
+                    ctx.fillStyle = `rgba(255,200,200,${screenFlash * 0.3})`;
+                    ctx.fillRect(-20, -20, W + 40, H + 40);
+                }
+
+                ctx.restore();
+
+                // Game over overlay (not affected by shake)
+                if (gameOver) {
+                    drawGameOverOverlay();
+                }
+
+                // Vignette
+                const vignetteGrad = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.55, W / 2, H / 2, Math.max(W,
+                    H) * 0.75);
+                vignetteGrad.addColorStop(0, 'rgba(0,0,0,0)');
+                vignetteGrad.addColorStop(1, 'rgba(0,0,0,0.55)');
+                ctx.fillStyle = vignetteGrad;
+                ctx.fillRect(0, 0, W, H);
+
+                requestAnimationFrame(gameLoop);
+            }
+
+            // === INITIALIZATION ===
+            function init() {
+                resize();
+                initStars();
+                catcher.x = W / 2;
+                catcher.targetX = W / 2;
+                catcher.y = H * 0.82;
+                catcher.catchRadius = Math.min(W, H) * 0.085;
+                catcher.catchRadius = Math.max(40, Math.min(75, catcher.catchRadius));
+                updateUI();
+                instructionsEl.style.opacity = '1';
+                setTimeout(() => { instructionsEl.style.opacity = '0'; }, 5000);
+                requestAnimationFrame(gameLoop);
+            }
+
+            // Handle window resize
+            window.addEventListener('resize', () => {
+                resize();
+                initStars();
+                catcher.y = H * 0.82;
+                catcher.catchRadius = Math.min(W, H) * 0.085;
+                catcher.catchRadius = Math.max(40, Math.min(75, catcher.catchRadius));
+                catcher.targetX = Math.max(catcher.catchRadius, Math.min(W - catcher.catchRadius, catcher.targetX));
+                catcher.x = catcher.targetX;
+            });
+
+            init();
+        })();
+    </script>
+</body>
+</html>
