@@ -763,5 +763,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-07-26T22:40:51.367Z",
     "updatedAt": "2026-07-26T22:40:51.367Z"
+  },
+  {
+    "slug": "oswald-stepping-reduced",
+    "title": "Oswald Stepping: Reduced",
+    "description": "oswald stepping reduced",
+    "creator": "kaipie16",
+    "model": "deepseek/deepseek-v4-flash-0731",
+    "createdAt": "2026-08-04T22:06:15.330Z",
+    "updatedAt": "2026-08-04T22:06:15.330Z"
   }
 ]
