@@ -1,0 +1,1191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Oswald Stepping: Reduced</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #0a0e1a;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        #ui {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        #hud {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            display: flex;
+            justify-content: space-between;
+            pointer-events: none;
+            text-shadow: 0 2px 6px rgba(0,0,0,0.8);
+            color: #fff;
+            font-size: 18px;
+            font-weight: bold;
+        }
+        #hud .score {
+            color: #ffd966;
+        }
+        #hud .time {
+            color: #9be7ff;
+        }
+        #dpad {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            display: grid;
+            grid-template-areas: " . up . " "left . right" " . down . ";
+            grid-template-columns: 60px 60px 60px;
+            grid-template-rows: 60px 60px 60px;
+            pointer-events: none;
+        }
+        .dbtn {
+            width: 56px;
+            height: 56px;
+            border-radius: 14px;
+            background: rgba(255,255,255,0.15);
+            border: 2px solid rgba(255,255,255,0.3);
+            color: rgba(255,255,255,0.8);
+            font-size: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: auto;
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            touch-action: none;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+            transition: transform 0.05s, background 0.1s;
+        }
+        .dbtn:active {
+            background: rgba(255,255,255,0.3);
+            transform: scale(0.92);
+        }
+        #dpad .up { grid-area: up; }
+        #dpad .left { grid-area: left; }
+        #dpad .right { grid-area: right; }
+        #dpad .down { grid-area: down; }
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(5, 8, 18, 0.8);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            pointer-events: auto;
+            text-align: center;
+            color: #fff;
+            z-index: 10;
+        }
+        .overlay.hidden {
+            display: none;
+        }
+        .overlay h1 {
+            font-size: 44px;
+            letter-spacing: 4px;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #ffb347, #ff5e62);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: none;
+        }
+        .overlay p {
+            font-size: 16px;
+            margin: 8px 30px;
+            line-height: 1.6;
+            color: #c8d6ef;
+            max-width: 380px;
+        }
+        .overlay button {
+            margin-top: 20px;
+            padding: 14px 42px;
+            font-size: 18px;
+            font-weight: bold;
+            border: none;
+            border-radius: 40px;
+            background: linear-gradient(135deg, #ffb347, #ff5e62);
+            color: #fff;
+            cursor: pointer;
+            box-shadow: 0 6px 20px rgba(255, 94, 98, 0.4);
+            transition: transform 0.15s, box-shadow 0.15s;
+            pointer-events: auto;
+        }
+        .overlay button:hover {
+            transform: scale(1.06);
+            box-shadow: 0 8px 26px rgba(255, 94, 98, 0.6);
+        }
+        .overlay .small {
+            font-size: 13px;
+            margin-top: 14px;
+            color: #7e8bb6;
+        }
+        #pauseBtn {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            width: 44px;
+            height: 44px;
+            border-radius: 22px;
+            background: rgba(255,255,255,0.15);
+            border: 2px solid rgba(255,255,255,0.3);
+            color: #fff;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: auto;
+            backdrop-filter: blur(4px);
+            z-index: 5;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+        }
+        @media (max-width: 600px) {
+            #hud { font-size: 14px; }
+            .overlay h1 { font-size: 28px; }
+            .dbtn { width: 48px; height: 48px; border-radius: 12px; }
+            #dpad { grid-template-columns: 52px 52px 52px; grid-template-rows: 52px 52px 52px; }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <div id="ui">
+        <div id="hud">
+            <span class="score">⭐ <span id="scoreVal">0</span></span>
+            <span class="time">⏱ <span id="timeVal">0.0</span></span>
+        </div>
+        <div id="dpad">
+            <button class="dbtn up" data-dir="up">▲</button>
+            <button class="dbtn left" data-dir="left">◀</button>
+            <button class="dbtn right" data-dir="right">▶</button>
+            <button class="dbtn down" data-dir="down">▼</button>
+        </div>
+        <div id="pauseBtn">⏸</div>
+        <div id="menu" class="overlay">
+            <h1>OSWALD STEPPING: REDUCED</h1>
+            <p>Guide Oswald across the crumbling platform!<br>
+                The world is shrinking — don't get left behind.<br>
+                <b>Arrows / WASD</b> or <b>Swipe / D-pad</b> to move one tile.<br>
+                Avoid cracked tiles. Collect stars!</p>
+            <button id="startBtn">▶ START</button>
+            <p class="small">Best: <span id="bestVal">0</span></p>
+        </div>
+        <div id="gameover" class="overlay hidden">
+            <h1 style="background:linear-gradient(135deg,#ff6b6b,#c5396e);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;">OSWALD FELL!</h1>
+            <p>You collected <b><span id="finalScore">0</span></b> stars.<br>Survived <b><span id="finalTime">0</span></b> seconds.</p>
+            <p class="small">Best: <span id="bestFinal">0</span></p>
+            <button id="restartBtn">↻ RESTART</button>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            'use strict';
+
+            // ---------- Canvas setup ----------
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+            let W = window.innerWidth;
+            let H = window.innerHeight;
+            const DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+            function resize() {
+                W = window.innerWidth;
+                H = window.innerHeight;
+                canvas.width = Math.floor(W * DPR);
+                canvas.height = Math.floor(H * DPR);
+                canvas.style.width = W + 'px';
+                canvas.style.height = H + 'px';
+                ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            // ---------- Game state ----------
+            const GameState = {
+                MENU: 'menu',
+                PLAYING: 'playing',
+                PAUSED: 'paused',
+                FALLING: 'falling',
+                GAMEOVER: 'gameover'
+            };
+            let state = GameState.MENU;
+
+            const half = 6; // initial half-length of grid
+            const BOUND = half; // after shrink min is -BOUND, max is BOUND
+
+            let minX, maxX, minY, maxY;
+            let oswaldX, oswaldY; // current tile coords
+            let targetX, targetY; // moving target (valid when moving==true)
+            let moveStartX, moveStartY;
+            let moveProgress = 1; // 0..1, 1 means not moving
+            const MOVE_SPEED = 6.5; // tiles per second, interpolation speed
+
+            let unstableTiles = new Map(); // key "x,y" -> {ttl, total}
+            let gemX = null,
+                gemY = null;
+            let score = 0;
+            let timeAlive = 0;
+            let bestScore = 0;
+
+            let shrinkTimer = 6.0;
+            let shrinkTimerMax = 6.0;
+            let spawnTimer = 2.5;
+            let spawnTimerMax = 2.5;
+
+            // visual / animation
+            let idleTimer = 0;
+            let deathAnim = 0;
+            let particles = [];
+            let backgroundStars = [];
+
+            // ---------- DOM elements ----------
+            const scoreValEl = document.getElementById('scoreVal');
+            const timeValEl = document.getElementById('timeVal');
+            const menuEl = document.getElementById('menu');
+            const gameoverEl = document.getElementById('gameover');
+            const startBtn = document.getElementById('startBtn');
+            const restartBtn = document.getElementById('restartBtn');
+            const pauseBtn = document.getElementById('pauseBtn');
+
+            // ---------- High score ----------
+            try {
+                const stored = localStorage.getItem('oswaldBest');
+                if (stored) bestScore = parseInt(stored, 10) || 0;
+            } catch (e) { /* ignore */ }
+
+            function saveBest() {
+                try {
+                    localStorage.setItem('oswaldBest', String(bestScore));
+                } catch (e) { /* ignore */ }
+            }
+
+            // ---------- Audio ----------
+            let audioCtx = null;
+            function ensureAudio() {
+                if (!audioCtx) {
+                    try {
+                        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    } catch (e) {
+                        audioCtx = null;
+                    }
+                }
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    audioCtx.resume().catch(() => {});
+                }
+            }
+
+            function playTone(freq, dur, type = 'sine', vol = 0.2, when = 0) {
+                if (!audioCtx) return;
+                const t0 = audioCtx.currentTime + when;
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = type;
+                osc.frequency.setValueAtTime(freq, t0);
+                gain.gain.setValueAtTime(vol, t0);
+                gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(t0);
+                osc.stop(t0 + dur);
+            }
+
+            function sfxStep() {
+                playTone(180 + Math.random() * 60, 0.08, 'triangle', 0.12);
+            }
+            function sfxGem() {
+                playTone(660, 0.15, 'sine', 0.2);
+                playTone(990, 0.2, 'sine', 0.15, 0.1);
+            }
+            function sfxBreak() {
+                playTone(80, 0.3, 'sawtooth', 0.12);
+            }
+            function sfxFall() {
+                playTone(300, 0.5, 'sawtooth', 0.18);
+                playTone(180, 0.6, 'square', 0.12, 0.1);
+            }
+
+            // ---------- Utility ----------
+            function tileKey(x, y) {
+                return x + ',' + y;
+            }
+
+            function inBounds(x, y) {
+                return x >= minX && x <= maxX && y >= minY && y <= maxY;
+            }
+
+            function isVoid(x, y) {
+                return !inBounds(x, y) || unstableTiles.has(tileKey(x, y));
+            }
+
+            function isUnstable(x, y) {
+                return unstableTiles.has(tileKey(x, y));
+            }
+
+            function stableTileAvailable(x, y) {
+                if (!inBounds(x, y)) return false;
+                if (isUnstable(x, y)) return false;
+                if (x === oswaldX && y === oswaldY) return false;
+                if (x === gemX && y === gemY) return false;
+                return true;
+            }
+
+            // ---------- Game setup ----------
+            function resetGame() {
+                minX = -half;
+                maxX = half;
+                minY = -half;
+                maxY = half;
+                oswaldX = 0;
+                oswaldY = 0;
+                targetX = 0;
+                targetY = 0;
+                moveStartX = 0;
+                moveStartY = 0;
+                moveProgress = 1;
+                unstableTiles.clear();
+                gemX = null;
+                gemY = null;
+                score = 0;
+                timeAlive = 0;
+                shrinkTimer = 6.0;
+                shrinkTimerMax = 6.0;
+                spawnTimer = 2.5;
+                spawnTimerMax = 2.5;
+                particles = [];
+                deathAnim = 0;
+                state = GameState.PLAYING;
+
+                updatHud();
+                spawnGem();
+            }
+
+            function updatHud() {
+                scoreValEl.textContent = score;
+                timeValEl.textContent = timeAlive.toFixed(1);
+            }
+
+            // ---------- Spawning ----------
+            function spawnGem() {
+                let attempts = 0;
+                let bestX = -1000,
+                    bestY = -1000;
+                while (attempts < 200) {
+                    const x = Math.floor(Math.random() * (maxX - minX + 1)) + minX;
+                    const y = Math.floor(Math.random() * (maxY - minY + 1)) + minY;
+                    if (stableTileAvailable(x, y)) {
+                        bestX = x;
+                        bestY = y;
+                        break;
+                    }
+                    attempts++;
+                }
+                if (bestX > -1000) {
+                    gemX = bestX;
+                    gemY = bestY;
+                }
+            }
+
+            function spawnUnstable() {
+                let attempts = 0;
+                while (attempts < 200) {
+                    const x = Math.floor(Math.random() * (maxX - minX + 1)) + minX;
+                    const y = Math.floor(Math.random() * (maxY - minY + 1)) + minY;
+                    if (x === oswaldX && y === oswaldY) { attempts++; continue; }
+                    if (x === gemX && y === gemY) { attempts++; continue; }
+                    if (!isUnstable(x, y) && inBounds(x, y)) {
+                        const ttl = 1.4 + Math.random() * 0.9;
+                        unstableTiles.set(tileKey(x, y), { ttl: ttl, total: ttl });
+                        sfxBreak();
+                        // small shake particles
+                        for (let i = 0; i < 6; i++) {
+                            particles.push({
+                                x: tileCenterX(x),
+                                y: tileCenterY(y),
+                                vx: (Math.random() - 0.5) * 80,
+                                vy: -Math.random() * 60 - 20,
+                                life: 0.4,
+                                maxLife: 0.4,
+                                size: 3 + Math.random() * 3,
+                                color: `hsl(${30 + Math.random() * 20}, 90%, 60%)`
+                            });
+                        }
+                        return;
+                    }
+                    attempts++;
+                }
+            }
+
+            // ---------- Coordinates ----------
+            let tileSize = 40;
+            let originX = 0,
+                originY = 0;
+
+            function recalcLayout() {
+                tileSize = Math.max(22, Math.floor(Math.min(W, H) / (2 * half + 4)));
+                // fit on small screens
+                tileSize = Math.min(tileSize, 64);
+                originX = (W - (2 * half + 1) * tileSize) / 2;
+                originY = (H - (2 * half + 1) * tileSize) / 2;
+            }
+            recalcLayout();
+            window.addEventListener('resize', recalcLayout);
+
+            function tileCenterX(x) {
+                return originX + (x + half + 0.5) * tileSize;
+            }
+            function tileCenterY(y) {
+                return originY + (y + half + 0.5) * tileSize;
+            }
+
+            // ---------- Movement ----------
+            function tryMove(dx, dy) {
+                if (state !== GameState.PLAYING) return;
+                if (moveProgress < 1) return;
+
+                const nx = oswaldX + dx;
+                const ny = oswaldY + dy;
+
+                // immediately outside bounds or on broken tile -> fall
+                if (!inBounds(nx, ny) || isUnstable(nx, ny) && unstableTiles.get(tileKey(nx, ny)).ttl <= 0) {
+                    // If tile is unstable but still exists, you can step onto it (risky)
+                }
+
+                // We'll allow stepping onto unstable tile if it's still there (ttl > 0)
+                if (!inBounds(nx, ny)) {
+                    startFalling();
+                    return;
+                }
+                // If unstable tile is already expired -> void
+                if (unstableTiles.has(tileKey(nx, ny))) {
+                    const un = unstableTiles.get(tileKey(nx, ny));
+                    if (un.ttl <= 0) {
+                        startFalling();
+                        return;
+                    }
+                }
+
+                moveStartX = oswaldX;
+                moveStartY = oswaldY;
+                targetX = nx;
+                targetY = ny;
+                moveProgress = 0;
+                sfxStep();
+            }
+
+            function startFalling() {
+                if (state === GameState.FALLING || state === GameState.GAMEOVER) return;
+                state = GameState.FALLING;
+                deathAnim = 0;
+                sfxFall();
+                // save best
+                if (score > bestScore) {
+                    bestScore = score;
+                    saveBest();
+                }
+            }
+
+            function gameOver() {
+                state = GameState.GAMEOVER;
+                menuEl.classList.add('hidden');
+                gameoverEl.classList.remove('hidden');
+                document.getElementById('finalScore').textContent = score;
+                document.getElementById('finalTime').textContent = timeAlive.toFixed(1);
+                document.getElementById('bestFinal').textContent = bestScore;
+            }
+
+            // ---------- Shrink ----------
+            function shrinkWorld() {
+                if (minX >= maxX - 1) return; // don't shrink below 3x3
+                minX++; maxX--; minY++; maxY--;
+
+                // remove unstable outside
+                for (const key of unstableTiles.keys()) {
+                    const [x, y] = key.split(',').map(Number);
+                    if (!inBounds(x, y)) {
+                        unstableTiles.delete(key);
+                    }
+                }
+
+                // remove gem if outside
+                if (gemX !== null && !inBounds(gemX, gemY)) {
+                    gemX = gemY = null;
+                }
+
+                // if Oswald outside -> fall
+                if (!inBounds(oswaldX, oswaldY) || isVoid(oswaldX, oswaldY)) {
+                    startFalling();
+                }
+
+                // Adjust spawn timers faster
+                shrinkTimerMax = Math.max(1.2, shrinkTimerMax * 0.9);
+                shrinkTimer = shrinkTimerMax;
+
+                // effects
+                for (let i = 0; i < 12; i++) {
+                    particles.push({
+                        x: tileCenterX(minX - 1),
+                        y: tileCenterY(minY - 1),
+                        vx: (Math.random() - 0.5) * 100,
+                        vy: (Math.random() - 0.5) * 100,
+                        life: 0.5,
+                        maxLife: 0.5,
+                        size: 4 + Math.random() * 4,
+                        color: '#ff5e62'
+                    });
+                }
+            }
+
+            // ---------- Capture input ----------
+            function handleDirection(dx, dy) {
+                if (state === GameState.MENU || state === GameState.GAMEOVER) return;
+                if (state === GameState.PLAYING) {
+                    tryMove(dx, dy);
+                }
+            }
+
+            window.addEventListener('keydown', (e) => {
+                const key = e.key;
+                if (state === GameState.MENU) {
+                    if (key === 'Enter' || key === ' ') {
+                        e.preventDefault();
+                        startGame();
+                    }
+                    return;
+                }
+                if (state === GameState.GAMEOVER) {
+                    if (key === 'Enter' || key === ' ' || key === 'r' || key === 'R') {
+                        e.preventDefault();
+                        startGame();
+                    }
+                    return;
+                }
+                if (key === 'ArrowUp' || key === 'w' || key === 'W') { e.preventDefault(); handleDirection(0, -1); }
+                if (key === 'ArrowDown' || key === 's' || key === 'S') { e.preventDefault(); handleDirection(0, 1); }
+                if (key === 'ArrowLeft' || key === 'a' || key === 'A') { e.preventDefault(); handleDirection(-1, 0); }
+                if (key === 'ArrowRight' || key === 'd' || key === 'D') { e.preventDefault(); handleDirection(1, 0); }
+                if (key === 'p' || key === 'P' || key === 'Escape') {
+                    if (state === GameState.PLAYING) {
+                        state = GameState.PAUSED;
+                    } else if (state === GameState.PAUSED) {
+                        state = GameState.PLAYING;
+                    }
+                }
+            });
+
+            // Touch / swipe on canvas
+            let touchStartX = 0,
+                touchStartY = 0,
+                touchStartTime = 0;
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                ensureAudio();
+                const t = e.changedTouches[0];
+                touchStartX = t.clientX;
+                touchStartY = t.clientY;
+                touchStartTime = performance.now();
+            }, { passive: false });
+
+            canvas.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                const t = e.changedTouches[0];
+                const dx = t.clientX - touchStartX;
+                const dy = t.clientY - touchStartY;
+                const dt = performance.now() - touchStartTime;
+                if (dt < 200 && Math.abs(dx) < 20 && Math.abs(dy) < 20) {
+                    // treat as tap -> maybe nothing or start
+                    if (state === GameState.MENU) {
+                        startGame();
+                        return;
+                    }
+                    if (state === GameState.GAMEOVER) {
+                        startGame();
+                        return;
+                    }
+                    return;
+                }
+                if (Math.abs(dx) < 25 && Math.abs(dy) < 25) return;
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    handleDirection(dx > 0 ? 1 : -1, 0);
+                } else {
+                    handleDirection(0, dy > 0 ? 1 : -1);
+                }
+            }, { passive: false });
+
+            // D-pad buttons
+            document.querySelectorAll('.dbtn').forEach(btn => {
+                btn.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    ensureAudio();
+                    const dir = btn.dataset.dir;
+                    if (dir === 'up') handleDirection(0, -1);
+                    if (dir === 'down') handleDirection(0, 1);
+                    if (dir === 'left') handleDirection(-1, 0);
+                    if (dir === 'right') handleDirection(1, 0);
+                }, { passive: false });
+                btn.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    ensureAudio();
+                    const dir = btn.dataset.dir;
+                    if (dir === 'up') handleDirection(0, -1);
+                    if (dir === 'down') handleDirection(0, 1);
+                    if (dir === 'left') handleDirection(-1, 0);
+                    if (dir === 'right') handleDirection(1, 0);
+                });
+            });
+
+            // Start / restart buttons
+            function startGame() {
+                ensureAudio();
+                menuEl.classList.add('hidden');
+                gameoverEl.classList.add('hidden');
+                resetGame();
+                recalcLayout();
+            }
+            startBtn.addEventListener('click', startGame);
+            restartBtn.addEventListener('click', startGame);
+
+            pauseBtn.addEventListener('click', () => {
+                ensureAudio();
+                if (state === GameState.PLAYING) state = GameState.PAUSED;
+                else if (state === GameState.PAUSED) state = GameState.PLAYING;
+            });
+
+            // ---------- Background stars ----------
+            function initStars() {
+                backgroundStars = [];
+                for (let i = 0; i < 80; i++) {
+                    backgroundStars.push({
+                        x: Math.random(),
+                        y: Math.random(),
+                        r: Math.random() * 1.6 + 0.2,
+                        tw: Math.random() * Math.PI * 2,
+                        speed: 0.5 + Math.random() * 2
+                    });
+                }
+            }
+            initStars();
+
+            // ---------- Particles ----------
+            function updateParticles(dt) {
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.life -= dt;
+                    if (p.life <= 0) {
+                        particles.splice(i, 1);
+                        continue;
+                    }
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.vy += 200 * dt;
+                }
+            }
+
+            // ---------- Update ----------
+            function update(dt) {
+                if (state === GameState.PAUSED || state === GameState.MENU || state === GameState.GAMEOVER) {
+                    if (state === GameState.PAUSED) {
+                        updateParticles(dt);
+                    }
+                    return;
+                }
+
+                if (state === GameState.FALLING) {
+                    deathAnim += dt;
+                    updateParticles(dt);
+                    if (deathAnim > 0.8) {
+                        gameOver();
+                    }
+                    return;
+                }
+
+                // Playing state
+                timeAlive += dt;
+                idleTimer += dt;
+                updatHud();
+
+                // movement interpolation
+                if (moveProgress < 1) {
+                    moveProgress += dt * MOVE_SPEED;
+                    if (moveProgress >= 1) {
+                        moveProgress = 1;
+                        oswaldX = targetX;
+                        oswaldY = targetY;
+
+                        // check if we landed on void
+                        if (isVoid(oswaldX, oswaldY)) {
+                            startFalling();
+                            return;
+                        }
+
+                        // collect gem
+                        if (gemX !== null && gemX === oswaldX && gemY === oswaldY) {
+                            score += 1;
+                            sfxGem();
+                            // sparkles
+                            for (let i = 0; i < 10; i++) {
+                                particles.push({
+                                    x: tileCenterX(oswaldX),
+                                    y: tileCenterY(oswaldY),
+                                    vx: (Math.random() - 0.5) * 180,
+                                    vy: (Math.random() - 0.5) * 180,
+                                    life: 0.5 + Math.random() * 0.4,
+                                    maxLife: 0.9,
+                                    size: 2 + Math.random() * 4,
+                                    color: `hsl(${45 + Math.random() * 20}, 100%, 70%)`
+                                });
+                            }
+                            gemX = gemY = null;
+                            spawnGem();
+                            if (score > bestScore) {
+                                bestScore = score;
+                                saveBest();
+                            }
+                        }
+                    } else {
+                        // moving, check if target became unstable while moving
+                        // if it breaks exactly now, handle: we'll check on arrival.
+                    }
+                }
+
+                // Unstable tile timers
+                for (const [key, tile] of unstableTiles) {
+                    const wasAlive = tile.ttl > 0;
+                    tile.ttl -= dt;
+                    const isAlive = tile.ttl > 0;
+                    if (wasAlive && !isAlive) {
+                        // tile just broke
+                        const [x, y] = key.split(',').map(Number);
+                        // if Oswald on it -> fall
+                        if (oswaldX === x && oswaldY === y) {
+                            startFalling();
+                        }
+                        // particles burst
+                        for (let i = 0; i < 8; i++) {
+                            particles.push({
+                                x: tileCenterX(x),
+                                y: tileCenterY(y),
+                                vx: (Math.random() - 0.5) * 140,
+                                vy: -Math.random() * 80 - 20,
+                                life: 0.4,
+                                maxLife: 0.4,
+                                size: 4 + Math.random() * 4,
+                                color: '#a4553a'
+                            });
+                        }
+                    }
+                }
+                // remove expired unstable
+                for (const [key, tile] of unstableTiles) {
+                    if (tile.ttl <= 0) {
+                        unstableTiles.delete(key);
+                    }
+                }
+
+                // Spawn unstable tiles
+                spawnTimer -= dt;
+                if (spawnTimer <= 0) {
+                    spawnUnstable();
+                    spawnTimer = Math.max(0.8, spawnTimerMax * 0.92);
+                }
+
+                // Shrink timer
+                const shrinkWarning = shrinkTimer < 1.0;
+                shrinkTimer -= dt;
+                if (shrinkTimer <= 0) {
+                    shrinkWorld();
+                    if (state !== GameState.PLAYING) return;
+                }
+
+                // auto spawn gem if missing
+                if (gemX === null) {
+                    spawnGem();
+                }
+
+                updateParticles(dt);
+                // idle star twinkle
+                for (const s of backgroundStars) {
+                    s.tw += dt * s.speed;
+                }
+            }
+
+            // ---------- Render ----------
+            function render() {
+                ctx.clearRect(0, 0, W, H);
+
+                // Background gradient
+                const grad = ctx.createLinearGradient(0, 0, W, H);
+                grad.addColorStop(0, '#0b1026');
+                grad.addColorStop(0.5, '#171a38');
+                grad.addColorStop(1, '#0a0e1a');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, W, H);
+
+                // Stars
+                for (const s of backgroundStars) {
+                    const alpha = 0.4 + 0.6 * Math.sin(s.tw);
+                    ctx.globalAlpha = alpha * 0.7;
+                    ctx.fillStyle = '#dbe9ff';
+                    ctx.beginPath();
+                    ctx.arc(s.x * W, s.y * H, s.r, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+
+                // Bottom fog / glow
+                ctx.globalAlpha = 0.15;
+                ctx.fillStyle = '#0a0b18';
+                ctx.beginPath();
+                ctx.arc(W / 2, H / 2, Math.min(W, H) * 0.7, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+
+                // Draw tiles
+                for (let x = minX - 1; x <= maxX + 1; x++) {
+                    for (let y = minY - 1; y <= maxY + 1; y++) {
+                        if (!inBounds(x, y)) {
+                            // void area: draw faint grid remnants?
+                            continue;
+                        }
+                        const cx = tileCenterX(x);
+                        const cy = tileCenterY(y);
+                        const size = tileSize * 0.92;
+                        const px = cx - size / 2;
+                        const py = cy - size / 2;
+                        const r = 4;
+
+                        // checker color
+                        const checker = (x + y) % 2 === 0;
+                        const unstable = unstableTiles.has(tileKey(x, y));
+
+                        let baseColor, lightColor, darkColor;
+                        if (unstable) {
+                            const ttlRatio = unstableTiles.get(tileKey(x, y)).ttl / unstableTiles.get(tileKey(x, y)).total;
+                            const r = 200 + Math.round(50 * (1 - ttlRatio));
+                            const g = 80 + Math.round(60 * (1 - ttlRatio));
+                            const b = 40;
+                            baseColor = `rgb(${r},${g},${b})`;
+                            lightColor = `rgb(${r + 40},${g + 20},${b + 10})`;
+                            darkColor = `rgb(${r - 30},${g - 20},${b - 10})`;
+                        } else {
+                            if (checker) {
+                                baseColor = '#3a4158';
+                                lightColor = '#4a5270';
+                                darkColor = '#2b3040';
+                            } else {
+                                baseColor = '#343b52';
+                                lightColor = '#454d6b';
+                                darkColor = '#242a3c';
+                            }
+                        }
+
+                        // tile shadow
+                        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                        ctx.shadowBlur = 8;
+                        ctx.shadowOffsetY = 3;
+
+                        // rounded rect
+                        roundRect(ctx, px, py, size, size, r);
+                        const tileGrad = ctx.createLinearGradient(px, py, px, py + size);
+                        tileGrad.addColorStop(0, lightColor);
+                        tileGrad.addColorStop(0.5, baseColor);
+                        tileGrad.addColorStop(1, darkColor);
+                        ctx.fillStyle = tileGrad;
+                        ctx.fill();
+                        ctx.shadowBlur = 0;
+                        ctx.shadowOffsetY = 0;
+
+                        // border
+                        ctx.lineWidth = 1.5;
+                        ctx.strokeStyle = unstable ? 'rgba(255,180,80,0.6)' : 'rgba(255,255,255,0.06)';
+                        roundRect(ctx, px, py, size, size, r);
+                        ctx.stroke();
+
+                        // crack lines for unstable
+                        if (unstable) {
+                            const pct = unstableTiles.get(tileKey(x, y)).ttl / unstableTiles.get(tileKey(x, y)).total;
+                            ctx.strokeStyle = `rgba(255,220,120,${0.4 + 0.5 * (1 - pct)})`;
+                            ctx.lineWidth = 2;
+                            ctx.beginPath();
+                            ctx.moveTo(px + size * 0.2, py + size * 0.3);
+                            ctx.lineTo(px + size * 0.45, py + size * 0.6);
+                            ctx.lineTo(px + size * 0.3, py + size * 0.85);
+                            ctx.moveTo(px + size * 0.7, py + size * 0.2);
+                            ctx.lineTo(px + size * 0.55, py + size * 0.5);
+                            ctx.lineTo(px + size * 0.8, py + size * 0.7);
+                            ctx.stroke();
+                        }
+
+                        // tile glow for shrink warning on boundary
+                        if (shrinkWarning && (x === minX || x === maxX || y === minY || y === maxY)) {
+                            ctx.shadowColor = 'rgba(255,80,80,0.7)';
+                            ctx.shadowBlur = 12;
+                            ctx.strokeStyle = 'rgba(255,80,80,0.7)';
+                            roundRect(ctx, px, py, size, size, r);
+                            ctx.stroke();
+                            ctx.shadowBlur = 0;
+                        }
+                    }
+                }
+
+                // Draw gem
+                if (gemX !== null && inBounds(gemX, gemY)) {
+                    const gx = tileCenterX(gemX);
+                    const gy = tileCenterY(gemY);
+                    const pulse = 0.7 + 0.3 * Math.sin(idleTimer * 4);
+                    const r = tileSize * 0.25 * pulse;
+
+                    ctx.shadowColor = '#7df9ff';
+                    ctx.shadowBlur = 16;
+                    ctx.fillStyle = '#7df9ff';
+                    ctx.beginPath();
+                    ctx.moveTo(gx, gy - r * 1.2);
+                    ctx.lineTo(gx + r * 0.8, gy);
+                    ctx.lineTo(gx, gy + r * 1.2);
+                    ctx.lineTo(gx - r * 0.8, gy);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+
+                    ctx.fillStyle = '#e0fdff';
+                    ctx.beginPath();
+                    ctx.moveTo(gx, gy - r * 0.5);
+                    ctx.lineTo(gx + r * 0.35, gy + r * 0.3);
+                    ctx.lineTo(gx, gy + r * 0.6);
+                    ctx.lineTo(gx - r * 0.35, gy + r * 0.3);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+
+                // Draw particles
+                for (const p of particles) {
+                    const alpha = p.life / p.maxLife;
+                    ctx.globalAlpha = Math.max(0, alpha);
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size * (0.5 + alpha * 0.5), 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+
+                // Draw Oswald
+                if (state !== GameState.GAMEOVER) {
+                    drawOswald();
+                }
+
+                // Falling overlay
+                if (state === GameState.FALLING) {
+                    ctx.fillStyle = `rgba(0,0,0,${Math.min(0.4, deathAnim * 0.5)})`;
+                    ctx.fillRect(0, 0, W, H);
+                }
+            }
+
+            function drawOswald() {
+                let drawX, drawY;
+                let squash = 1;
+                let stretch = 1;
+                let rotation = 0;
+
+                if (state === GameState.FALLING) {
+                    // Oswald falls off screen
+                    const drop = deathAnim * deathAnim * 300;
+                    drawX = tileCenterX(oswaldX);
+                    drawY = tileCenterY(oswaldY) + drop;
+                    rotation = deathAnim * 6;
+                } else if (moveProgress < 1) {
+                    // interpolate between start and target
+                    const t = Math.min(1, moveProgress);
+                    const ease = 1 - Math.pow(1 - t, 3); // easeOutCubic
+                    const sx = tileCenterX(moveStartX);
+                    const sy = tileCenterY(moveStartY);
+                    const txC = tileCenterX(targetX);
+                    const tyC = tileCenterY(targetY);
+                    drawX = sx + (txC - sx) * ease;
+                    drawY = sy + (tyC - sy) * ease;
+                    // squash/stretch along movement
+                    const movingX = targetX !== moveStartX;
+                    const movingY = targetY !== moveStartY;
+                    if (movingX) {
+                        stretch = 1 + Math.sin(t * Math.PI) * 0.15;
+                        squash = 1 - Math.sin(t * Math.PI) * 0.1;
+                    } else if (movingY) {
+                        stretch = 1 + Math.sin(t * Math.PI) * 0.1;
+                        squash = 1 - Math.sin(t * Math.PI) * 0.15;
+                    }
+                } else {
+                    drawX = tileCenterX(oswaldX);
+                    drawY = tileCenterY(oswaldY);
+                    // idle bounce
+                    squash = 1 + Math.sin(idleTimer * 5) * 0.04;
+                    stretch = 1 - Math.sin(idleTimer * 5) * 0.04;
+                }
+
+                const bodyR = tileSize * 0.32 * stretch;
+
+                ctx.save();
+                ctx.translate(drawX, drawY);
+                ctx.rotate(rotation);
+                ctx.scale(stretch, squash);
+
+                // tentacles (behind body)
+                ctx.strokeStyle = '#ff8c42';
+                ctx.lineWidth = tileSize * 0.09;
+                ctx.lineCap = 'round';
+                const tentacles = 6;
+                const wiggle = idleTimer * 4;
+                for (let i = 0; i < tentacles; i++) {
+                    const angle = Math.PI + (i - (tentacles - 1) / 2) * 0.5;
+                    const len = tileSize * 0.5;
+                    const baseX = Math.cos(angle) * bodyR * 0.5;
+                    const baseY = Math.sin(angle) * bodyR * 0.5 + bodyR * 0.3;
+                    const endX = baseX + Math.cos(angle + Math.sin(wiggle + i) * 0.3) * len;
+                    const endY = baseY + Math.sin(angle + Math.cos(wiggle + i) * 0.3) * len * 0.9;
+                    ctx.beginPath();
+                    ctx.moveTo(baseX, baseY);
+                    ctx.quadraticCurveTo((baseX + endX) / 2 + Math.sin(wiggle + i) * 3, (baseY + endY) / 2, endX, endY);
+                    ctx.stroke();
+                }
+
+                // body
+                ctx.shadowColor = 'rgba(255,120,50,0.6)';
+                ctx.shadowBlur = 14;
+                const bodyGrad = ctx.createRadialGradient(-bodyR * 0.2, -bodyR * 0.2, bodyR * 0.1, 0, 0, bodyR);
+                bodyGrad.addColorStop(0, '#ffb26b');
+                bodyGrad.addColorStop(1, '#ff6b35');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.arc(0, 0, bodyR, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                // body rim
+                ctx.strokeStyle = 'rgba(255,180,100,0.4)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(0, 0, bodyR, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // eyes
+                const eyeOffsetX = bodyR * 0.3;
+                const eyeY = -bodyR * 0.1;
+                const eyeR = bodyR * 0.2;
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.ellipse(-eyeOffsetX, eyeY, eyeR * 1.2, eyeR, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(eyeOffsetX, eyeY, eyeR * 1.2, eyeR, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // pupils
+                ctx.fillStyle = '#1a1420';
+                const look = moveProgress < 1 ? (targetX - moveStartX) * 1.5 : 0;
+                ctx.beginPath();
+                ctx.arc(-eyeOffsetX + look * 2, eyeY + 1, eyeR * 0.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(eyeOffsetX + look * 2, eyeY + 1, eyeR * 0.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // highlight
+                ctx.fillStyle = 'rgba(255,255,255,0.8)';
+                ctx.beginPath();
+                ctx.arc(-eyeOffsetX - 1, eyeY - 1, eyeR * 0.2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(eyeOffsetX - 1, eyeY - 1, eyeR * 0.2, 0, Math.PI * 2);
+                ctx.fill();
+
+                // smile
+                ctx.strokeStyle = '#a63d20';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(0, bodyR * 0.1, bodyR * 0.4, 0.1 * Math.PI, 0.9 * Math.PI);
+                ctx.stroke();
+
+                // top hat (Oswald's little hat)
+                const hatW = bodyR * 0.9;
+                const hatH = bodyR * 0.8;
+                ctx.fillStyle = '#3d2b1f';
+                roundRect(ctx, -hatW / 2, -bodyR - hatH * 0.6, hatW, hatH, 3);
+                ctx.fill();
+                // brim
+                ctx.fillStyle = '#4a3525';
+                roundRect(ctx, -hatW * 0.7, -bodyR - hatH * 0.5, hatW * 1.4, 3, 2);
+                ctx.fill();
+                ctx.fillStyle = '#ffd966';
+                roundRect(ctx, -hatW * 0.7, -bodyR - hatH * 0.5, hatW * 1.4, 3, 2); // decorative band
+
+                ctx.restore();
+            }
+
+            // ---------- Helpers ----------
+            function roundRect(ctx, x, y, w, h, r) {
+                ctx.beginPath();
+                ctx.moveTo(x + r, y);
+                ctx.lineTo(x + w - r, y);
+                ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+                ctx.lineTo(x + w, y + h - r);
+                ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+                ctx.lineTo(x + r, y + h);
+                ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+                ctx.lineTo(x, y + r);
+                ctx.quadraticCurveTo(x, y, x + r, y);
+                ctx.closePath();
+            }
+
+            // ---------- Main loop ----------
+            let lastTime = performance.now();
+
+            function loop(now) {
+                const dt = Math.min(0.05, (now - lastTime) / 1000);
+                lastTime = now;
+
+                update(dt);
+                render();
+
+                requestAnimationFrame(loop);
+            }
+
+            // Update best display in menu
+            document.getElementById('bestVal').textContent = bestScore;
+            requestAnimationFrame(loop);
+
+            // Prevent long press context menu
+            window.addEventListener('contextmenu', e => e.preventDefault());
+
+        })();
+    </script>
+</body>
+</html>
