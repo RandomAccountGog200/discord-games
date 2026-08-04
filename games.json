@@ -781,5 +781,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-08-04T22:06:57.789Z",
     "updatedAt": "2026-08-04T22:06:57.789Z"
+  },
+  {
+    "slug": "sky-pilot",
+    "title": "Sky Pilot",
+    "description": "a plane flying simulator game",
+    "creator": "burger778",
+    "model": "deepseek/deepseek-v4-flash-0731",
+    "createdAt": "2026-08-04T23:59:05.035Z",
+    "updatedAt": "2026-08-04T23:59:05.035Z"
   }
 ]
