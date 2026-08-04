@@ -1,0 +1,1128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Sky Pilot</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            overflow: hidden;
+            background: #000;
+            font-family: Arial, sans-serif;
+            touch-action: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        canvas {
+            display: block;
+            cursor: crosshair;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <script>
+        // ===== CANVAS SETUP =====
+        const canvas = document.getElementById('game');
+        const ctx = canvas.getContext('2d');
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resize();
+        window.addEventListener('resize', resize);
+
+        // ===== CONFIGURATION =====
+        const CONFIG = {
+            WORLD_SPEED: 160,
+            WORLD_SPEED_INCREMENT: 0.3,
+            PLANE_LERP: 4.5,
+            STAR_SCORE: 10,
+            FUEL_REFILL: 35,
+            BIRD_DAMAGE: 20,
+            FUEL_DEPLETION: 1.8,
+            GROUND_HEIGHT: 90,
+        };
+
+        // ===== GAME STATE =====
+        let state = 'menu';
+        let score = 0;
+        let health = 100;
+        let fuel = 100;
+        let distance = 0;
+        let worldSpeed = CONFIG.WORLD_SPEED;
+        let lastTime = performance.now();
+        let dt = 0;
+        let gameTime = 0;
+        let screenShake = 0;
+        let starSpawnTimer = 0;
+        let fuelSpawnTimer = 0;
+        let birdSpawnTimer = 0;
+        let bestScore = 0;
+
+        // ===== PLANE =====
+        const plane = {
+            x: 0,
+            y: 0,
+            targetX: 0,
+            targetY: 0,
+            tilt: 0,
+            propellerAngle: 0,
+            radius: 22,
+        };
+
+        // ===== INPUT =====
+        const keys = {};
+        let pointerX = 0,
+            pointerY = 0;
+        let isPointerActive = false;
+
+        // ===== WORLD OBJECTS =====
+        let clouds = [];
+        let mountains = [];
+        let trees = [];
+        let stars = [];
+        let fuelCans = [];
+        let birds = [];
+        let particles = [];
+        let floatingTexts = [];
+
+        // ===== AUDIO =====
+        let audioCtx = null;
+
+        function initAudio() {
+            if (audioCtx) return;
+            try {
+                audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+            } catch (e) {
+                audioCtx = null;
+            }
+        }
+
+        function playSound(type) {
+            if (!audioCtx) return;
+            try {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                const t = audioCtx.currentTime;
+                switch (type) {
+                    case 'collect':
+                        osc.type = 'sine';
+                        osc.frequency.setValueAtTime(880, t);
+                        osc.frequency.exponentialRampToValueAtTime(1320, t + 0.1);
+                        gain.gain.setValueAtTime(0.25, t);
+                        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.2);
+                        osc.start(t);
+                        osc.stop(t + 0.2);
+                        break;
+                    case 'fuel':
+                        osc.type = 'sine';
+                        osc.frequency.setValueAtTime(440, t);
+                        osc.frequency.exponentialRampToValueAtTime(880, t + 0.15);
+                        gain.gain.setValueAtTime(0.3, t);
+                        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.3);
+                        osc.start(t);
+                        osc.stop(t + 0.3);
+                        break;
+                    case 'hit':
+                        osc.type = 'sawtooth';
+                        osc.frequency.setValueAtTime(200, t);
+                        osc.frequency.exponentialRampToValueAtTime(50, t + 0.3);
+                        gain.gain.setValueAtTime(0.4, t);
+                        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.3);
+                        osc.start(t);
+                        osc.stop(t + 0.3);
+                        break;
+                    case 'gameover':
+                        osc.type = 'sine';
+                        osc.frequency.setValueAtTime(400, t);
+                        osc.frequency.exponentialRampToValueAtTime(80, t + 0.8);
+                        gain.gain.setValueAtTime(0.3, t);
+                        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.8);
+                        osc.start(t);
+                        osc.stop(t + 0.8);
+                        break;
+                    case 'start':
+                        osc.type = 'sine';
+                        osc.frequency.setValueAtTime(300, t);
+                        osc.frequency.exponentialRampToValueAtTime(600, t + 0.2);
+                        gain.gain.setValueAtTime(0.2, t);
+                        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.3);
+                        osc.start(t);
+                        osc.stop(t + 0.3);
+                        break;
+                }
+            } catch (e) {}
+        }
+
+        // ===== HELPERS =====
+        function lerp(a, b, t) { return a + (b - a) * t; }
+
+        function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+        function circleCollision(x1, y1, r1, x2, y2, r2) {
+            const dx = x1 - x2,
+                dy = y1 - y2;
+            return Math.sqrt(dx * dx + dy * dy) < r1 + r2;
+        }
+
+        function randRange(min, max) { return min + Math.random() * (max - min); }
+
+        // ===== RESET GAME =====
+        function resetGame() {
+            score = 0;
+            health = 100;
+            fuel = 100;
+            distance = 0;
+            worldSpeed = CONFIG.WORLD_SPEED;
+            gameTime = 0;
+            screenShake = 0;
+            starSpawnTimer = 0;
+            fuelSpawnTimer = 0;
+            birdSpawnTimer = 0;
+            stars = [];
+            fuelCans = [];
+            birds = [];
+            particles = [];
+            floatingTexts = [];
+            clouds = [];
+            mountains = [];
+            trees = [];
+
+            // Initialize background
+            for (let i = 0; i < 12; i++) {
+                clouds.push({
+                    x: Math.random() * canvas.width,
+                    y: randRange(20, canvas.height * 0.5),
+                    width: randRange(60, 160),
+                    height: randRange(25, 50),
+                    speed: randRange(8, 25),
+                });
+            }
+            for (let i = 0; i < 6; i++) {
+                mountains.push({
+                    x: Math.random() * canvas.width,
+                    y: canvas.height - CONFIG.GROUND_HEIGHT,
+                    width: randRange(120, 300),
+                    height: randRange(80, 200),
+                    speed: randRange(20, 40),
+                });
+            }
+            for (let i = 0; i < 10; i++) {
+                trees.push({
+                    x: Math.random() * canvas.width,
+                    y: canvas.height - CONFIG.GROUND_HEIGHT + 10,
+                    size: randRange(15, 30),
+                    speed: randRange(60, 90),
+                });
+            }
+
+            plane.x = canvas.width * 0.25;
+            plane.y = canvas.height * 0.5;
+            plane.targetX = plane.x;
+            plane.targetY = plane.y;
+            plane.tilt = 0;
+            plane.propellerAngle = 0;
+        }
+
+        // ===== SPAWNING =====
+        function spawnStar() {
+            const count = Math.floor(randRange(1, 3));
+            for (let i = 0; i < count; i++) {
+                stars.push({
+                    x: canvas.width + 50,
+                    y: randRange(50, canvas.height - CONFIG.GROUND_HEIGHT - 50),
+                    radius: randRange(10, 18),
+                    twinkle: Math.random() * Math.PI * 2,
+                    speed: worldSpeed * 0.8,
+                });
+            }
+        }
+
+        function spawnFuelCan() {
+            fuelCans.push({
+                x: canvas.width + 50,
+                y: randRange(80, canvas.height - CONFIG.GROUND_HEIGHT - 80),
+                radius: 16,
+                speed: worldSpeed * 0.8,
+            });
+        }
+
+        function spawnBird() {
+            const baseY = randRange(60, canvas.height - CONFIG.GROUND_HEIGHT - 60);
+            birds.push({
+                x: canvas.width + 50,
+                y: baseY,
+                baseY: baseY,
+                radius: 20,
+                speed: worldSpeed * 0.9,
+                amplitude: randRange(20, 50),
+                frequency: randRange(1, 3),
+                phase: Math.random() * Math.PI * 2,
+            });
+        }
+
+        // ===== PARTICLES =====
+        function addParticle(x, y, vx, vy, life, size, color) {
+            particles.push({ x, y, vx, vy, life, maxLife: life, size, color });
+        }
+
+        function addFloatingText(x, y, text, color) {
+            floatingTexts.push({ x, y, text, color, life: 1, maxLife: 1 });
+        }
+
+        function spawnTrailParticles() {
+            if (Math.random() < 0.6) {
+                addParticle(
+                    plane.x - 30 + (Math.random() - 0.5) * 10,
+                    plane.y + (Math.random() - 0.5) * 10,
+                    -60 - Math.random() * 40,
+                    (Math.random() - 0.5) * 20,
+                    randRange(0.3, 0.7),
+                    randRange(2, 5),
+                    `rgba(255, 180, 80, ${randRange(0.3, 0.7)})`
+                );
+            }
+        }
+
+        function spawnExplosion(x, y) {
+            for (let i = 0; i < 20; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = randRange(50, 200);
+                addParticle(
+                    x, y,
+                    Math.cos(angle) * speed,
+                    Math.sin(angle) * speed,
+                    randRange(0.3, 0.8),
+                    randRange(3, 8),
+                    `rgba(255, ${Math.floor(randRange(80, 200))}, 50, ${randRange(0.5, 1)})`
+                );
+            }
+            screenShake = 0.3;
+        }
+
+        // ===== START GAME =====
+        function startGame() {
+            initAudio();
+            resetGame();
+            state = 'playing';
+            playSound('start');
+        }
+
+        // ===== INPUT HANDLING =====
+        function handleStart() {
+            if (state === 'menu' || state === 'gameover') {
+                startGame();
+            }
+        }
+
+        document.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            if (e.key === ' ' || e.key === 'Enter') {
+                handleStart();
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            pointerX = e.clientX;
+            pointerY = e.clientY;
+            isPointerActive = true;
+        });
+
+        canvas.addEventListener('mousedown', (e) => {
+            pointerX = e.clientX;
+            pointerY = e.clientY;
+            isPointerActive = true;
+            handleStart();
+        });
+
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            pointerX = touch.clientX;
+            pointerY = touch.clientY;
+            isPointerActive = true;
+            handleStart();
+        }, { passive: false });
+
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            pointerX = touch.clientX;
+            pointerY = touch.clientY;
+            isPointerActive = true;
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            isPointerActive = false;
+        }, { passive: false });
+
+        // ===== UPDATE =====
+        function update(dt) {
+            if (state !== 'playing') return;
+
+            gameTime += dt;
+            distance += worldSpeed * dt;
+            score = Math.floor(distance / 10) + stars.reduce((sum, s) => sum + (s.collected ? 0 : 0), 0);
+
+            // World speed increases
+            worldSpeed += CONFIG.WORLD_SPEED_INCREMENT * dt;
+
+            // Fuel depletion
+            fuel -= CONFIG.FUEL_DEPLETION * dt;
+            if (fuel <= 0) {
+                fuel = 0;
+                health -= 5 * dt;
+                if (health <= 0) {
+                    health = 0;
+                    gameOver();
+                    return;
+                }
+            }
+
+            // Plane movement
+            let targetX = plane.targetX;
+            let targetY = plane.targetY;
+
+            // Keyboard
+            let kx = 0,
+                ky = 0;
+            if (keys['ArrowLeft'] || keys['a']) kx = -1;
+            if (keys['ArrowRight'] || keys['d']) kx = 1;
+            if (keys['ArrowUp'] || keys['w']) ky = -1;
+            if (keys['ArrowDown'] || keys['s']) ky = 1;
+
+            if (kx !== 0 || ky !== 0) {
+                const len = Math.sqrt(kx * kx + ky * ky);
+                kx /= len;
+                ky /= len;
+                targetX = plane.x + kx * 300 * dt;
+                targetY = plane.y + ky * 300 * dt;
+                isPointerActive = false;
+            }
+
+            // Pointer
+            if (isPointerActive) {
+                targetX = pointerX;
+                targetY = pointerY;
+            }
+
+            // Clamp
+            targetX = clamp(targetX, 30, canvas.width - 30);
+            targetY = clamp(targetY, 30, canvas.height - CONFIG.GROUND_HEIGHT - 20);
+
+            // Lerp
+            plane.x = lerp(plane.x, targetX, CONFIG.PLANE_LERP * dt);
+            plane.y = lerp(plane.y, targetY, CONFIG.PLANE_LERP * dt);
+
+            // Tilt
+            const dy = targetY - plane.y;
+            const targetTilt = clamp(dy * 0.002, -0.4, 0.4);
+            plane.tilt = lerp(plane.tilt, targetTilt, 5 * dt);
+
+            // Propeller
+            plane.propellerAngle += dt * 25;
+
+            // Trail particles
+            spawnTrailParticles();
+
+            // Update clouds
+            for (let i = clouds.length - 1; i >= 0; i--) {
+                const c = clouds[i];
+                c.x -= c.speed * dt;
+                if (c.x + c.width < -50) {
+                    clouds[i] = {
+                        x: canvas.width + 50,
+                        y: randRange(20, canvas.height * 0.5),
+                        width: randRange(60, 160),
+                        height: randRange(25, 50),
+                        speed: randRange(8, 25),
+                    };
+                }
+            }
+
+            // Update mountains
+            for (let i = mountains.length - 1; i >= 0; i--) {
+                const m = mountains[i];
+                m.x -= m.speed * dt;
+                if (m.x + m.width < -50) {
+                    mountains[i] = {
+                        x: canvas.width + 50,
+                        y: canvas.height - CONFIG.GROUND_HEIGHT,
+                        width: randRange(120, 300),
+                        height: randRange(80, 200),
+                        speed: randRange(20, 40),
+                    };
+                }
+            }
+
+            // Update trees
+            for (let i = trees.length - 1; i >= 0; i--) {
+                const t = trees[i];
+                t.x -= t.speed * dt;
+                if (t.x + t.size < -50) {
+                    trees[i] = {
+                        x: canvas.width + 50,
+                        y: canvas.height - CONFIG.GROUND_HEIGHT + 10,
+                        size: randRange(15, 30),
+                        speed: randRange(60, 90),
+                    };
+                }
+            }
+
+            // Spawn stars
+            starSpawnTimer -= dt;
+            if (starSpawnTimer <= 0) {
+                spawnStar();
+                starSpawnTimer = randRange(0.5, 1.5);
+            }
+
+            // Spawn fuel cans
+            fuelSpawnTimer -= dt;
+            if (fuelSpawnTimer <= 0) {
+                spawnFuelCan();
+                fuelSpawnTimer = randRange(5, 9);
+            }
+
+            // Spawn birds
+            birdSpawnTimer -= dt;
+            if (birdSpawnTimer <= 0) {
+                spawnBird();
+                birdSpawnTimer = randRange(1.5, 3.5);
+            }
+
+            // Update stars
+            for (let i = stars.length - 1; i >= 0; i--) {
+                const s = stars[i];
+                s.x -= s.speed * dt;
+                s.twinkle += dt * 3;
+                if (s.x < -50) {
+                    stars.splice(i, 1);
+                    continue;
+                }
+                // Collision with plane
+                if (circleCollision(plane.x, plane.y, plane.radius, s.x, s.y, s.radius)) {
+                    score += CONFIG.STAR_SCORE;
+                    addFloatingText(s.x, s.y, '+' + CONFIG.STAR_SCORE, '#FFD700');
+                    addParticle(s.x, s.y, 0, 0, 0.3, 10, 'rgba(255, 215, 0, 0.8)');
+                    playSound('collect');
+                    stars.splice(i, 1);
+                }
+            }
+
+            // Update fuel cans
+            for (let i = fuelCans.length - 1; i >= 0; i--) {
+                const f = fuelCans[i];
+                f.x -= f.speed * dt;
+                if (f.x < -50) {
+                    fuelCans.splice(i, 1);
+                    continue;
+                }
+                if (circleCollision(plane.x, plane.y, plane.radius, f.x, f.y, f.radius)) {
+                    fuel = Math.min(100, fuel + CONFIG.FUEL_REFILL);
+                    addFloatingText(f.x, f.y, '+' + CONFIG.FUEL_REFILL + ' FUEL', '#00E676');
+                    addParticle(f.x, f.y, 0, 0, 0.3, 12, 'rgba(0, 230, 118, 0.8)');
+                    playSound('fuel');
+                    fuelCans.splice(i, 1);
+                }
+            }
+
+            // Update birds
+            for (let i = birds.length - 1; i >= 0; i--) {
+                const b = birds[i];
+                b.x -= b.speed * dt;
+                b.y = b.baseY + Math.sin(b.phase + gameTime * b.frequency) * b.amplitude;
+                if (b.x < -50) {
+                    birds.splice(i, 1);
+                    continue;
+                }
+                if (circleCollision(plane.x, plane.y, plane.radius, b.x, b.y, b.radius)) {
+                    health -= CONFIG.BIRD_DAMAGE;
+                    addFloatingText(b.x, b.y, '-' + CONFIG.BIRD_DAMAGE, '#FF1744');
+                    spawnExplosion(b.x, b.y);
+                    playSound('hit');
+                    birds.splice(i, 1);
+                    if (health <= 0) {
+                        health = 0;
+                        gameOver();
+                        return;
+                    }
+                }
+            }
+
+            // Update particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx * dt;
+                p.y += p.vy * dt;
+                p.life -= dt;
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+
+            // Update floating texts
+            for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                const t = floatingTexts[i];
+                t.y -= 40 * dt;
+                t.life -= dt;
+                if (t.life <= 0) {
+                    floatingTexts.splice(i, 1);
+                }
+            }
+
+            // Screen shake
+            if (screenShake > 0) {
+                screenShake -= dt;
+            }
+        }
+
+        function gameOver() {
+            state = 'gameover';
+            if (score > bestScore) bestScore = score;
+            playSound('gameover');
+            spawnExplosion(plane.x, plane.y);
+        }
+
+        // ===== DRAW =====
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Sky gradient
+            const skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            skyGrad.addColorStop(0, '#1a2a6c');
+            skyGrad.addColorStop(0.4, '#4a90d9');
+            skyGrad.addColorStop(0.75, '#87CEEB');
+            skyGrad.addColorStop(1, '#b0e0e6');
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Sun
+            const sunX = canvas.width - 100,
+                sunY = 80;
+            const sunGrad = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, 80);
+            sunGrad.addColorStop(0, 'rgba(255, 255, 200, 1)');
+            sunGrad.addColorStop(0.3, 'rgba(255, 220, 100, 0.8)');
+            sunGrad.addColorStop(1, 'rgba(255, 200, 50, 0)');
+            ctx.fillStyle = sunGrad;
+            ctx.beginPath();
+            ctx.arc(sunX, sunY, 80, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Sun core
+            ctx.fillStyle = '#FFD700';
+            ctx.beginPath();
+            ctx.arc(sunX, sunY, 25, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Clouds
+            for (const c of clouds) {
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                ctx.beginPath();
+                ctx.ellipse(c.x, c.y, c.width / 2, c.height / 2, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(c.x - c.width * 0.3, c.y + c.height * 0.2, c.width * 0.3, c.height * 0.4, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(c.x + c.width * 0.3, c.y + c.height * 0.1, c.width * 0.25, c.height * 0.35, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Mountains
+            for (const m of mountains) {
+                ctx.fillStyle = '#3a6b4a';
+                ctx.beginPath();
+                ctx.moveTo(m.x, m.y);
+                ctx.lineTo(m.x + m.width / 2, m.y - m.height);
+                ctx.lineTo(m.x + m.width, m.y);
+                ctx.closePath();
+                ctx.fill();
+
+                // Snow cap
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                ctx.beginPath();
+                ctx.moveTo(m.x + m.width / 2 - m.width * 0.15, m.y - m.height * 0.7);
+                ctx.lineTo(m.x + m.width / 2, m.y - m.height);
+                ctx.lineTo(m.x + m.width / 2 + m.width * 0.15, m.y - m.height * 0.7);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            // Ground
+            const groundY = canvas.height - CONFIG.GROUND_HEIGHT;
+            const groundGrad = ctx.createLinearGradient(0, groundY, 0, canvas.height);
+            groundGrad.addColorStop(0, '#2d8a4e');
+            groundGrad.addColorStop(1, '#1b5e20');
+            ctx.fillStyle = groundGrad;
+            ctx.fillRect(0, groundY, canvas.width, CONFIG.GROUND_HEIGHT);
+
+            // Ground texture
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+            for (let i = 0; i < 20; i++) {
+                const x = (i * 50 + gameTime * 20) % (canvas.width + 50) - 25;
+                ctx.beginPath();
+                ctx.ellipse(x, groundY + 20 + Math.sin(i) * 10, 20, 10, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Trees
+            for (const t of trees) {
+                // Trunk
+                ctx.fillStyle = '#5d4037';
+                ctx.fillRect(t.x - 3, t.y - 5, 6, 15);
+                // Leaves
+                ctx.fillStyle = '#1b5e20';
+                ctx.beginPath();
+                ctx.moveTo(t.x, t.y - 25 - t.size * 0.3);
+                ctx.lineTo(t.x - t.size, t.y);
+                ctx.lineTo(t.x + t.size, t.y);
+                ctx.closePath();
+                ctx.fill();
+                ctx.fillStyle = '#2e7d32';
+                ctx.beginPath();
+                ctx.moveTo(t.x, t.y - 20 - t.size * 0.2);
+                ctx.lineTo(t.x - t.size * 0.7, t.y + 5);
+                ctx.lineTo(t.x + t.size * 0.7, t.y + 5);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            // Stars
+            for (const s of stars) {
+                const twinkle = 0.7 + 0.3 * Math.sin(s.twinkle);
+                const glow = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.radius * 2);
+                glow.addColorStop(0, `rgba(255, 215, 0, ${0.8 * twinkle})`);
+                glow.addColorStop(1, 'rgba(255, 215, 0, 0)');
+                ctx.fillStyle = glow;
+                ctx.beginPath();
+                ctx.arc(s.x, s.y, s.radius * 2, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = `rgba(255, 255, 200, ${twinkle})`;
+                ctx.beginPath();
+                ctx.arc(s.x, s.y, s.radius * 0.6, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Star shape
+                ctx.fillStyle = '#FFD700';
+                ctx.beginPath();
+                for (let i = 0; i < 5; i++) {
+                    const angle = (i * 4 * Math.PI) / 5 - Math.PI / 2;
+                    const r = s.radius * 0.8;
+                    const px = s.x + Math.cos(angle) * r;
+                    const py = s.y + Math.sin(angle) * r;
+                    if (i === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                }
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            // Fuel cans
+            for (const f of fuelCans) {
+                // Can body
+                ctx.fillStyle = '#E53935';
+                ctx.fillRect(f.x - 12, f.y - 10, 24, 20);
+                // Can top
+                ctx.fillStyle = '#B71C1C';
+                ctx.fillRect(f.x - 8, f.y - 14, 16, 6);
+                // Fuel label
+                ctx.fillStyle = '#FFD700';
+                ctx.font = 'bold 10px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('⛽', f.x, f.y + 2);
+                // Glow
+                const glow = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, 30);
+                glow.addColorStop(0, 'rgba(255, 0, 0, 0.3)');
+                glow.addColorStop(1, 'rgba(255, 0, 0, 0)');
+                ctx.fillStyle = glow;
+                ctx.beginPath();
+                ctx.arc(f.x, f.y, 30, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Birds
+            for (const b of birds) {
+                ctx.fillStyle = '#333';
+                // Body
+                ctx.beginPath();
+                ctx.ellipse(b.x, b.y, 12, 8, 0, 0, Math.PI * 2);
+                ctx.fill();
+                // Wings
+                const wingFlap = Math.sin(gameTime * 8 + b.phase) * 0.5;
+                ctx.beginPath();
+                ctx.moveTo(b.x - 5, b.y);
+                ctx.quadraticCurveTo(b.x - 20, b.y - 15 - wingFlap * 10, b.x - 25, b.y - 5);
+                ctx.lineTo(b.x - 5, b.y);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.moveTo(b.x + 5, b.y);
+                ctx.quadraticCurveTo(b.x + 20, b.y - 15 - wingFlap * 10, b.x + 25, b.y - 5);
+                ctx.lineTo(b.x + 5, b.y);
+                ctx.fill();
+                // Beak
+                ctx.fillStyle = '#FF9800';
+                ctx.beginPath();
+                ctx.moveTo(b.x + 12, b.y);
+                ctx.lineTo(b.x + 20, b.y - 2);
+                ctx.lineTo(b.x + 12, b.y + 2);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            // Particles
+            for (const p of particles) {
+                const alpha = clamp(p.life / p.maxLife, 0, 1);
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+
+            // Floating texts
+            for (const t of floatingTexts) {
+                const alpha = clamp(t.life / t.maxLife, 0, 1);
+                ctx.globalAlpha = alpha;
+                ctx.font = 'bold 18px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.shadowBlur = 4;
+                ctx.fillStyle = t.color;
+                ctx.fillText(t.text, t.x, t.y);
+                ctx.shadowBlur = 0;
+            }
+            ctx.globalAlpha = 1;
+
+            // Plane
+            if (state === 'playing' || state === 'menu') {
+                drawPlane();
+            }
+
+            // UI
+            if (state === 'playing' || state === 'gameover') {
+                drawUI();
+            }
+
+            // Menu
+            if (state === 'menu') {
+                drawMenu();
+            }
+
+            // Game over
+            if (state === 'gameover') {
+                drawGameOver();
+            }
+
+            // Vignette
+            const vig = ctx.createRadialGradient(
+                canvas.width / 2, canvas.height / 2, canvas.width * 0.3,
+                canvas.width / 2, canvas.height / 2, canvas.width * 0.8
+            );
+            vig.addColorStop(0, 'rgba(0,0,0,0)');
+            vig.addColorStop(1, 'rgba(0,0,0,0.25)');
+            ctx.fillStyle = vig;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function drawPlane() {
+            ctx.save();
+            ctx.translate(plane.x, plane.y);
+            ctx.rotate(plane.tilt);
+
+            // Shadow
+            ctx.shadowColor = 'rgba(0,0,0,0.3)';
+            ctx.shadowBlur = 15;
+            ctx.shadowOffsetX = 3;
+            ctx.shadowOffsetY = 3;
+
+            // Fuselage
+            ctx.fillStyle = '#E53935';
+            ctx.beginPath();
+            ctx.ellipse(0, 0, 35, 12, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = 0;
+
+            // Fuselage stripe
+            ctx.fillStyle = '#FFD700';
+            ctx.beginPath();
+            ctx.ellipse(0, 0, 35, 4, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Cockpit
+            ctx.fillStyle = '#4FC3F7';
+            ctx.beginPath();
+            ctx.ellipse(14, -4, 10, 5, 0.2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'rgba(255,255,255,0.3)';
+            ctx.beginPath();
+            ctx.ellipse(16, -5, 4, 2, 0.2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Wings
+            ctx.fillStyle = '#C62828';
+            ctx.beginPath();
+            ctx.moveTo(-5, -4);
+            ctx.lineTo(-22, -24);
+            ctx.lineTo(18, -14);
+            ctx.lineTo(18, -4);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.moveTo(-5, 4);
+            ctx.lineTo(-22, 24);
+            ctx.lineTo(18, 14);
+            ctx.lineTo(18, 4);
+            ctx.closePath();
+            ctx.fill();
+
+            // Wing highlights
+            ctx.fillStyle = 'rgba(255,255,255,0.15)';
+            ctx.beginPath();
+            ctx.moveTo(-5, -4);
+            ctx.lineTo(-22, -24);
+            ctx.lineTo(-10, -20);
+            ctx.lineTo(0, -4);
+            ctx.closePath();
+            ctx.fill();
+
+            // Tail
+            ctx.fillStyle = '#B71C1C';
+            ctx.beginPath();
+            ctx.moveTo(-25, -4);
+            ctx.lineTo(-38, -20);
+            ctx.lineTo(-20, -4);
+            ctx.closePath();
+            ctx.fill();
+
+            // Tail horizontal
+            ctx.fillStyle = '#C62828';
+            ctx.beginPath();
+            ctx.moveTo(-25, -2);
+            ctx.lineTo(-35, 0);
+            ctx.lineTo(-25, 2);
+            ctx.closePath();
+            ctx.fill();
+
+            // Propeller hub
+            ctx.fillStyle = '#333';
+            ctx.beginPath();
+            ctx.arc(35, 0, 4, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Propeller blades
+            ctx.save();
+            ctx.translate(35, 0);
+            ctx.rotate(plane.propellerAngle);
+            ctx.fillStyle = 'rgba(100, 100, 100, 0.7)';
+            ctx.fillRect(-2, -20, 4, 40);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.fillRect(-1, -20, 1, 40);
+            ctx.restore();
+
+            // Engine glow
+            const glow = ctx.createRadialGradient(35, 0, 0, 35, 0, 20);
+            glow.addColorStop(0, 'rgba(255, 150, 50, 0.4)');
+            glow.addColorStop(1, 'rgba(255, 150, 50, 0)');
+            ctx.fillStyle = glow;
+            ctx.beginPath();
+            ctx.arc(35, 0, 20, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        function drawUI() {
+            // Score
+            ctx.font = 'bold 24px Arial';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            ctx.shadowBlur = 4;
+            ctx.fillStyle = '#FFF';
+            ctx.fillText('⭐ ' + score, 20, 20);
+            ctx.shadowBlur = 0;
+
+            // Distance
+            ctx.font = '14px Arial';
+            ctx.fillStyle = 'rgba(255,255,255,0.7)';
+            ctx.fillText(Math.floor(distance) + ' m', 20, 50);
+
+            // Health bar
+            const barWidth = 180,
+                barHeight = 18;
+            const barX = canvas.width - barWidth - 20,
+                barY = 20;
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.fillRect(barX - 2, barY - 2, barWidth + 4, barHeight + 4);
+            const healthColor = health > 60 ? '#4CAF50' : health > 30 ? '#FF9800' : '#F44336';
+            ctx.fillStyle = healthColor;
+            ctx.fillRect(barX, barY, barWidth * (health / 100), barHeight);
+            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+            ctx.strokeRect(barX, barY, barWidth, barHeight);
+            ctx.font = 'bold 12px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#FFF';
+            ctx.fillText('❤ ' + Math.ceil(health), barX + barWidth / 2, barY + 2);
+
+            // Fuel bar
+            const fuelY = barY + barHeight + 8;
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.fillRect(barX - 2, fuelY - 2, barWidth + 4, barHeight + 4);
+            const fuelColor = fuel > 50 ? '#FFD700' : fuel > 20 ? '#FF9800' : '#F44336';
+            ctx.fillStyle = fuelColor;
+            ctx.fillRect(barX, fuelY, barWidth * (fuel / 100), barHeight);
+            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+            ctx.strokeRect(barX, fuelY, barWidth, barHeight);
+            ctx.fillStyle = '#FFF';
+            ctx.fillText('⛽ ' + Math.ceil(fuel), barX + barWidth / 2, fuelY + 2);
+
+            // Low fuel warning
+            if (fuel < 20) {
+                const alpha = 0.5 + 0.5 * Math.sin(gameTime * 5);
+                ctx.fillStyle = `rgba(255, 0, 0, ${alpha * 0.3})`;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        function drawMenu() {
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const cx = canvas.width / 2,
+                cy = canvas.height / 2;
+
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            // Title
+            ctx.font = 'bold 64px Arial';
+            ctx.shadowColor = 'rgba(255, 200, 50, 0.8)';
+            ctx.shadowBlur = 30;
+            ctx.fillStyle = '#FFD700';
+            ctx.fillText('SKY PILOT', cx, cy - 80);
+            ctx.shadowBlur = 0;
+
+            // Subtitle
+            ctx.font = '18px Arial';
+            ctx.fillStyle = 'rgba(255,255,255,0.8)';
+            ctx.fillText('Fly high, collect stars, avoid birds!', cx, cy - 20);
+
+            // Instructions
+            ctx.font = '14px Arial';
+            ctx.fillStyle = 'rgba(255,255,255,0.6)';
+            ctx.fillText('WASD / Arrow Keys or Mouse / Touch to fly', cx, cy + 30);
+            ctx.fillText('Collect ⭐ for points and ⛽ for fuel', cx, cy + 55);
+
+            // Start prompt
+            const alpha = 0.6 + 0.4 * Math.sin(gameTime * 3);
+            ctx.font = 'bold 20px Arial';
+            ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+            ctx.fillText('Click or Press Enter to Start', cx, cy + 110);
+
+            // Best score
+            if (bestScore > 0) {
+                ctx.font = '16px Arial';
+                ctx.fillStyle = 'rgba(255, 215, 0, 0.8)';
+                ctx.fillText('Best Score: ' + bestScore, cx, cy + 150);
+            }
+        }
+
+        function drawGameOver() {
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const cx = canvas.width / 2,
+                cy = canvas.height / 2;
+
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            // Title
+            ctx.font = 'bold 56px Arial';
+            ctx.shadowColor = 'rgba(255, 0, 0, 0.8)';
+            ctx.shadowBlur = 20;
+            ctx.fillStyle = '#FF1744';
+            ctx.fillText('GAME OVER', cx, cy - 60);
+            ctx.shadowBlur = 0;
+
+            // Score
+            ctx.font = 'bold 28px Arial';
+            ctx.fillStyle = '#FFD700';
+            ctx.fillText('Score: ' + score, cx, cy + 10);
+
+            // Distance
+            ctx.font = '18px Arial';
+            ctx.fillStyle = 'rgba(255,255,255,0.7)';
+            ctx.fillText('Distance: ' + Math.floor(distance) + ' m', cx, cy + 45);
+
+            // Best
+            if (score >= bestScore && score > 0) {
+                ctx.font = 'bold 16px Arial';
+                ctx.fillStyle = '#FFD700';
+                ctx.fillText('🏆 NEW BEST! 🏆', cx, cy + 80);
+            }
+
+            // Restart prompt
+            const alpha = 0.6 + 0.4 * Math.sin(gameTime * 3);
+            ctx.font = 'bold 20px Arial';
+            ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+            ctx.fillText('Click or Press Enter to Restart', cx, cy + 130);
+        }
+
+        // ===== GAME LOOP =====
+        function gameLoop(t) {
+            dt = Math.min((t - lastTime) / 1000, 0.05);
+            lastTime = t;
+
+            if (state === 'playing') {
+                gameTime += dt;
+            } else {
+                gameTime += dt;
+            }
+
+            update(dt);
+
+            ctx.save();
+            if (screenShake > 0) {
+                const shakeX = (Math.random() - 0.5) * screenShake * 20;
+                const shakeY = (Math.random() - 0.5) * screenShake * 20;
+                ctx.translate(shakeX, shakeY);
+            }
+            draw();
+            ctx.restore();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // ===== INIT =====
+        resetGame();
+        plane.x = canvas.width * 0.25;
+        plane.y = canvas.height * 0.5;
+        plane.targetX = plane.x;
+        plane.targetY = plane.y;
+
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>
