@@ -1069,5 +1069,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-08-05T21:24:15.588Z",
     "updatedAt": "2026-08-05T21:24:15.588Z"
+  },
+  {
+    "slug": "zlatan-juice-rpg",
+    "title": "Zlatan Juice RPG",
+    "description": "zlatan juice role-playing game",
+    "creator": "cheese5332",
+    "model": "openai/gpt-5.6-luna",
+    "createdAt": "2026-08-05T21:53:23.480Z",
+    "updatedAt": "2026-08-05T21:53:23.480Z"
   }
 ]
