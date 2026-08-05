@@ -943,5 +943,14 @@
     "model": "openai/gpt-5.6-luna",
     "createdAt": "2026-08-05T19:56:44.091Z",
     "updatedAt": "2026-08-05T19:56:44.091Z"
+  },
+  {
+    "slug": "pluto-fly-cry",
+    "title": "Pluto Fly & Cry",
+    "description": "Pluto fly and cry",
+    "creator": "cheese5332",
+    "model": "openai/gpt-5.6-luna",
+    "createdAt": "2026-08-05T19:58:49.544Z",
+    "updatedAt": "2026-08-05T19:58:49.544Z"
   }
 ]
