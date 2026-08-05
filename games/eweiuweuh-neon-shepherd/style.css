@@ -1,0 +1,31 @@
+@import url('data:text/css,');
+:root { color-scheme: dark; font-family: Arial, Helvetica, sans-serif; }
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #050713; }
+body { display: grid; place-items: center; }
+#game-shell { position: relative; width: min(100vw, 1000px); aspect-ratio: 1000 / 650; max-height: 100vh; overflow: hidden; background: #080b1d; box-shadow: 0 0 80px #11194d; }
+canvas { width: 100%; height: 100%; display: block; touch-action: none; }
+.screen { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px; background: radial-gradient(circle at 50% 42%, rgba(21,29,78,.88), rgba(5,7,19,.96) 68%); }
+.hidden { display: none !important; }
+.logo-mark { color: #7ff8e6; font-size: 58px; line-height: 1; text-shadow: 0 0 24px #35e3d0; animation: float 3s ease-in-out infinite; }
+.eyebrow { margin: 10px 0; color: #7ff8e6; font-size: 11px; font-weight: bold; letter-spacing: .35em; }
+h1, h2 { margin: 0; color: #f2f6ff; letter-spacing: .15em; text-shadow: 0 0 20px rgba(117,153,255,.7); }
+h1 { font-size: clamp(38px, 8vw, 78px); }
+h2 { font-size: clamp(25px, 4vw, 42px); }
+.subtitle { color: #ff75d5; letter-spacing: .5em; font-size: 13px; margin: 7px 0 24px; }
+.intro, .win-copy { color: #aeb9dd; line-height: 1.7; font-size: 14px; }
+button { font: inherit; cursor: pointer; border: 0; color: #eef8ff; }
+.primary-button, .secondary-button { min-width: 225px; padding: 15px 25px; margin-top: 14px; font-size: 12px; font-weight: bold; letter-spacing: .15em; transition: transform .18s, filter .18s, background .18s; }
+.primary-button { background: linear-gradient(100deg, #24cdbf, #5c7dff); box-shadow: 0 0 25px rgba(60,220,215,.3); }
+.secondary-button { background: rgba(100,116,183,.15); border: 1px solid rgba(137,161,255,.3); }
+button:hover { transform: translateY(-2px); filter: brightness(1.25); }
+.best-line, .controls-hint, .select-hint { color: #7783ac; font-size: 11px; letter-spacing: .16em; margin-top: 27px; }
+.best-line b { color: #ffd77a; margin-left: 8px; }
+.hud { position: absolute; inset: 0 0 auto; height: 74px; display: flex; align-items: center; padding: 15px 22px; gap: 22px; pointer-events: none; background: linear-gradient(#070a1dcc, transparent); }
+.hud > * { pointer-events: auto; }
+.hud-left { min-width: 150px; }.brand { color:#7ff8e6; font-weight:bold; letter-spacing:.2em; font-size:13px; }.wave-label { color:#8895c2; font-size:10px; letter-spacing:.18em; margin-top:5px; }.wave-label b { color:#fff; }
+.health-wrap { width: 260px; margin-left: auto; }.health-caption { font-size:9px; color:#8794bf; letter-spacing:.1em; margin-bottom:5px; }.health-caption span { float:right; color:#d7e1ff; }.health-bar { height:7px; background:#1a2144; border-radius:9px; overflow:hidden; }.health-bar i { display:block; width:100%; height:100%; background:linear-gradient(90deg,#ff578f,#7ff8e6); box-shadow:0 0 12px #7ff8e6; transition:width .2s; }
+.score-wrap { display:flex; flex-direction:column; color:#8794bf; font-size:9px; letter-spacing:.15em; min-width:80px; }.score-wrap b { color:#ffd77a; font-size:20px; letter-spacing:0; }.icon-button { background: transparent; color:#cbd6ff; font-size:19px; padding:7px; }
+.upgrade-cards { display:flex; gap:13px; max-width:840px; margin-top:22px; }.upgrade-card { width:210px; min-height:160px; padding:18px 14px; background:linear-gradient(145deg,rgba(42,58,115,.8),rgba(16,22,54,.9)); border:1px solid #41528d; text-align:left; transition:transform .2s, border-color .2s; }.upgrade-card:hover { transform:translateY(-7px); border-color:#7ff8e6; }.upgrade-key { color:#ff75d5; font-size:12px; font-weight:bold; }.upgrade-card h3 { color:#eff4ff; font-size:15px; letter-spacing:.08em; margin:12px 0 7px; }.upgrade-card p { color:#aeb9dd; font-size:12px; line-height:1.45; margin:0; }.result { display:flex; gap:25px; justify-content:space-between; width:210px; color:#8491bb; font-size:11px; letter-spacing:.18em; margin-top:18px; }.result b { color:#ffd77a; font-size:22px; letter-spacing:0; }.best-result { margin-top:7px; }
+@keyframes float { 50% { transform:translateY(-8px) rotate(5deg); } }
+@media (max-width: 680px) { .hud { height:60px; padding:10px 12px; gap:9px; }.brand{font-size:10px}.health-wrap{width:150px}.score-wrap{min-width:46px}.score-wrap b{font-size:15px}.icon-button{font-size:16px;padding:3px}.controls-hint{font-size:9px}.upgrade-cards{gap:6px}.upgrade-card{width:31vw; min-height:150px; padding:11px 8px}.upgrade-card h3{font-size:11px}.upgrade-card p{font-size:10px}.upgrade-card .upgrade-key{font-size:10px} }
