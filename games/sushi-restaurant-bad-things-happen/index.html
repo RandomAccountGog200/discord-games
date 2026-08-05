@@ -1,0 +1,1838 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+    <title>Sushi Restaurant: Bad Things Happen</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        }
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #140d0a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            touch-action: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        canvas {
+            display: block;
+            width: min(100vw, calc(100vh * 1.333));
+            height: auto;
+            aspect-ratio: 800/600;
+            border-radius: 8px;
+            box-shadow: 0 0 40px rgba(0, 0, 0, 0.7);
+            image-rendering: auto;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game" width="800" height="600"></canvas>
+    <script>
+        (function() {
+            'use strict';
+            const W = 800,
+                H = 600;
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+            const TAU = Math.PI * 2;
+
+            // ============ HELPERS ============
+            function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+
+            function lerp(a, b, t) { return a + (b - a) * t; }
+
+            function rand(a, b) { return a + Math.random() * (b - a); }
+
+            function randInt(a, b) { return Math.floor(rand(a, b + 1)); }
+
+            function dist(x1, y1, x2, y2) { return Math.hypot(x1 - x2, y1 - y2); }
+
+            function colorLerp(c1, c2, t) {
+                const a = parseInt(c1.slice(1), 16),
+                    b = parseInt(c2.slice(1), 16);
+                const r = Math.round(lerp(a >> 16 & 255, b >> 16 & 255, t));
+                const g = Math.round(lerp(a >> 8 & 255, b >> 8 & 255, t));
+                const bl = Math.round(lerp(a & 255, b & 255, t));
+                return `rgb(${r},${g},${bl})`;
+            }
+
+            function roundRect(ctx, x, y, w, h, r) {
+                ctx.beginPath();
+                ctx.moveTo(x + r, y);
+                ctx.arcTo(x + w, y, x + w, y + h, r);
+                ctx.arcTo(x + w, y + h, x, y + h, r);
+                ctx.arcTo(x, y + h, x, y, r);
+                ctx.arcTo(x, y, x + w, y, r);
+                ctx.closePath();
+            }
+
+            // ============ DATA ============
+            const INGREDIENTS = {
+                rice: { name: 'Rice', color: '#fdf3e0' },
+                salmon: { name: 'Salmon', color: '#ff8c42' },
+                tuna: { name: 'Tuna', color: '#ff5760' },
+                cuke: { name: 'Cuke', color: '#7dcf6f' },
+                seaweed: { name: 'Sea', color: '#1e6b4a' }
+            };
+            const RECIPES = [
+                { id: 'snig', name: 'Salmon Nigiri', recipe: ['rice', 'salmon'], price: 6 },
+                { id: 'tnig', name: 'Tuna Nigiri', recipe: ['rice', 'tuna'], price: 7 },
+                { id: 'croll', name: 'Cuke Roll', recipe: ['rice', 'cuke'], price: 4 },
+                { id: 'sroll', name: 'Salmon Roll', recipe: ['rice', 'salmon', 'seaweed'], price: 9 },
+                { id: 'troll', name: 'Tuna Roll', recipe: ['rice', 'tuna', 'seaweed'], price: 10 },
+                { id: 'cali', name: 'Cali Roll', recipe: ['rice', 'salmon', 'cuke', 'seaweed'], price: 12 }
+            ];
+            const LEVELS = [
+                { day: 1, count: 5, interval: 6.5, patience: 22, target: 35, events: 0 },
+                { day: 2, count: 6, interval: 5.8, patience: 20, target: 48, events: 1 },
+                { day: 3, count: 7, interval: 5.2, patience: 18, target: 62, events: 1 },
+                { day: 4, count: 8, interval: 4.6, patience: 16, target: 76, events: 2 },
+                { day: 5, count: 9, interval: 4.1, patience: 14.5, target: 90, events: 2 },
+                { day: 6, count: 10, interval: 3.6, patience: 13, target: 108, events: 3 },
+                { day: 7, count: 11, interval: 3.2, patience: 11.5, target: 126, events: 3 },
+                { day: 8, count: 12, interval: 2.9, patience: 10, target: 148, events: 4 }
+            ];
+            const SHOP_ITEMS = [
+                { id: 'knife', name: 'Sharp Knife', desc: 'Prep speed +15%', base: 25, max: 3 },
+                { id: 'patience', name: 'Patience Coach', desc: 'Customers wait +15%', base: 22, max: 3 },
+                { id: 'tips', name: 'Tip Jar', desc: '+15% tip chance', base: 18, max: 3 },
+                { id: 'pest', name: 'Pest Repellant', desc: 'Fewer bad events', base: 30, max: 3 },
+                { id: 'quality', name: 'Premium Fish', desc: 'Sushi +20% value', base: 35, max: 3 }
+            ];
+
+            // ============ AUDIO ============
+            class AudioManager {
+                constructor() {
+                    this.ctx = null;
+                    this.master = null;
+                    this.musicGain = null;
+                    this.musicTimer = null;
+                    this.step = 0;
+                    this.ready = false;
+                }
+                ensure() {
+                    if (this.ready) return;
+                    if (!this.ctx) {
+                        this.ctx = new(window.AudioContext || window.webkitAudioContext)();
+                        this.master = this.ctx.createGain();
+                        this.master.gain.value = 0.5;
+                        this.master.connect(this.ctx.destination);
+                        this.musicGain = this.ctx.createGain();
+                        this.musicGain.gain.value = 0.14;
+                        this.musicGain.connect(this.master);
+                    }
+                    if (this.ctx.state === 'suspended') this.ctx.resume();
+                    this.ready = true;
+                }
+                tone(freq, dur, type, vol, sweepTo, attack) {
+                    if (!this.ready) return;
+                    const t = this.ctx.currentTime;
+                    const o = this.ctx.createOscillator();
+                    const g = this.ctx.createGain();
+                    o.type = type || 'sine';
+                    o.frequency.setValueAtTime(freq, t);
+                    if (sweepTo) o.frequency.exponentialRampToValueAtTime(sweepTo, t + dur);
+                    g.gain.setValueAtTime(0.0001, t);
+                    g.gain.exponentialRampToValueAtTime(vol || 0.2, t + (attack || 0.01));
+                    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+                    o.connect(g);
+                    g.connect(this.master);
+                    o.start(t);
+                    o.stop(t + dur + 0.02);
+                }
+                noise(dur, vol, freqCut) {
+                    if (!this.ready) return;
+                    const t = this.ctx.currentTime;
+                    const len = Math.floor(this.ctx.sampleRate * dur);
+                    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+                    const d = buf.getChannelData(0);
+                    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+                    const src = this.ctx.createBufferSource();
+                    src.buffer = buf;
+                    const f = this.ctx.createBiquadFilter();
+                    f.type = 'lowpass';
+                    f.frequency.value = freqCut || 1200;
+                    const g = this.ctx.createGain();
+                    g.gain.value = vol || 0.3;
+                    src.connect(f);
+                    f.connect(g);
+                    g.connect(this.master);
+                    src.start(t);
+                }
+                click() { this.tone(520, 0.08, 'triangle', 0.12, 680); }
+                wrong() { this.tone(160, 0.22, 'sawtooth', 0.14, 90); }
+                serve() { this.tone(660, 0.12, 'sine', 0.16, 880); this.tone(880, 0.16, 'sine', 0.12, null, 0.08); }
+                money() { this.tone(1040, 0.1, 'square', 0.07); }
+                alarm() { this.tone(400, 0.3, 'sawtooth', 0.15, 280); }
+                inspectorHorn() { this.tone(180, 0.4, 'square', 0.12, 140); }
+                ratSqueak() { this.noise(0.12, 0.2, 2500); this.tone(3000, 0.08, 'sine', 0.06); }
+                fireSizzle() { this.noise(0.3, 0.2, 800); }
+                medicine() { this.tone(500, 0.2, 'sine', 0.14, 900); }
+                clear() { this.tone(300, 0.06, 'triangle', 0.08, 200); }
+                purchase() { this.tone(880, 0.1, 'sine', 0.12); this.tone(1320, 0.15, 'sine', 0.1, null, 0.08); }
+                gameover() { [400, 320, 240, 180].forEach((f, i) => setTimeout(() => this.tone(f, 0.3, 'sawtooth', 0.12), i * 180)); }
+                startMusic() {
+                    if (!this.ready || this.musicTimer) return;
+                    const bass = [55, 55, 65.4, 73.4, 55, 55, 65.4, 82.4];
+                    const mel = [220, 261.6, 293.7, 329.6, 392, 329.6, 293.7, 261.6, 220, 196, 174.6, 220, 261.6, 293.7, 246.9, 220];
+                    this.musicTimer = setInterval(() => {
+                        if (this.ctx.state !== 'running') return;
+                        let s = this.step % 8;
+                        const t = this.ctx.currentTime;
+                        const b = bass[s];
+                        this.musicTone(b, t, 0.55, 'triangle', 0.2);
+                        this.musicTone(b * 2, t + 0.05, 0.5, 'triangle', 0.1);
+                        const m = mel[(this.step * 2 + Math.floor(this.step / 4)) % mel.length];
+                        this.musicTone(m * 1.5, t + 0.25, 0.28, 'sine', 0.07);
+                        this.musicTone(m * 2, t + 0.4, 0.2, 'sine', 0.05);
+                        this.step++;
+                    }, 390);
+                }
+                musicTone(freq, t, dur, type, vol) {
+                    if (!this.ready) return;
+                    const o = this.ctx.createOscillator();
+                    const g = this.ctx.createGain();
+                    o.type = type;
+                    o.frequency.value = freq;
+                    g.gain.setValueAtTime(0.0001, t);
+                    g.gain.exponentialRampToValueAtTime(vol, t + 0.02);
+                    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+                    o.connect(g);
+                    g.connect(this.musicGain);
+                    o.start(t);
+                    o.stop(t + dur + 0.02);
+                }
+                stopMusic() {
+                    if (this.musicTimer) { clearInterval(this.musicTimer);
+                        this.musicTimer = null; }
+                }
+            }
+            const audio = new AudioManager();
+
+            // ============ INPUT ============
+            class InputManager {
+                constructor(cv) {
+                    this.canvas = cv;
+                    this.listeners = [];
+                    this.mouseX = -100;
+                    this.mouseY = -100;
+                    this.keyHandlers = {};
+                    cv.addEventListener('mousedown', e => this.handleDown(e));
+                    cv.addEventListener('touchstart', e => { e.preventDefault(); const t = e.touches[0]; this.handleClient(t.clientX, t.clientY); }, { passive: false });
+                    cv.addEventListener('touchmove', e => {
+                        e.preventDefault();
+                        if (e.touches.length > 0) { const t = e.touches[0];
+                            this.mouseX = this.toGameX(t.clientX);
+                            this.mouseY = this.toGameY(t.clientY); }
+                    }, { passive: false });
+                    cv.addEventListener('mousemove', e => { this.mouseX = this.toGameX(e.clientX);
+                        this.mouseY = this.toGameY(e.clientY); });
+                    window.addEventListener('keydown', e => {
+                        if (this.keyHandlers[e.code]) this.keyHandlers[e.code]();
+                    });
+                }
+                toGameX(cx) {
+                    const r = this.canvas.getBoundingClientRect();
+                    return (cx - r.left) * (W / r.width);
+                }
+                toGameY(cy) {
+                    const r = this.canvas.getBoundingClientRect();
+                    return (cy - r.top) * (H / r.height);
+                }
+                handleClient(cx, cy) {
+                    this.mouseX = this.toGameX(cx);
+                    this.mouseY = this.toGameY(cy);
+                    const x = this.mouseX,
+                        y = this.mouseY;
+                    this.listeners.forEach(fn => fn(x, y));
+                }
+                handleDown(e) {
+                    e.preventDefault();
+                    this.handleClient(e.clientX, e.clientY);
+                }
+                on(fn) { this.listeners.push(fn); }
+                onKey(code, fn) { this.keyHandlers[code] = fn; }
+            }
+            const input = new InputManager(canvas);
+
+            // ============ PARTICLES ============
+            class ParticleSystem {
+                constructor() {
+                    this.particles = [];
+                    this.texts = [];
+                }
+                emit(x, y, vx, vy, life, size, color, shape) {
+                    this.particles.push({ x, y, vx, vy, life, maxLife: life, size, color, shape: shape || 'circle' });
+                }
+                burst(x, y, colors, count, speed) {
+                    for (let i = 0; i < count; i++) {
+                        const a = Math.random() * TAU;
+                        const sp = rand(speed * 0.3, speed);
+                        const c = colors[randInt(0, colors.length - 1)];
+                        this.emit(x, y, Math.cos(a) * sp, Math.sin(a) * sp, rand(0.3, 0.7), rand(2, 5), c, Math.random() > 0.5 ? 'rect' : 'circle');
+                    }
+                }
+                text(x, y, txt, color, size, life) {
+                    this.texts.push({ x, y, txt, color, size: size || 18, life: life || 1.2, maxLife: life || 1.2 });
+                }
+                update(dt) {
+                    for (let i = this.particles.length - 1; i >= 0; i--) {
+                        const p = this.particles[i];
+                        p.x += p.vx * dt;
+                        p.y += p.vy * dt;
+                        p.vy += 200 * dt;
+                        p.vx *= (1 - 1.5 * dt);
+                        p.vy *= (1 - 1.5 * dt);
+                        p.life -= dt;
+                        if (p.life <= 0) this.particles.splice(i, 1);
+                    }
+                    for (let i = this.texts.length - 1; i >= 0; i--) {
+                        const t = this.texts[i];
+                        t.y -= 35 * dt;
+                        t.life -= dt;
+                        if (t.life <= 0) this.texts.splice(i, 1);
+                    }
+                }
+                draw(ctx) {
+                    for (const p of this.particles) {
+                        const a = clamp(p.life / p.maxLife, 0, 1);
+                        ctx.globalAlpha = a;
+                        ctx.fillStyle = p.color;
+                        if (p.shape === 'circle') {
+                            ctx.beginPath();
+                            ctx.arc(p.x, p.y, p.size, 0, TAU);
+                            ctx.fill();
+                        } else {
+                            ctx.save();
+                            ctx.translate(p.x, p.y);
+                            ctx.rotate(p.vx * 0.02);
+                            ctx.fillRect(-p.size, -p.size, p.size * 2, p.size * 2);
+                            ctx.restore();
+                        }
+                    }
+                    ctx.globalAlpha = 1;
+                    for (const t of this.texts) {
+                        const a = clamp(t.life / t.maxLife, 0, 1);
+                        ctx.globalAlpha = a;
+                        ctx.fillStyle = t.color;
+                        ctx.font = `bold ${t.size}px system-ui`;
+                        ctx.textAlign = 'center';
+                        ctx.fillText(t.txt, t.x, t.y);
+                    }
+                    ctx.globalAlpha = 1;
+                }
+            }
+            const particles = new ParticleSystem();
+
+            // ============ DRAWING: SUSHI ============
+            function drawSushiIcon(ctx, recipeId, x, y, r) {
+                const rec = RECIPES.find(rp => rp.id === recipeId);
+                if (!rec) return;
+                const has = id => rec.recipe.includes(id);
+                if (rec.id === 'snig' || rec.id === 'tnig') {
+                    const fishColor = rec.id === 'snig' ? '#ff8c42' : '#ff5760';
+                    // rice
+                    ctx.fillStyle = '#fdf3e0';
+                    ctx.beginPath();
+                    ctx.ellipse(x, y + r * 0.15, r * 0.95, r * 0.55, 0, 0, TAU);
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                    // fish
+                    ctx.fillStyle = fishColor;
+                    ctx.beginPath();
+                    ctx.ellipse(x, y - r * 0.45, r * 0.85, r * 0.32, 0, 0, TAU);
+                    ctx.fill();
+                    if (rec.id === 'snig') {
+                        ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+                        ctx.lineWidth = 1.5;
+                        for (let i = -1; i <= 1; i++) {
+                            ctx.beginPath();
+                            ctx.moveTo(x + i * r * 0.25, y - r * 0.7);
+                            ctx.quadraticCurveTo(x + i * r * 0.4, y - r * 0.45, x + i * r * 0.25, y - r * 0.2);
+                            ctx.stroke();
+                        }
+                    } else {
+                        ctx.strokeStyle = 'rgba(120,0,0,0.3)';
+                        ctx.lineWidth = 1;
+                        for (let i = -1; i <= 1; i++) {
+                            ctx.beginPath();
+                            ctx.moveTo(x + i * r * 0.2, y - r * 0.7);
+                            ctx.lineTo(x + i * r * 0.4, y - r * 0.2);
+                            ctx.stroke();
+                        }
+                    }
+                } else {
+                    // roll
+                    ctx.fillStyle = '#1e3d22';
+                    ctx.beginPath();
+                    ctx.arc(x, y, r * 0.95, 0, TAU);
+                    ctx.fill();
+                    ctx.fillStyle = '#fdf3e0';
+                    ctx.beginPath();
+                    ctx.arc(x, y, r * 0.72, 0, TAU);
+                    ctx.fill();
+                    const fillings = [];
+                    if (has('salmon')) fillings.push({ c: '#ff8c42', ox: -0.15, oy: -0.05 });
+                    if (has('tuna')) fillings.push({ c: '#ff5760', ox: 0.18, oy: 0.05 });
+                    if (has('cuke')) fillings.push({ c: '#7dcf6f', ox: 0.0, oy: 0.12 });
+                    if (has('seaweed')) fillings.push({ c: '#1e3d22', ox: -0.22, oy: 0.2 });
+                    if (fillings.length === 0) fillings.push({ c: '#fdf3e0', ox: 0, oy: 0 });
+                    for (const f of fillings) {
+                        ctx.fillStyle = f.c;
+                        ctx.beginPath();
+                        ctx.arc(x + f.ox * r, y + f.oy * r, r * 0.28, 0, TAU);
+                        ctx.fill();
+                        ctx.fillStyle = 'rgba(0,0,0,0.1)';
+                        ctx.beginPath();
+                        ctx.arc(x + f.ox * r - 1, y + f.oy * r - 1, r * 0.28, 0, TAU);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            function drawIngredientIcon(ctx, id, x, y, r) {
+                const ing = INGREDIENTS[id];
+                if (!ing) return;
+                ctx.fillStyle = ing.color;
+                if (id === 'rice') {
+                    ctx.beginPath();
+                    ctx.ellipse(x, y, r * 0.9, r * 0.6, 0.3, 0, TAU);
+                    ctx.fill();
+                    ctx.scale(1, 0.3);
+                    ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+                    ctx.lineWidth = 1;
+                    for (let i = -1; i <= 1; i++) {
+                        ctx.beginPath();
+                        ctx.arc(x + i * 4, y * 3, 3, 0, TAU);
+                        ctx.stroke();
+                    }
+                } else if (id === 'seaweed') {
+                    roundRect(ctx, x - r * 0.8, y - r * 0.5, r * 1.6, r * 1, r * 0.2);
+                    ctx.fill();
+                } else {
+                    ctx.beginPath();
+                    ctx.arc(x, y, r * 0.75, 0, TAU);
+                    ctx.fill();
+                    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+                    ctx.beginPath();
+                    ctx.arc(x - r * 0.2, y - r * 0.2, r * 0.35, 0, TAU);
+                    ctx.fill();
+                }
+            }
+
+            // ============ CUSTOMER ============
+            class Customer {
+                constructor(order, slotX, slotY, patience, game) {
+                    this.order = order;
+                    this.slotX = slotX;
+                    this.slotY = slotY;
+                    this.x = slotX < 400 ? -60 : W + 60;
+                    this.y = slotY;
+                    this.state = 'arriving';
+                    this.patienceMax = patience;
+                    this.patience = patience;
+                    this.time = 0;
+                    this.game = game;
+                    this.skin = '#f2c49b';
+                    this.shirtColor = ['#5aa9e6', '#e66a5a', '#5ae6a9', '#e6d35a', '#c05ae6'][randInt(0, 4)];
+                    this.fleeSpeed = 200;
+                }
+                update(dt) {
+                    if (this.state === 'arriving') {
+                        const dx = this.slotX - this.x,
+                            dy = this.slotY - this.y;
+                        const d = Math.hypot(dx, dy);
+                        if (d < 4) {
+                            this.x = this.slotX;
+                            this.y = this.slotY;
+                            this.state = 'waiting';
+                        } else {
+                            this.x += (dx / d) * 260 * dt;
+                            this.y += (dy / d) * 260 * dt;
+                        }
+                    } else if (this.state === 'waiting') {
+                        this.patience -= dt;
+                        this.time += dt;
+                        if (this.patience <= 0) {
+                            this.state = 'angry';
+                            this.game.rep -= 8;
+                            this.game.addFloating(this.x, this.y - 50, '-8 rep', '#ff5555', 16);
+                            audio.wrong();
+                            this.game.shake(5);
+                        }
+                    } else if (this.state === 'angry' || this.state === 'leaving' || this.state === 'served') {
+                        const targetX = this.slotX < 400 ? W + 80 : -80;
+                        const dx = targetX - this.x;
+                        const d = Math.abs(dx);
+                        const spd = this.state === 'served' ? 300 : this.fleeSpeed;
+                        if (d < 8) {
+                            this.state = 'gone';
+                        } else {
+                            this.x += Math.sign(dx) * spd * dt;
+                        }
+                    } else if (this.state === 'sick') {
+                        this.time += dt;
+                    }
+                }
+                draw(ctx) {
+                    if (this.state === 'gone') return;
+                    const bob = (this.state === 'waiting') ? Math.sin(this.time * 3) * 2 : 0;
+                    const x = this.x,
+                        y = this.y + bob;
+                    const angry = this.state === 'angry';
+                    const sick = this.state === 'sick';
+                    // shadow
+                    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                    ctx.beginPath();
+                    ctx.ellipse(this.x, this.slotY + 45, 22, 6, 0, 0, TAU);
+                    ctx.fill();
+                    // body
+                    ctx.fillStyle = angry ? '#d95252' : this.shirtColor;
+                    roundRect(ctx, this.x - 18, this.y + 2, 36, 38, 8);
+                    ctx.fill();
+                    // head
+                    ctx.fillStyle = sick ? '#a8d695' : this.skin;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y - 14, 18, 0, TAU);
+                    ctx.fill();
+                    // eyes
+                    ctx.fillStyle = '#2a1f1a';
+                    if (angry) {
+                        ctx.fillRect(this.x - 10, this.y - 16, 5, 3);
+                        ctx.fillRect(this.x + 5, this.y - 16, 5, 3);
+                        ctx.fillRect(this.x - 7, this.y - 10, 3, 3);
+                        ctx.fillRect(this.x + 4, this.y - 10, 3, 3);
+                    } else if (sick) {
+                        ctx.beginPath();
+                        ctx.arc(this.x - 7, this.y - 16, 3, 0, TAU);
+                        ctx.fill();
+                        ctx.beginPath();
+                        ctx.arc(this.x + 7, this.y - 16, 3, 0, TAU);
+                        ctx.fill();
+                    } else {
+                        ctx.beginPath();
+                        ctx.arc(this.x - 7, this.y - 16, 2.5, 0, TAU);
+                        ctx.fill();
+                        ctx.beginPath();
+                        ctx.arc(this.x + 7, this.y - 16, 2.5, 0, TAU);
+                        ctx.fill();
+                    }
+                    // mouth
+                    ctx.strokeStyle = '#2a1f1a';
+                    ctx.lineWidth = 1.5;
+                    if (angry) {
+                        ctx.beginPath();
+                        ctx.arc(this.x, this.y - 2, 5, Math.PI, 0);
+                        ctx.stroke();
+                    } else if (sick) {
+                        ctx.beginPath();
+                        ctx.moveTo(this.x - 4, this.y - 4);
+                        ctx.lineTo(this.x + 4, this.y + 1);
+                        ctx.stroke();
+                    } else {
+                        ctx.beginPath();
+                        ctx.arc(this.x, this.y - 5, 4, 0.2, Math.PI - 0.2);
+                        ctx.stroke();
+                    }
+                    // sick green tint
+                    if (sick) {
+                        ctx.fillStyle = 'rgba(80,180,80,0.4)';
+                        ctx.beginPath();
+                        ctx.arc(this.x, this.y - 14, 18, 0, TAU);
+                        ctx.fill();
+                        ctx.font = 'bold 12px sans-serif';
+                        ctx.fillStyle = '#44a844';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('☠', this.x + 20, this.y - 30);
+                    }
+                    // anger steam
+                    if (angry) {
+                        ctx.fillStyle = 'rgba(255,0,0,0.3)';
+                        ctx.font = 'bold 16px sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('💢', this.x + 20, this.y - 32);
+                    }
+                    // order bubble (when waiting/sick)
+                    if (this.state === 'waiting' || this.state === 'sick') {
+                        const bx = this.x,
+                            by = this.y - 52;
+                        ctx.fillStyle = 'rgba(255,255,255,0.95)';
+                        ctx.beginPath();
+                        ctx.ellipse(bx, by, 20, 16, 0, 0, TAU);
+                        ctx.fill();
+                        ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+                        ctx.lineWidth = 1;
+                        ctx.stroke();
+                        ctx.beginPath();
+                        ctx.moveTo(bx, by + 13);
+                        ctx.lineTo(bx - 5, by + 25);
+                        ctx.lineTo(bx + 5, by + 22);
+                        ctx.fill();
+                        drawSushiIcon(ctx, this.order, bx, by, 12);
+                    }
+                    // patience bar
+                    if (this.state === 'waiting' || this.state === 'sick') {
+                        const bw = 40,
+                            bh = 5,
+                                    bx = this.x - bw / 2,
+                                    by = this.y + 44;
+                        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                        roundRect(ctx, bx, by, bw, bh, 2.5);
+                        ctx.fill();
+                        const p = clamp(this.patience / this.patienceMax, 0, 1);
+                        ctx.fillStyle = p > 0.5 ? '#5ae65a' : p > 0.25 ? '#f0c640' : '#e65a5a';
+                        roundRect(ctx, bx, by, bw * p, bh, 2.5);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            // ============ BUTTON ============
+            class Button {
+                constructor(x, y, w, h, label, onClick, style) {
+                    this.x = x;
+                    this.y = y;
+                    this.w = w;
+                    this.h = h;
+                    this.label = label;
+                    this.onClick = onClick;
+                    this.style = style || { bg: '#c07830', hover: '#d49048', fg: '#fff', border: '#8a4a18' };
+                    this.disabled = false;
+                    this.hover = false;
+                    this.hidden = false;
+                }
+                contains(mx, my) {
+                    return mx >= this.x && mx <= this.x + this.w && my >= this.y && my <= this.y + this.h;
+                }
+                draw(ctx) {
+                    if (this.hidden) return;
+                    ctx.save();
+                    const s = this.style;
+                    if (this.disabled) {
+                        ctx.globalAlpha = 0.5;
+                    } else if (this.hover) {
+                        ctx.globalAlpha = 1;
+                    }
+                    ctx.fillStyle = this.hover && !this.disabled ? s.hover : s.bg;
+                    roundRect(ctx, this.x, this.y, this.w, this.h, 8);
+                    ctx.fill();
+                    ctx.strokeStyle = s.border;
+                    ctx.lineWidth = 1.5;
+                    roundRect(ctx, this.x + 0.5, this.y + 0.5, this.w - 1, this.h - 1, 8);
+                    ctx.stroke();
+                    ctx.fillStyle = s.fg;
+                    ctx.font = 'bold 15px system-ui';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(this.label, this.x + this.w / 2, this.y + this.h / 2 + 1);
+                    ctx.restore();
+                }
+            }
+
+            // ============ BAD EVENTS ============
+            class BadEvent {
+                constructor(game) {
+                    this.game = game;
+                    this.done = false;
+                }
+                update(dt) {}
+                draw(ctx) {}
+                handleClick(x, y) { return false; }
+                completed() { return this.done; }
+            }
+
+            class HealthInspectorEvent extends BadEvent {
+                constructor(game) {
+                    super(game);
+                    this.clicksNeeded = 5;
+                    this.clicksDone = 0;
+                    this.timeLimit = 8;
+                    this.time = 0;
+                    this.button = new Button(W / 2 - 60, H - 100, 120, 50, 'SPARKLE!', () => {
+                        audio.click();
+                        particles.burst(this.button.x + this.button.w / 2, this.button.y + this.button.h / 2, ['#aaffaa', '#fff', '#ffdd88'], 8, 80);
+                        this.clicksDone++;
+                        if (this.clicksDone >= this.clicksNeeded) {
+                            this.game.money += 15;
+                            particles.text(W / 2, H - 120, '+$15 PASSED!', '#88ff88', 20, 1.5);
+                            audio.money();
+                            this.done = true;
+                        }
+                    });
+                    this.active = true;
+                }
+                update(dt) {
+                    if (!this.done) {
+                        this.time += dt;
+                        if (this.time >= this.timeLimit) {
+                            this.game.money -= 40;
+                            this.game.addFloating(W / 2, 200, '-$40 FINE!', '#ff5555', 22);
+                            audio.alarm();
+                            this.game.shake(10);
+                            this.game.rep -= 12;
+                            this.done = true;
+                        }
+                    }
+                }
+                draw(ctx) {
+                    if (this.done) return;
+                    // inspector avatar
+                    ctx.save();
+                    const x = W / 2 - 120,
+                        y = 160;
+                    ctx.fillStyle = '#1f3a5f';
+                    roundRect(ctx, x, y, 70, 80, 10);
+                    ctx.fill();
+                    ctx.fillStyle = '#e8c8a0';
+                    ctx.beginPath();
+                    ctx.arc(x + 35, y - 10, 20, 0, TAU);
+                    ctx.fill();
+                    ctx.fillStyle = '#1f3a5f';
+                    ctx.beginPath();
+                    ctx.arc(x + 35, y - 22, 22, Math.PI, 0);
+                    ctx.fill();
+                    ctx.fillStyle = '#333';
+                    ctx.fillRect(x - 5, y - 2, 80, 6);
+                    ctx.fillRect(x + 30, y - 30, 12, 25);
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '10px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('CLIPBOARD', x + 35, y + 90);
+                    ctx.restore();
+                    // banner
+                    ctx.fillStyle = '#c0392b';
+                    roundRect(ctx, W / 2 - 130, 60, 260, 44, 10);
+                    ctx.fill();
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 20px system-ui';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('HEALTH INSPECTOR!', W / 2, 90);
+                    // progress
+                    const bw = 200,
+                        ph = clamp(this.clicksDone / this.clicksNeeded, 0, 1);
+                    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                    roundRect(ctx, W / 2 - 100, 110, bw, 12, 6);
+                    ctx.fill();
+                    ctx.fillStyle = '#2ecc71';
+                    roundRect(ctx, W / 2 - 100, 110, bw * ph, 12, 6);
+                    ctx.fill();
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 12px monospace';
+                    ctx.fillText(`CLEAN! ${this.clicksDone}/${this.clicksNeeded}`, W / 2, 110);
+                    // timer bar
+                    const tp = clamp(1 - this.time / this.timeLimit, 0, 1);
+                    ctx.fillStyle = '#e74c3c';
+                    roundRect(ctx, W / 2 - 100, 128, bw * tp, 6, 3);
+                    ctx.fill();
+                    this.button.draw(ctx);
+                }
+                handleClick(x, y) {
+                    if (this.done) return false;
+                    if (this.button.contains(x, y)) {
+                        this.button.onClick();
+                        return true;
+                    }
+                    return false;
+                }
+            }
+
+            class RatEvent extends BadEvent {
+                constructor(game) {
+                    super(game);
+                    this.rats = [];
+                    const count = game.day >= 6 ? 3 : 2;
+                    for (let i = 0; i < count; i++) {
+                        const side = randInt(0, 1);
+                        const y = rand(120, 420);
+                        this.rats.push({
+                            x: side === 0 ? -30 : W + 30,
+                            y: y,
+                            targetX: rand(100, W - 100),
+                            targetY: rand(120, 400),
+                            speed: rand(60, 110) * (1 + game.day * 0.03),
+                            alive: true
+                        });
+                    }
+                    audio.ratSqueak();
+                }
+                update(dt) {
+                    for (const r of this.rats) {
+                        if (!r.alive) continue;
+                        const dx = r.targetX - r.x,
+                            dy = r.targetY - r.y;
+                        const d = Math.hypot(dx, dy);
+                        if (d < 10) {
+                            this.game.money -= 15;
+                            this.game.rep -= 6;
+                            this.game.addFloating(r.x, r.y - 20, '-$15', '#ff5555', 16);
+                            audio.wrong();
+                            this.game.shake(4);
+                            r.alive = false;
+                        } else {
+                            r.x += (dx / d) * r.speed * dt;
+                            r.y += (dy / d) * r.speed * dt;
+                        }
+                    }
+                    if (this.rats.every(r => !r.alive)) this.done = true;
+                }
+                draw(ctx) {
+                    for (const r of this.rats) {
+                        if (!r.alive) continue;
+                        ctx.save();
+                        const dir = Math.atan2(r.targetY - r.y, r.targetX - r.x);
+                        ctx.translate(r.x, r.y);
+                        ctx.rotate(dir);
+                        ctx.fillStyle = '#6b4f3a';
+                        ctx.beginPath();
+                        ctx.ellipse(0, 0, 16, 9, 0, 0, TAU);
+                        ctx.fill();
+                        ctx.fillStyle = '#8a6a4f';
+                        ctx.beginPath();
+                        ctx.arc(12, -4, 6, 0, TAU);
+                        ctx.fill();
+                        ctx.fillStyle = '#ff5a5a';
+                        ctx.beginPath();
+                        ctx.arc(-14, -2, 4, 0, TAU);
+                        ctx.fill();
+                        ctx.fillStyle = '#333';
+                        ctx.beginPath();
+                        ctx.arc(15, -6, 2, 0, TAU);
+                        ctx.fill();
+                        ctx.strokeStyle = '#6b4f3a';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(-12, 0);
+                        ctx.quadraticCurveTo(-22, 14, -16, 26);
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+                }
+                handleClick(x, y) {
+                    for (const r of this.rats) {
+                        if (r.alive && dist(x, y, r.x, r.y) < 22) {
+                            r.alive = false;
+                            audio.ratSqueak();
+                            particles.burst(r.x, r.y, ['#6b4f3a', '#8a6a4f', '#ff5a5a'], 12, 100);
+                            particles.text(r.x, r.y - 15, 'BAM!', '#ffdd55', 15, 0.8);
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+            }
+
+            class FireEvent extends BadEvent {
+                constructor(game) {
+                    super(game);
+                    this.corner = randInt(0, 1) === 0 ? 'left' : 'right';
+                    this.x = this.corner === 'left' ? 40 : W - 40;
+                    this.y = 300;
+                    this.flames = 0;
+                    this.maxFlames = 4;
+                    this.time = 0;
+                    this.button = new Button(this.corner === 'left' ? 30 : W - 150, 360, 120, 50, '🧯 FIRE!', () => {
+                        audio.fireSizzle();
+                        particles.burst(this.x, this.y, ['#ff5500', '#ffaa00', '#ff2200'], 10, 90);
+                        this.flames++;
+                        if (this.flames >= this.maxFlames) {
+                            this.game.money += 10;
+                            particles.text(this.x, this.y - 50, 'SAVED!', '#88ff88', 18, 1);
+                            audio.money();
+                            this.done = true;
+                        }
+                    });
+                }
+                update(dt) {
+                    if (this.done) return;
+                    this.time += dt;
+                    // fire spreads slowly; if time runs too long, penalty
+                    if (this.time > 10) {
+                        this.game.money -= 25;
+                        this.game.rep -= 8;
+                        this.game.addFloating(this.x, this.y, '-$25 FIRE!', '#ff5555', 18);
+                        audio.alarm();
+                        this.game.shake(8);
+                        this.done = true;
+                    }
+                }
+                draw(ctx) {
+                    if (this.done) return;
+                    // flames
+                    const fl = this.flames;
+                    for (let i = 0; i < 6; i++) {
+                        const fx = this.x + Math.sin(this.time * 6 + i * 1.7) * 12;
+                        const fy = this.y + 40 - Math.sin(this.time * 8 + i) * 20 - i * 4;
+                        const fs = 14 + i * 2 + Math.sin(this.time * 7 + i * 2) * 4;
+                        ctx.fillStyle = i % 2 === 0 ? '#ff5500' : '#ffaa00';
+                        ctx.beginPath();
+                        ctx.moveTo(fx - fs / 2, fy);
+                        ctx.quadraticCurveTo(fx, fy - fs * 1.3, fx + fs / 2, fy);
+                        ctx.fill();
+                    }
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 16px system-ui';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(Math.max(0, Math.ceil(10 - this.time)) + 's', this.x, this.y - 60);
+                    this.button.draw(ctx);
+                }
+                handleClick(x, y) {
+                    if (this.done) return false;
+                    if (this.button.contains(x, y)) {
+                        this.button.onClick();
+                        return true;
+                    }
+                    return false;
+                }
+            }
+
+            class FoodPoisonEvent extends BadEvent {
+                constructor(game) {
+                    super(game);
+                    const waiting = game.customers.filter(c => c.state === 'waiting');
+                    this.target = waiting.length > 0 ? waiting[randInt(0, waiting.length - 1)] : null;
+                    this.time = 0;
+                    this.timeLimit = 7;
+                    if (this.target) {
+                        this.target.state = 'sick';
+                        audio.alarm();
+                    } else {
+                        this.done = true;
+                    }
+                }
+                update(dt) {
+                    if (!this.target || this.target.state !== 'sick') {
+                        this.done = true;
+                        return;
+                    }
+                    this.time += dt;
+                    if (this.time >= this.timeLimit) {
+                        this.game.money -= 35;
+                        this.game.rep -= 15;
+                        this.game.addFloating(this.target.x, this.target.y - 30, '-$35 SUED!', '#ff5555', 18);
+                        audio.alarm();
+                        this.game.shake(12);
+                        this.target.state = 'angry';
+                        this.target.fleeSpeed = 300;
+                        this.done = true;
+                    }
+                }
+                draw(ctx) {
+                    if (!this.target || this.target.state !== 'sick') return;
+                    const x = this.target.x,
+                        y = this.target.y;
+                    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+                    roundRect(ctx, x + 20, y - 60, 90, 40, 8);
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+                    ctx.stroke();
+                    ctx.fillStyle = '#2a1f1a';
+                    ctx.font = 'bold 13px system-ui';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('💊 MEDICINE', x + 65, y - 42);
+                    ctx.fillStyle = '#ccc';
+                    ctx.font = '10px sans-serif';
+                    ctx.textAlign = 'center';
+                    const tp = clamp(1 - this.time / this.timeLimit, 0, 1);
+                    ctx.fillStyle = '#e74c3c';
+                    roundRect(ctx, x + 20, y - 30, 90 * tp, 6, 3);
+                    ctx.fill();
+                    ctx.fillStyle = '#2a1f1a';
+                    ctx.font = 'bold 12px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(Math.ceil(this.timeLimit - this.time), x + 65, y - 8);
+                }
+                handleClick(x, y) {
+                    if (!this.target || this.target.state !== 'sick') return false;
+                    if (dist(x, y, this.target.x, this.target.y) < 50) {
+                        audio.medicine();
+                        particles.burst(this.target.x, this.target.y, ['#88ff88', '#aaffaa', '#66dd66'], 14, 110);
+                        this.target.state = 'leaving';
+                        this.target.fleeSpeed = 220;
+                        this.game.money += 8;
+                        particles.text(this.target.x, this.target.y - 30, '+$8 TIP', '#88ff88', 16, 1);
+                        this.target = null;
+                        this.done = true;
+                        return true;
+                    }
+                    return false;
+                }
+            }
+
+            // ============ GAME ============
+            class Game {
+                constructor() {
+                    this.state = 'menu';
+                    this.money = 0;
+                    this.rep = 100;
+                    this.day = 0;
+                    this.best = parseInt(localStorage.getItem('sushi_best') || '0');
+                    this.totalEarned = 0;
+                    this.customers = [];
+                    this.activeEvents = [];
+                    this.tray = [];
+                    this.prepCooldown = 0;
+                    this.prepBaseTime = 0.5;
+                    this.customerQueue = [];
+                    this.spawnTimer = 0;
+                    this.dayOver = false;
+                    this.daySummaryTimer = 0;
+                    this.dayResult = '';
+                    this.shakeX = 0;
+                    this.shakeY = 0;
+                    this.shakeTime = 0;
+                    this.flashColor = null;
+                    this.flashAlpha = 0;
+                    this.time = 0;
+                    this.introPause = 0;
+                    this.shopLevels = {};
+                    SHOP_ITEMS.forEach(s => this.shopLevels[s.id] = 0);
+                    this.buttons = [];
+                    this.hovers = [];
+                    this.message = '';
+                    this.messageTimer = 0;
+                    this.isServing = false;
+                    this.serveFlash = 0;
+                    this.setupInput();
+                }
+                setupInput() {
+                    input.on((x, y) => this.handleClick(x, y));
+                    input.onKey('Escape', () => { if (this.state === 'playing') this.state = 'paused'; else if (this.state === 'paused') this.state =
+                            'playing'; });
+                    input.onKey('KeyP', () => { if (this.state === 'playing') this.state = 'paused'; else if (this.state === 'paused') this
+                            .state = 'playing'; });
+                }
+                addFloating(x, y, txt, color, size) {
+                    particles.text(x, y, txt, color, size, 1.4);
+                }
+                shake(amount) {
+                    this.shakeTime = Math.max(this.shakeTime, amount);
+                    this.flashColor = 'rgba(255,0,0,0.2)';
+                    this.flashAlpha = 0.3;
+                }
+                startGame() {
+                    audio.ensure();
+                    this.money = 60;
+                    this.rep = 100;
+                    this.day = 0;
+                    this.totalEarned = 0;
+                    this.customers = [];
+                    this.activeEvents = [];
+                    this.tray = [];
+                    this.customerQueue = [];
+                    this.dayOver = false;
+                    SHOP_ITEMS.forEach(s => this.shopLevels[s.id] = 0);
+                    this.best = parseInt(localStorage.getItem('sushi_best') || '0');
+                    this.nextDay();
+                    audio.startMusic();
+                }
+                nextDay() {
+                    this.day++;
+                    const cfg = LEVELS[Math.min(this.day - 1, LEVELS.length - 1)];
+                    this.customerQueue = [];
+                    const ids = Object.keys(RECIPES);
+                    for (let i = 0; i < cfg.count; i++) {
+                        let recipeId;
+                        if (this.day <= 1) {
+                            recipeId = ['snig', 'tnig', 'croll'][randInt(0, 2)];
+                        } else if (this.day <= 2) {
+                            recipeId = ['snig', 'tnig', 'croll', 'sroll', 'troll'][randInt(0, 4)];
+                        } else {
+                            recipeId = ids[randInt(0, ids.length - 1)];
+                        }
+                        this.customerQueue.push(recipeId);
+                    }
+                    this.spawnTimer = 1.0;
+                    this.customers = [];
+                    this.activeEvents = [];
+                    this.tray = [];
+                    this.dayOver = false;
+                    this.daySummaryTimer = 0;
+                    this.dayResult = '';
+                    this.introPause = 2.0;
+                    this.state = 'playing';
+                    this.buildPlayingButtons();
+                }
+                getLevelCfg() {
+                    return LEVELS[Math.min(this.day - 1, LEVELS.length - 1)];
+                }
+                getPatienceBonus() {
+                    return 1 + this.shopLevels['patience'] * 0.15;
+                }
+                getPrepSpeed() {
+                    return this.prepBaseTime * Math.pow(0.85, this.shopLevels['knife']);
+                }
+                getTipChance() {
+                    return this.shopLevels['tips'] * 0.15;
+                }
+                getValueMult() {
+                    return 1 + this.shopLevels['quality'] * 0.2;
+                }
+                getEventMultiplier() {
+                    return Math.pow(0.85, this.shopLevels['pest']);
+                }
+                update(dt) {
+                    this.time += dt;
+                    // decay shake
+                    if (this.shakeTime > 0) {
+                        this.shakeX = rand(-this.shakeTime, this.shakeTime);
+                        this.shakeY = rand(-this.shakeTime, this.shakeTime);
+                        this.shakeTime *= (1 - 8 * dt);
+                        if (this.shakeTime < 0.5) this.shakeTime = 0;
+                    } else {
+                        this.shakeX = 0;
+                        this.shakeY = 0;
+                    }
+                    if (this.flashAlpha > 0) {
+                        this.flashAlpha -= dt * 2;
+                        if (this.flashAlpha < 0) this.flashAlpha = 0;
+                    }
+                    particles.update(dt);
+                    if (this.state === 'menu' || this.state === 'gameover' || this.state === 'shop') {
+                        this.updateButtons();
+                        return;
+                    }
+                    if (this.state === 'paused') return;
+                    // intro pause
+                    if (this.introPause > 0) {
+                        this.introPause -= dt;
+                        return;
+                    }
+                    // day summary display
+                    if (this.dayOver) {
+                        this.daySummaryTimer -= dt;
+                        if (this.daySummaryTimer <= 0) {
+                            if (this.dayResult === 'success') {
+                                this.goToShop();
+                            } else {
+                                this.gameOver();
+                            }
+                        }
+                        this.updateCustomers(dt);
+                        return;
+                    }
+                    // spawn customers
+                    const cfg = this.getLevelCfg();
+                    if (this.customerQueue.length > 0) {
+                        this.spawnTimer -= dt;
+                        if (this.spawnTimer <= 0) {
+                            const slots = [250, 400, 550];
+                            const usedSlots = this.customers.filter(c => c.state !== 'gone').map(c => c.slotX);
+                            const freeSlots = slots.filter(s => !usedSlots.includes(s));
+                            if (freeSlots.length > 0 && this.customerQueue.length > 0) {
+                                const recipeId = this.customerQueue.shift();
+                                const slot = freeSlots[randInt(0, freeSlots.length - 1)];
+                                const patience = cfg.patience * this.getPatienceBonus();
+                                const cust = new Customer(recipeId, slot, 220, patience, this);
+                                this.customers.push(cust);
+                                this.spawnTimer = Math.max(0.5, cfg.interval * rand(0.85, 1.15));
+                            } else if (freeSlots.length === 0) {
+                                this.spawnTimer = 0.5;
+                            }
+                        }
+                    }
+                    // spawn events
+                    const eventMult = this.getEventMultiplier();
+                    const eventFreq = Math.max(3, (14 - this.day * 0.6) * eventMult);
+                    if (this.activeEvents.length < 1 && Math.random() < dt * (1 / eventFreq)) {
+                        this.spawnEvent();
+                    }
+                    // update customers
+                    this.updateCustomers(dt);
+                    // update events
+                    for (let i = this.activeEvents.length - 1; i >= 0; i--) {
+                        const ev = this.activeEvents[i];
+                        ev.update(dt);
+                        if (ev.completed()) {
+                            this.activeEvents.splice(i, 1);
+                        }
+                    }
+                    // prep cooldown
+                    if (this.prepCooldown > 0) this.prepCooldown -= dt;
+                    // check day end
+                    if (this.customerQueue.length === 0 && this.customers.every(c => c.state === 'gone')) {
+                        this.finishDay();
+                    }
+                }
+                updateCustomers(dt) {
+                    for (let i = this.customers.length - 1; i >= 0; i--) {
+                        const c = this.customers[i];
+                        c.update(dt);
+                        if (c.state === 'gone') this.customers.splice(i, 1);
+                    }
+                }
+                spawnEvent() {
+                    const candidates = [];
+                    if (this.day >= 1) candidates.push('inspector');
+                    if (this.day >= 1) candidates.push('rat');
+                    if (this.day >= 2) candidates.push('fire');
+                    if (this.day >= 3) candidates.push('poison');
+                    const type = candidates[randInt(0, candidates.length - 1)];
+                    let ev = null;
+                    if (type === 'inspector') ev = new HealthInspectorEvent(this);
+                    else if (type === 'rat') ev = new RatEvent(this);
+                    else if (type === 'fire') ev = new FireEvent(this);
+                    else if (type === 'poison') ev = new FoodPoisonEvent(this);
+                    if (ev && !ev.completed()) {
+                        this.activeEvents.push(ev);
+                        if (type === 'inspector') audio.inspectorHorn();
+                        else if (type === 'fire') audio.fireSizzle();
+                        else if (type === 'rat') audio.ratSqueak();
+                        else audio.alarm();
+                        this.flashColor = 'rgba(255,0,0,0.25)';
+                        this.flashAlpha = 0.4;
+                        this.shake(3);
+                    }
+                }
+                finishDay() {
+                    if (this.dayOver) return;
+                    const cfg = this.getLevelCfg();
+                    const earned = this.totalEarned;
+                    const target = cfg.target;
+                    if (earned >= target) {
+                        this.dayResult = 'success';
+                        const bonus = 20 + this.day * 5;
+                        this.money += bonus;
+                        particles.text(W / 2, H / 2 - 40, `DAY ${this.day} TARGET MET! +$${bonus}`, '#ffd58a', 24, 2);
+                    } else {
+                        this.dayResult = 'fail';
+                        this.rep -= 25;
+                        particles.text(W / 2, H / 2 - 40, `MISSED TARGET! -25 REP`, '#ff5555', 22, 2);
+                    }
+                    this.dayOver = true;
+                    this.daySummaryTimer = 2.2;
+                }
+                goToShop() {
+                    this.state = 'shop';
+                    this.buildShopButtons();
+                }
+                gameOver() {
+                    this.state = 'gameover';
+                    if (this.totalEarned > this.best) {
+                        this.best = Math.floor(this.totalEarned);
+                        localStorage.setItem('sushi_best', this.best.toString());
+                    }
+                    audio.gameover();
+                    this.buildGameOverButtons();
+                }
+                handleClick(x, y) {
+                    if (this.state === 'menu') {
+                        if (this.buttons.some(b => b.disabled === false && b.contains(x, y))) return;
+                        return;
+                    }
+                    if (this.state === 'gameover' || this.state === 'shop') {
+                        this.updateButtons();
+                        return;
+                    }
+                    if (this.state === 'paused') {
+                        this.buttons.forEach(b => {
+                            if (b.contains(x, y)) b.onClick();
+                        });
+                        return;
+                    }
+                    if (this.introPause > 0 || this.dayOver) return;
+                    // playing state
+                    // first check events
+                    for (const ev of this.activeEvents) {
+                        if (ev.handleClick(x, y)) return;
+                    }
+                    // check buttons (ingredients, clear, serve, pause)
+                    for (const b of this.buttons) {
+                        if (!b.hidden && !b.disabled && b.contains(x, y)) {
+                            b.onClick();
+                            return;
+                        }
+                    }
+                    // check customers to serve
+                    for (const c of this.customers) {
+                        if ((c.state === 'waiting' || c.state === 'sick') && dist(x, y, c.x, c.y) < 55) {
+                            if (c.state === 'sick') {
+                                // treat as medicine click
+                                for (const ev of this.activeEvents) {
+                                    if (ev instanceof FoodPoisonEvent && ev.target === c) {
+                                        ev.handleClick(x, y);
+                                        return;
+                                    }
+                                }
+                            }
+                            this.tryServe(c);
+                            return;
+                        }
+                    }
+                }
+                tryServe(c) {
+                    if (this.tray.length === 0) return;
+                    const rec = RECIPES.find(r => r.recipe.length === this.tray.length && r.recipe.every(i => this.tray.includes(i)));
+                    if (rec && rec.id === c.order) {
+                        // success
+                        let price = rec.price * this.getValueMult();
+                        if (Math.random() < this.getTipChance()) {
+                            price = Math.round(price * 1.5);
+                            particles.text(c.x, c.y - 30, `TIP!`, '#ffd58a', 14, 0.8);
+                        }
+                        this.money += Math.round(price);
+                        this.totalEarned += Math.round(price);
+                        this.addFloating(c.x, c.y - 40, `+$${Math.round(price)}`, '#ffd58a', 19);
+                        audio.serve();
+                        audio.money();
+                        particles.burst(c.x, c.y - 20, ['#ffd58a', '#fff', '#ff8c42'], 12, 120);
+                        c.state = 'served';
+                        this.tray = [];
+                        this.prepCooldown = Math.max(this.prepCooldown, 0.1);
+                        this.isServing = true;
+                        this.serveFlash = 0.15;
+                    } else {
+                        audio.wrong();
+                        this.shake(3);
+                        this.addFloating(c.x, c.y - 40, 'WRONG!', '#ff5555', 16);
+                        // clear tray to prevent clutter
+                        this.tray = [];
+                    }
+                }
+                buildPlayingButtons() {
+                    this.buttons = [];
+                    const ys = 490;
+                    const ingList = ['rice', 'salmon', 'tuna', 'cuke', 'seaweed'];
+                    for (let i = 0; i < ingList.length; i++) {
+                        const id = ingList[i];
+                        const bx = 60 + i * 120;
+                        const btn = new Button(bx - 40, ys, 80, 80, '', () => this.addIngredient(id), {
+                            bg: '#3a2c20',
+                            hover: '#4a3a2c',
+                            fg: '#fff',
+                            border: INGREDIENTS[id].color
+                        });
+                        btn.ingredientId = id;
+                        btn.hidden = false;
+                        this.buttons.push(btn);
+                    }
+                    // clear button
+                    this.buttons.push(new Button(360, ys + 90, 80, 40, '✕ CLEAR', () => {
+                        if (this.tray.length > 0) { this.tray = [];
+                            audio.clear(); }
+                    }, { bg: '#5a3a2a', hover: '#7a4a3a', fg: '#ffaaaa', border: '#8a4a3a' }));
+                    // pause button
+                    this.buttons.push(new Button(W - 70, 20, 55, 40, '⏸', () => {
+                        if (this.state === 'playing') this.state = 'paused';
+                        this.buildPauseButtons();
+                    }, { bg: '#3a2c20', hover: '#4a3a2c', fg: '#fff', border: '#8a6a4a' }));
+                    // tray display area — not a button, handled in draw
+                }
+                addIngredient(id) {
+                    if (this.prepCooldown > 0) return;
+                    if (this.tray.length >= 4) {
+                        audio.wrong();
+                        return;
+                    }
+                    if (this.tray.includes(id)) return;
+                    this.tray.push(id);
+                    audio.click();
+                    this.prepCooldown = this.getPrepSpeed();
+                    particles.burst(60 + (Object.keys(INGREDIENTS).indexOf(id)) * 120, 490, [INGREDIENTS[id].color], 4, 50);
+                }
+                buildPauseButtons() {
+                    this.buttons = [];
+                    this.buttons.push(new Button(W / 2 - 90, 260, 180, 55, '▶ RESUME', () => {
+                        this.state = 'playing';
+                        this.buildPlayingButtons();
+                    }, { bg: '#2ecc71', hover: '#3edd81', fg: '#fff', border: '#1a8a4a' }));
+                    this.buttons.push(new Button(W / 2 - 90, 330, 180, 55, '🏠 MENU', () => {
+                        this.state = 'menu';
+                        audio.stopMusic();
+                        this.buildMenuButtons();
+                    }, { bg: '#c07830', hover: '#d49048', fg: '#fff', border: '#8a4a18' }));
+                }
+                buildShopButtons() {
+                    this.buttons = [];
+                    const ys = 200;
+                    for (let i = 0; i < SHOP_ITEMS.length; i++) {
+                        const item = SHOP_ITEMS[i];
+                        const lvl = this.shopLevels[item.id];
+                        const cost = Math.round(item.base * (lvl + 1));
+                        const maxed = lvl >= item.max;
+                        const bx = 60 + i * 145,
+                            by = ys;
+                        const btn = new Button(bx, by, 130, 75, '', () => this.buyUpgrade(item.id), {
+                            bg: '#3a2c20',
+                            hover: '#4a3a2c',
+                            fg: '#fff',
+                            border: maxed ? '#2ecc71' : (this.money >= cost ? '#ffd58a' : '#555')
+                        });
+                        btn.shopItem = item;
+                        btn.cost = cost;
+                        btn.maxed = maxed;
+                        btn.hidden = false;
+                        this.buttons.push(btn);
+                    }
+                    this.buttons.push(new Button(W / 2 - 140, 480, 280, 60, '▶ START DAY ' + (this.day + 1), () => {
+                        this.nextDay();
+                    }, { bg: '#2ecc71', hover: '#3edd81', fg: '#fff', border: '#1a8a4a' }));
+                }
+                buyUpgrade(id) {
+                    const item = SHOP_ITEMS.find(s => s.id === id);
+                    const lvl = this.shopLevels[id];
+                    const cost = Math.round(item.base * (lvl + 1));
+                    if (lvl >= item.max || this.money < cost) {
+                        audio.wrong();
+                        return;
+                    }
+                    this.money -= cost;
+                    this.shopLevels[id] = lvl + 1;
+                    audio.purchase();
+                    particles.text(W / 2, 160, `PURCHASED ${item.name}!`, '#ffd58a', 20, 1.5);
+                    this.buildShopButtons();
+                }
+                buildGameOverButtons() {
+                    this.buttons = [];
+                    this.buttons.push(new Button(W / 2 - 140, 320, 280, 55, '🔄 RETRY', () => {
+                        this.startGame();
+                    }, { bg: '#c0392b', hover: '#d95252', fg: '#fff', border: '#8a1a1a' }));
+                    this.buttons.push(new Button(W / 2 - 140, 395, 280, 55, '🏠 MENU', () => {
+                        this.state = 'menu';
+                        audio.stopMusic();
+                        this.buildMenuButtons();
+                    }, { bg: '#c07830', hover: '#d49048', fg: '#fff', border: '#8a4a18' }));
+                }
+                buildMenuButtons() {
+                    this.buttons = [];
+                    this.buttons.push(new Button(W / 2 - 140, 380, 280, 60, '🍣 START', () => {
+                        this.startGame();
+                    }, { bg: '#2ecc71', hover: '#3edd81', fg: '#fff', border: '#1a8a4a' }));
+                }
+                updateButtons() {
+                    for (const b of this.buttons) {
+                        if (!b.hidden && b.contains(input.mouseX, input.mouseY)) {
+                            b.hover = true;
+                        } else {
+                            b.hover = false;
+                        }
+                    }
+                    // opacity checks
+                    if (this.state === 'shop') {
+                        for (const b of this.buttons) {
+                            if (b.shopItem) {
+                                const lvl = this.shopLevels[b.shopItem.id];
+                                const cost = Math.round(b.shopItem.base * (lvl + 1));
+                                if (lvl >= b.shopItem.max || this.money < cost) b.disabled = true;
+                                else b.disabled = false;
+                            }
+                        }
+                    }
+                }
+                draw() {
+                    ctx.save();
+                    ctx.clearRect(0, 0, W, H);
+                    ctx.translate(this.shakeX, this.shakeY);
+                    // background
+                    this.drawBackground();
+                    if (this.state === 'menu') {
+                        this.drawMenu();
+                    } else if (this.state === 'gameover') {
+                        this.drawGameOver();
+                    } else if (this.state === 'shop') {
+                        this.drawShop();
+                    } else {
+                        this.drawGameplay();
+                        if (this.state === 'paused') {
+                            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                            ctx.fillRect(0, 0, W, H);
+                            ctx.fillStyle = '#fff';
+                            ctx.font = 'bold 42px system-ui';
+                            ctx.textAlign = 'center';
+                            ctx.fillText('⏸ PAUSED', W / 2, 180);
+                            for (const b of this.buttons) b.draw(ctx);
+                        }
+                    }
+                    // flash
+                    if (this.flashAlpha > 0) {
+                        ctx.globalAlpha = this.flashAlpha;
+                        ctx.fillStyle = this.flashColor || 'rgba(255,0,0,0.2)';
+                        ctx.fillRect(-10, -10, W + 20, H + 20);
+                        ctx.globalAlpha = 1;
+                    }
+                    // particles on top
+                    particles.draw(ctx);
+                    ctx.restore();
+                }
+                drawBackground() {
+                    // wall
+                    const grad = ctx.createLinearGradient(0, 0, 0, 280);
+                    grad.addColorStop(0, '#3a2a20');
+                    grad.addColorStop(1, '#2b1c14');
+                    ctx.fillStyle = grad;
+                    ctx.fillRect(0, 0, W, 300);
+                    // lanterns
+                    for (let i = 0; i < 5; i++) {
+                        const lx = 80 + i * 160,
+                            ly = 40;
+                        ctx.fillStyle = '#d4954a';
+                        ctx.beginPath();
+                        ctx.arc(lx, ly, 14, 0, TAU);
+                        ctx.fill();
+                        ctx.fillStyle = 'rgba(255,200,100,0.6)';
+                        ctx.beginPath();
+                        ctx.arc(lx, ly, 8, 0, TAU);
+                        ctx.fill();
+                    }
+                    // floor below counter
+                    ctx.fillStyle = '#241812';
+                    ctx.fillRect(0, 300, W, 300);
+                    // counter top
+                    const cgrad = ctx.createLinearGradient(0, 300, 0, 360);
+                    cgrad.addColorStop(0, '#8a5a32');
+                    cgrad.addColorStop(1, '#5a3a22');
+                    ctx.fillStyle = cgrad;
+                    ctx.fillRect(0, 300, W, 60);
+                    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                    ctx.fillRect(0, 325, W, 5);
+                    // prep surface
+                    const pgrad = ctx.createLinearGradient(0, 360, 0, 600);
+                    pgrad.addColorStop(0, '#4a3224');
+                    pgrad.addColorStop(1, '#2e1f16');
+                    ctx.fillStyle = pgrad;
+                    ctx.fillRect(0, 360, W, 240);
+                    // decorative sushi banner
+                    ctx.fillStyle = 'rgba(255,255,255,0.05)';
+                    ctx.font = '24px system-ui';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('夢 寿司', W / 2, 90);
+                }
+                drawGameplay() {
+                    const cfg = this.getLevelCfg();
+                    // HUD
+                    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+                    roundRect(ctx, 10, 10, 240, 80, 10);
+                    ctx.fill();
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 18px system-ui';
+                    ctx.textAlign = 'left';
+                    ctx.fillText(`💵 $${Math.floor(this.money)}`, 25, 35);
+                    ctx.font = '14px system-ui';
+                    ctx.fillStyle = '#ffd58a';
+                    ctx.fillText(`Day ${this.day}  Target $${cfg.target}`, 25, 58);
+                    ctx.fillStyle = this.rep > 60 ? '#88ff88' : this.rep > 30 ? '#ffd58a' : '#ff5555';
+                    ctx.fillText(`Rep ${Math.floor(this.rep)}%`, 25, 78);
+                    // progress: customers remaining
+                    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+                    roundRect(ctx, W - 180, 10, 170, 35, 8);
+                    ctx.fill();
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '13px system-ui';
+                    ctx.textAlign = 'right';
+                    ctx.fillText(`👥 ${this.customerQueue.length} left`, W - 22, 34);
+                    // customers
+                    for (const c of this.customers) c.draw(ctx);
+                    // events
+                    for (const ev of this.activeEvents) ev.draw(ctx);
+                    // chef
+                    this.drawChef();
+                    // tray area
+                    this.drawTray();
+                    // buttons
+                    for (const b of this.buttons) {
+                        if (b.ingredientId) {
+                            // draw ingredient button with icon
+                            if (b.contains(input.mouseX, input.mouseY) && !b.disabled) b.hover = true;
+                            else b.hover = false;
+                            if (this.prepCooldown > 0 && this.tray.includes(b.ingredientId)) b.disabled = true;
+                            else b.disabled = false;
+                            b.draw(ctx);
+                            const bx = b.x + b.w / 2,
+                                by = b.y + b.h / 2 - 5;
+                            drawIngredientIcon(ctx, b.ingredientId, bx, by, 18);
+                            ctx.fillStyle = '#fff';
+                            ctx.font = '10px system-ui';
+                            ctx.textAlign = 'center';
+                            ctx.fillText(INGREDIENTS[b.ingredientId].name, bx, b.y + b.h - 8);
+                            // cooldown overlay
+                            if (this.prepCooldown > 0 && b.disabled) {
+                                const p = clamp(this.prepCooldown / this.getPrepSpeed(), 0, 1);
+                                ctx.fillStyle = `rgba(255,255,255,${p * 0.5})`;
+                                roundRect(ctx, b.x, b.y, b.w, b.h * p, 8);
+                                ctx.fill();
+                            }
+                        } else {
+                            b.draw(ctx);
+                        }
+                    }
+                    // serving flash
+                    if (this.serveFlash > 0) {
+                        this.serveFlash -= 0.016;
+                        ctx.globalAlpha = Math.max(0, this.serveFlash * 2);
+                        ctx.fillStyle = '#ffd58a';
+                        ctx.fillRect(0, 0, W, H);
+                        ctx.globalAlpha = 1;
+                    }
+                    // intro banner
+                    if (this.introPause > 0) {
+                        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                        ctx.fillRect(0, 0, W, H);
+                        ctx.fillStyle = '#ffd58a';
+                        ctx.font = 'bold 46px system-ui';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(`Day ${this.day}`, W / 2, 240);
+                        ctx.font = '18px system-ui';
+                        ctx.fillStyle = '#fff';
+                        ctx.fillText(`Target: $${cfg.target}`, W / 2, 290);
+                    }
+                    // day summary overlay
+                    if (this.dayOver) {
+                        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                        ctx.fillRect(0, 0, W, H);
+                        ctx.fillStyle = this.dayResult === 'success' ? '#ffd58a' : '#ff5555';
+                        ctx.font = 'bold 34px system-ui';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(this.dayResult === 'success' ? '✓ DAY CLEAR!' : '✗ MISSED TARGET', W / 2, 200);
+                        ctx.font = '20px system-ui';
+                        ctx.fillStyle = '#fff';
+                        ctx.fillText(`Earned: $${Math.floor(this.totalEarned)} / Target $${cfg.target}`, W / 2, 250);
+                        ctx.fillText(`Rep: ${Math.floor(this.rep)}%`, W / 2, 285);
+                    }
+                }
+                drawChef() {
+                    const x = W / 2,
+                        y = 400;
+                    // body
+                    ctx.fillStyle = '#fff';
+                    roundRect(ctx, x - 22, y - 10, 44, 40, 8);
+                    ctx.fill();
+                    ctx.strokeStyle = '#ccc';
+                    ctx.lineWidth = 1;
+                    roundRect(ctx, x - 22, y - 10, 44, 40, 8);
+                    ctx.stroke();
+                    // head
+                    ctx.fillStyle = '#f2c49b';
+                    ctx.beginPath();
+                    ctx.arc(x, y - 30, 18, 0, TAU);
+                    ctx.fill();
+                    // chef hat
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(x, y - 48, 16, Math.PI, 0);
+                    ctx.fill();
+                    ctx.fillRect(x - 18, y - 55, 36, 8);
+                    // face
+                    ctx.fillStyle = '#2a1f1a';
+                    ctx.beginPath();
+                    ctx.arc(x - 6, y - 32, 2, 0, TAU);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(x + 6, y - 32, 2, 0, TAU);
+                    ctx.fill();
+                    ctx.strokeStyle = '#2a1f1a';
+                    ctx.beginPath();
+                    ctx.arc(x, y - 24, 4, 0.1, Math.PI - 0.1);
+                    ctx.stroke();
+                    // apron
+                    ctx.fillStyle = '#2a4a2a';
+                    ctx.fillRect(x - 10, y + 5, 20, 25);
+                    // motion lines when serving
+                    if (this.isServing) {
+                        ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+                        ctx.lineWidth = 2;
+                        for (let i = 0; i < 2; i++) {
+                            const sx = x + 25 + i * 12,
+                                sy = y - 20 + i * 10;
+                            ctx.beginPath();
+                            ctx.moveTo(sx, sy);
+                            ctx.quadraticCurveTo(sx + 10, sy + 10, sx + 18, sy - 5);
+                            ctx.stroke();
+                        }
+                    }
+                }
+                drawTray() {
+                    const tx = 20,
+                        ty = 420,
+                        tw = W - 40,
+                        th = 60;
+                    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+                    roundRect(ctx, tx, ty, tw, th, 10);
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+                    line = 1;
+                    roundRect(ctx, tx, ty, tw, th, 10);
+                    ctx.stroke();
+                    ctx.fillStyle = '#999';
+                    ctx.font = '13px system-ui';
+                    ctx.textAlign = 'left';
+                    ctx.fillText('YOUR TRAY:', tx + 10, ty + 20);
+                    if (this.tray.length === 0) {
+                        ctx.fillStyle = '#666';
+                        ctx.font = '13px system-ui';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('Click ingredients to build a sushi!', W / 2, ty + 40);
+                    } else {
+                        for (let i = 0; i < this.tray.length; i++) {
+                            const ix = tx + 110 + i * 70,
+                                iy = ty + 38;
+                            drawIngredientIcon(ctx, this.tray[i], ix, iy, 15);
+                        }
+                        // recipe hint
+                        const possible = RECIPES.find(r => r.recipe.every(i => this.tray.includes(i)) && r.recipe.length === this.tray
+                            .length);
+                        if (possible) {
+                            ctx.fillStyle = '#88ff88';
+                            ctx.font = '12px system-ui';
+                            ctx.textAlign = 'right';
+                            ctx.fillText(`✓ ${possible.name}!`, W - 25, ty + 20);
+                        }
+                    }
+                }
+                drawMenu() {
+                    // Title background
+                    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                    ctx.fillRect(0, 0, W, H);
+                    // Decorative sushi
+                    for (let i = 0; i < 6; i++) {
+                        const sx = 120 + i * 120,
+                            sy = 180 + Math.sin(this.time * 1.5 + i) * 15;
+                        drawSushiIcon(ctx, RECIPES[i].id, sx, sy, 35);
+                    }
+                    ctx.fillStyle = '#ffd58a';
+                    ctx.font = 'bold 52px system-ui';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🍣 SUSHI RESTAURANT', W / 2, 200);
+                    ctx.fillStyle = '#ff8c42';
+                    ctx.font = 'bold 28px system-ui';
+                    ctx.fillText('...BAD THINGS HAPPEN', W / 2, 245);
+                    ctx.fillStyle = '#ccc';
+                    ctx.font = '16px system-ui';
+                    ctx.fillText('Serve sushi. Survive the disasters.', W / 2, 285);
+                    ctx.fillText('Day 8 · Challenges · Upgrades', W / 2, 312);
+                    if (this.best > 0) {
+                        ctx.fillStyle = '#ffd58a';
+                        ctx.font = 'bold 20px system-ui';
+                        ctx.fillText(`★ BEST: $${Math.floor(this.best)}`, W / 2, 350);
+                    }
+                    for (const b of this.buttons) b.draw(ctx);
+                    // instructions
+                    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                    ctx.font = '13px system-ui';
+                    ctx.fillText('Click ingredients to build sushi, then click a customer to serve.', W / 2, 470);
+                    ctx.fillText('Handle disasters: inspectors, rats, fires, food poisoning!', W / 2, 495);
+                    ctx.fillText('P / ESC to pause. Meet the daily target to advance.', W / 2, 520);
+                }
+                drawShop() {
+                    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                    ctx.fillRect(0, 0, W, H);
+                    ctx.fillStyle = '#ffd58a';
+                    ctx.font = 'bold 40px system-ui';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🛒 UPGRADE SHOP', W / 2, 100);
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '20px system-ui';
+                    ctx.fillText(`Money: $${Math.floor(this.money)}`, W / 2, 145);
+                    // draw cards
+                    for (const b of this.buttons) {
+                        if (!b.shopItem) {
+                            b.draw(ctx);
+                            continue;
+                        }
+                        b.draw(ctx);
+                        const item = b.shopItem;
+                        const lvl = this.shopLevels[item.id];
+                        ctx.fillStyle = '#fff';
+                        ctx.font = 'bold 15px system-ui';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(item.name, b.x + b.w / 2, b.y + 22);
+                        ctx.font = '11px system-ui';
+                        ctx.fillStyle = '#aaa';
+                        ctx.fillText(item.desc, b.x + b.w / 2, b.y + 42);
+                        if (lvl >= item.max) {
+                            ctx.fillStyle = '#2ecc71';
+                            ctx.font = 'bold 14px system-ui';
+                            ctx.fillText('MAX', b.x + b.w / 2, b.y + 62);
+                        } else {
+                            ctx.fillStyle = this.money >= b.cost ? '#ffd58a' : '#888';
+                            ctx.font = 'bold 14px system-ui';
+                            ctx.fillText(`$${b.cost}`, b.x + b.w / 2, b.y + 62);
+                        }
+                        // level dots
+                        for (let i = 0; i < item.max; i++) {
+                            ctx.fillStyle = i < lvl ? '#ffd58a' : 'rgba(255,255,255,0.2)';
+                            ctx.beginPath();
+                            ctx.arc(b.x + b.w / 2 - 15 + i * 15, b.y + 72, 5, 0, TAU);
+                            ctx.fill();
+                        }
+                    }
+                    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                    ctx.font = '14px system-ui';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('Commander! Buy wisely before the next shift.', W / 2, 555);
+                }
+                drawGameOver() {
+                    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+                    ctx.fillRect(0, 0, W, H);
+                    ctx.fillStyle = '#ff5555';
+                    ctx.font = 'bold 56px system-ui';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('GAME OVER', W / 2, 200);
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '24px system-ui';
+                    ctx.fillText(`Day: ${this.day}  ·  Total Earned: $${Math.floor(this.totalEarned)}`, W / 2, 255);
+                    ctx.fillStyle = '#ffd58a';
+                    ctx.font = 'bold 28px system-ui';
+                    ctx.fillText(`★ Best: $${Math.floor(this.best)}`, W / 2, 300);
+                    for (const b of this.buttons) b.draw(ctx);
+                }
+            }
+
+            const game = new Game();
+            game.buildMenuButtons();
+            // Menu button hover/update loop handled inside draw; but we need updateButtons each frame
+            // Add a manual update call for menu hover in requestAnimationFrame
+            // Actually we'll call updateButtons inside draw's state checks — we do updateButtons before draw in loop? Let me adjust loop to call game.updateButtons() for menu state.
+            const origUpdate = game.update.bind(game);
+            game.update = function(dt) {
+                if (this.state === 'menu' || this.state === 'shop' || this.state === 'gameover' || this.state === 'paused') {
+                    this.updateButtons();
+                }
+                if (this.state === 'menu' || this.state === 'gameover' || this.state === 'shop') {
+                    // also handle button clicks in handleClick — already done
+                }
+                origUpdate(dt);
+            };
+
+            // button clicks for menu: implement in handleClick — already done. But we need to route clicks.
+            // Add routing in handleClick: we check buttons in menu/shop/gameover/paused.
+            // Actually handleClick already iterates buttons for paused; for menu/shop/gameover we need to do it too.
+            // Let me patch handleClick:
+            const origHandle = game.handleClick.bind(game);
+            game.handleClick = function(x, y) {
+                if (this.state === 'menu' || this.state === 'shop' || this.state === 'gameover') {
+                    for (const b of this.buttons) {
+                        if (!b.hidden && !b.disabled && b.contains(x, y)) {
+                            b.onClick();
+                            return;
+                        }
+                    }
+                    return;
+                }
+                origHandle(x, y);
+            };
+
+            let lastTime = performance.now();
+            function loop(t) {
+                const dt = Math.min((t - lastTime) / 1000, 0.05);
+                lastTime = t;
+                game.update(dt);
+                game.draw();
+                requestAnimationFrame(loop);
+            }
+            requestAnimationFrame(loop);
+        })();
+    </script>
+</body>
+</html>
