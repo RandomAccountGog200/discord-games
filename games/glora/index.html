@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>glora 😱</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="game-shell">
+    <canvas id="game" width="960" height="540" aria-label="glora game canvas"></canvas>
+    <div id="hud" class="hud hidden">
+      <div class="hud-left">
+        <div class="brand">GLORA <span>😱</span></div>
+        <div class="level-label">ROOM <b id="level-value">1</b>/6</div>
+      </div>
+      <div class="meters">
+        <div class="meter"><span>VITALITY</span><div class="bar"><i id="health-bar"></i></div></div>
+        <div class="meter glow-meter"><span>GLOW</span><div class="bar"><i id="glow-bar"></i></div></div>
+      </div>
+      <div class="hud-right">
+        <div id="shard-value">✦ 0 / 4</div>
+        <div id="score-value">000000</div>
+        <button id="pause-button" class="icon-button" aria-label="Pause">Ⅱ</button>
+      </div>
+    </div>
+
+    <div id="overlay" class="overlay">
+      <section id="title-panel" class="panel title-panel">
+        <div class="eyebrow">A HAUNTED LIGHT-HUNT</div>
+        <h1>glora <span>😱</span></h1>
+        <p class="tagline">The dark is hungry. Keep your little light alive.</p>
+        <button id="start-button" class="primary-button">ENTER THE DARK</button>
+        <div class="controls-copy"><b>WASD / ARROWS</b> move &nbsp; <b>SPACE</b> pulse &nbsp; <b>SHIFT</b> dash</div>
+        <div class="best-line">BEST RUN <strong id="title-best">0</strong></div>
+      </section>
+
+      <section id="pause-panel" class="panel small-panel hidden">
+        <div class="eyebrow">THE DARK WAITS</div><h2>PAUSED</h2>
+        <button id="resume-button" class="primary-button">KEEP GOING</button>
+        <button id="pause-menu-button" class="secondary-button">MAIN MENU</button>
+      </section>
+
+      <section id="upgrade-panel" class="panel upgrade-panel hidden">
+        <div class="eyebrow">ROOM CLEARED</div><h2>CHOOSE YOUR LIGHT</h2>
+        <p class="subcopy">One gift follows you into the next room.</p>
+        <div id="upgrade-options" class="upgrade-options"></div>
+      </section>
+
+      <section id="gameover-panel" class="panel small-panel hidden">
+        <div class="eyebrow danger">THE DARK WON</div><h2>LIGHTS OUT</h2>
+        <div class="result-score">SCORE <strong id="gameover-score">0</strong></div>
+        <div class="best-line">BEST RUN <strong id="gameover-best">0</strong></div>
+        <button id="restart-button" class="primary-button">TRY AGAIN</button>
+        <button id="gameover-menu-button" class="secondary-button">MAIN MENU</button>
+      </section>
+
+      <section id="win-panel" class="panel small-panel hidden">
+        <div class="eyebrow success">ALL ROOMS LIT</div><h2>YOU GLOWED.</h2>
+        <p class="tagline">The shadows will remember your name.</p>
+        <div class="result-score">FINAL SCORE <strong id="win-score">0</strong></div>
+        <div class="best-line">BEST RUN <strong id="win-best">0</strong></div>
+        <button id="win-button" class="primary-button">PLAY AGAIN</button>
+        <button id="win-menu-button" class="secondary-button">MAIN MENU</button>
+      </section>
+    </div>
+
+    <div id="touch-controls" class="touch-controls">
+      <div id="stick-area" class="stick-area"><div id="stick-knob"></div></div>
+      <div class="action-controls">
+        <button id="pulse-button" class="touch-action pulse-action">PULSE</button>
+        <button id="dash-button" class="touch-action dash-action">DASH</button>
+      </div>
+    </div>
+  </main>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
