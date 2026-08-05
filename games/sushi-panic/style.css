@@ -1,0 +1,16 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #0b0e1a;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+#game {
+  display: block;
+  touch-action: none;
+  cursor: pointer;
+}
