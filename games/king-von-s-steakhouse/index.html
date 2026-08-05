@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>King Von's Steakhouse</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="app">
+    <canvas id="gameCanvas" aria-label="King Von's Steakhouse game"></canvas>
+
+    <section id="menuScreen" class="screen active">
+      <div class="panel title-panel">
+        <div class="eyebrow">EST. 2024 · CHICAGO AFTER DARK</div>
+        <h1>KING VON'S<br><span>STEAKHOUSE</span></h1>
+        <p class="tagline">Run the hottest grill in the city.</p>
+        <button id="startButton" class="primary">OPEN THE DOORS</button>
+        <div class="best-line">BEST NIGHT: <strong id="menuBest">$0</strong></div>
+        <div class="how-to">
+          <b>HOW TO PLAY</b>
+          <p>Manage three grills. Control the heat, flip at the right moment, and serve each cut at its perfect doneness. Chain perfect plates for bigger tips.</p>
+          <p class="keys"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> select grill &nbsp; <kbd>←</kbd><kbd>→</kbd> heat &nbsp; <kbd>F</kbd> flip &nbsp; <kbd>SPACE</kbd> serve</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="pauseScreen" class="screen">
+      <div class="panel small-panel">
+        <div class="eyebrow">SERVICE PAUSED</div>
+        <h2>BACK OF HOUSE</h2>
+        <button id="resumeButton" class="primary">RESUME SERVICE</button>
+        <button id="quitButton" class="secondary">CALL IT A NIGHT</button>
+      </div>
+    </section>
+
+    <section id="upgradeScreen" class="screen">
+      <div class="panel upgrade-panel">
+        <div class="eyebrow">SHIFT COMPLETE</div>
+        <h2>INVEST IN THE KITCHEN</h2>
+        <p class="upgrade-sub">Choose one upgrade before the next rush.</p>
+        <div id="upgradeChoices" class="upgrade-choices"></div>
+      </div>
+    </section>
+
+    <section id="endScreen" class="screen">
+      <div class="panel small-panel">
+        <div id="endEyebrow" class="eyebrow">THE HOUSE IS CLOSED</div>
+        <h2 id="endTitle">ROUGH NIGHT</h2>
+        <p id="endMessage"></p>
+        <div class="final-score">NIGHT'S TAKE <strong id="finalScore">$0</strong></div>
+        <div class="best-line">BEST NIGHT: <strong id="endBest">$0</strong></div>
+        <button id="againButton" class="primary">RUN IT BACK</button>
+        <button id="endMenuButton" class="secondary">MAIN MENU</button>
+      </div>
+    </section>
+
+    <div id="toast" class="toast"></div>
+
+    <div id="touchControls" class="touch-controls">
+      <div class="touch-row stations-row">
+        <button data-action="select:0">GRILL 1</button>
+        <button data-action="select:1">GRILL 2</button>
+        <button data-action="select:2">GRILL 3</button>
+      </div>
+      <div class="touch-row action-row">
+        <button data-action="heatDown">− HEAT</button>
+        <button data-action="flip" class="accent">FLIP</button>
+        <button data-action="heatUp">HEAT +</button>
+        <button data-action="serve" class="serve">SERVE</button>
+        <button id="touchPause">Ⅱ</button>
+      </div>
+    </div>
+  </main>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
