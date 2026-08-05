@@ -862,5 +862,14 @@
     "model": "moonshotai/kimi-k3",
     "createdAt": "2026-08-05T19:20:55.498Z",
     "updatedAt": "2026-08-05T19:20:55.498Z"
+  },
+  {
+    "slug": "death-bazooka",
+    "title": "Death Bazooka",
+    "description": "death starts chasing chess peices  but you pull out a bazooka and die",
+    "creator": "thejayven",
+    "model": "deepseek/deepseek-v4-flash-0731",
+    "createdAt": "2026-08-05T19:20:58.344Z",
+    "updatedAt": "2026-08-05T19:20:58.344Z"
   }
 ]
