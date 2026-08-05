@@ -853,5 +853,14 @@
     "model": "deepseek/deepseek-v4-flash-0731",
     "createdAt": "2026-08-05T19:16:23.673Z",
     "updatedAt": "2026-08-05T19:16:23.673Z"
+  },
+  {
+    "slug": "big-marge",
+    "title": "Big Marge 😹",
+    "description": "big Marge Simple 😹😹😹",
+    "creator": "cheese5332",
+    "model": "moonshotai/kimi-k3",
+    "createdAt": "2026-08-05T19:20:55.498Z",
+    "updatedAt": "2026-08-05T19:20:55.498Z"
   }
 ]
