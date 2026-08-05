@@ -934,5 +934,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-08-05T19:48:55.486Z",
     "updatedAt": "2026-08-05T19:48:55.486Z"
+  },
+  {
+    "slug": "king-von-s-steakhouse",
+    "title": "King Von's Steakhouse",
+    "description": "king von steakhouse",
+    "creator": "cheese5332",
+    "model": "openai/gpt-5.6-luna",
+    "createdAt": "2026-08-05T19:56:44.091Z",
+    "updatedAt": "2026-08-05T19:56:44.091Z"
   }
 ]
