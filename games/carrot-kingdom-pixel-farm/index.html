@@ -1,0 +1,1292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Carrot Kingdom - Pixel Farm</title>
+    <style>
+        :root {
+            --bg: #1a1a1a;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            touch-action: manipulation;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            font-family: monospace;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100vw;
+            max-height: 100vh;
+            border: 3px solid #4a3728;
+            border-radius: 4px;
+            box-shadow: 0 0 40px rgba(255, 140, 50, 0.3), 0 0 80px rgba(255, 140, 50, 0.1);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+
+            // Virtual resolution for pixel-art rendering
+            const VW = 640;
+            const VH = 400;
+            const offscreen = document.createElement('canvas');
+            offscreen.width = VW;
+            offscreen.height = VH;
+            const offCtx = offscreen.getContext('2d');
+            offCtx.imageSmoothingEnabled = false;
+
+            // Scale to fit window
+            function resize() {
+                const scaleX = window.innerWidth / VW;
+                const scaleY = window.innerHeight / VH;
+                const scale = Math.min(scaleX, scaleY, 3.0);
+                canvas.width = Math.floor(VW * scale);
+                canvas.height = Math.floor(VH * scale);
+                ctx.imageSmoothingEnabled = false;
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            // ──────────────────────────────────────
+            // AUDIO SYSTEM (Web Audio API)
+            // ──────────────────────────────────────
+            class AudioSystem {
+                constructor() {
+                    this.ctx = null;
+                    this.initialized = false;
+                    this.musicGain = null;
+                    this.musicOscillators = [];
+                    this.musicActive = false;
+                }
+                init() {
+                    if (this.initialized) return;
+                    try {
+                        this.ctx = new(window.AudioContext || window.webkitAudioContext)();
+                        this.masterGain = this.ctx.createGain();
+                        this.masterGain.gain.value = 0.35;
+                        this.masterGain.connect(this.ctx.destination);
+                        this.initialized = true;
+                    } catch (e) {
+                        console.warn('Web Audio not available');
+                    }
+                }
+                playTone(freq, duration, type = 'square', vol = 0.3, slide = 0) {
+                    if (!this.initialized) return;
+                    const t = this.ctx.currentTime;
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (slide) osc.frequency.linearRampToValueAtTime(freq + slide, t + duration);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(this.masterGain);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                }
+                playNoise(duration, vol = 0.2, filterFreq = 3000) {
+                    if (!this.initialized) return;
+                    const t = this.ctx.currentTime;
+                    const bufferSize = this.ctx.sampleRate * duration;
+                    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                    const data = buffer.getChannelData(0);
+                    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+                    const noise = this.ctx.createBufferSource();
+                    noise.buffer = buffer;
+                    const filter = this.ctx.createBiquadFilter();
+                    filter.type = 'bandpass';
+                    filter.frequency.value = filterFreq;
+                    filter.Q.value = 0.8;
+                    const gain = this.ctx.createGain();
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    noise.connect(filter);
+                    filter.connect(gain);
+                    gain.connect(this.masterGain);
+                    noise.start(t);
+                    noise.stop(t + duration);
+                }
+                sfxPlant() { this.playTone(200, 0.1, 'triangle', 0.25);
+                    this.playNoise(0.06, 0.15, 800); }
+                sfxWater() { this.playNoise(0.25, 0.2, 2500);
+                    this.playTone(600, 0.15, 'sine', 0.15, -200); }
+                sfxHarvest() { this.playTone(500, 0.08, 'square', 0.3);
+                    this.playTone(700, 0.06, 'square', 0.25, 0); }
+                sfxCoin() { this.playTone(1200, 0.1, 'sine', 0.2);
+                    this.playTone(1600, 0.08, 'sine', 0.15); }
+                sfxUpgrade() {
+                    this.playTone(400, 0.08, 'square', 0.3);
+                    this.playTone(600, 0.08, 'square', 0.25);
+                    this.playTone(900, 0.12, 'square', 0.2);
+                }
+                sfxMoonHarvest() {
+                    this.playTone(300, 0.3, 'sine', 0.4, 600);
+                    this.playTone(500, 0.3, 'sine', 0.35, 400);
+                    this.playTone(800, 0.5, 'triangle', 0.3, 200);
+                    this.playNoise(0.4, 0.1, 4000);
+                }
+                startMusic() {
+                    if (!this.initialized || this.musicActive) return;
+                    this.musicActive = true;
+                    this.musicGain = this.ctx.createGain();
+                    this.musicGain.gain.value = 0.06;
+                    this.musicGain.connect(this.masterGain);
+                    this._scheduleMusicNotes();
+                }
+                _scheduleMusicNotes() {
+                    if (!this.musicActive) return;
+                    const notes = [262, 330, 392, 330, 294, 349, 440, 349, 330, 392, 523, 392, 294, 349, 440, 330];
+                    const now = this.ctx.currentTime;
+                    const beatLen = 1.2;
+                    for (let i = 0; i < 16; i++) {
+                        const t = now + i * beatLen;
+                        const osc = this.ctx.createOscillator();
+                        const gain = this.ctx.createGain();
+                        osc.type = 'triangle';
+                        osc.frequency.value = notes[i] * 0.5;
+                        gain.gain.setValueAtTime(0.04, t);
+                        gain.gain.exponentialRampToValueAtTime(0.001, t + beatLen * 0.7);
+                        osc.connect(gain);
+                        gain.connect(this.musicGain);
+                        osc.start(t);
+                        osc.stop(t + beatLen * 0.7);
+                        // Bass note
+                        if (i % 4 === 0) {
+                            const bOsc = this.ctx.createOscillator();
+                            const bGain = this.ctx.createGain();
+                            bOsc.type = 'sine';
+                            bOsc.frequency.value = notes[i] * 0.25;
+                            bGain.gain.setValueAtTime(0.05, t);
+                            bGain.gain.exponentialRampToValueAtTime(0.001, t + beatLen * 1.2);
+                            bOsc.connect(bGain);
+                            bGain.connect(this.musicGain);
+                            bOsc.start(t);
+                            bOsc.stop(t + beatLen * 1.2);
+                        }
+                    }
+                    this._musicTimer = setTimeout(() => this._scheduleMusicNotes(), 16 * beatLen * 1000 - 200);
+                }
+                stopMusic() {
+                    this.musicActive = false;
+                    if (this._musicTimer) clearTimeout(this._musicTimer);
+                }
+            }
+
+            // ──────────────────────────────────────
+            // PARTICLE SYSTEM
+            // ──────────────────────────────────────
+            class Particle {
+                constructor(x, y, vx, vy, life, color, size = 3) {
+                    this.x = x;
+                    this.y = y;
+                    this.vx = vx;
+                    this.vy = vy;
+                    this.life = life;
+                    this.maxLife = life;
+                    this.color = color;
+                    this.size = size;
+                    this.alive = true;
+                }
+                update(dt) {
+                    this.x += this.vx * dt;
+                    this.y += this.vy * dt;
+                    this.vy += 80 * dt;
+                    this.life -= dt;
+                    if (this.life <= 0) this.alive = false;
+                }
+                draw(ctx) {
+                    const alpha = Math.max(0, this.life / this.maxLife);
+                    const s = Math.max(1, this.size * alpha);
+                    ctx.fillStyle = this.color;
+                    ctx.globalAlpha = alpha;
+                    ctx.fillRect(Math.round(this.x - s / 2), Math.round(this.y - s / 2), Math.round(s), Math.round(s));
+                    ctx.globalAlpha = 1;
+                }
+            }
+            class ParticleSystem {
+                constructor() { this.particles = []; }
+                emit(x, y, count, color, spread = 60, life = 0.6, size = 3) {
+                    for (let i = 0; i < count; i++) {
+                        const angle = Math.random() * Math.PI * 2;
+                        const speed = Math.random() * spread;
+                        const vx = Math.cos(angle) * speed;
+                        const vy = Math.sin(angle) * speed - 30;
+                        this.particles.push(new Particle(x, y, vx, vy, life + Math.random() * 0.3, color, size + Math
+                            .random() * 3));
+                    }
+                }
+                emitCoin(x, y, count) {
+                    for (let i = 0; i < count; i++) {
+                        const vx = (Math.random() - 0.5) * 100;
+                        const vy = -80 - Math.random() * 120;
+                        this.particles.push(new Particle(x, y, vx, vy, 0.7, '#FFD700', 5));
+                    }
+                }
+                update(dt) {
+                    for (const p of this.particles) p.update(dt);
+                    this.particles = this.particles.filter(p => p.alive);
+                }
+                draw(ctx) {
+                    for (const p of this.particles) p.draw(ctx);
+                }
+            }
+
+            // ──────────────────────────────────────
+            // FARM PLOT
+            // ──────────────────────────────────────
+            class Plot {
+                constructor(gridX, gridY, px, py, size) {
+                    this.gridX = gridX;
+                    this.gridY = gridY;
+                    this.px = px;
+                    this.py = py;
+                    this.size = size;
+                    this.planted = false;
+                    this.seedType = null; // 'basic','golden','crystal','rainbow','moon'
+                    this.growthTime = 0;
+                    this.growthNeeded = 0;
+                    this.wateredUntil = 0;
+                    this.fertilized = false;
+                    this.ready = false;
+                }
+                plant(seedType, growthNeeded, waterDuration) {
+                    this.planted = true;
+                    this.seedType = seedType;
+                    this.growthTime = 0;
+                    this.growthNeeded = growthNeeded;
+                    this.wateredUntil = waterDuration;
+                    this.fertilized = false;
+                    this.ready = false;
+                }
+                water(duration, currentTime) {
+                    this.wateredUntil = Math.max(this.wateredUntil, currentTime + duration);
+                }
+                applyFertilizer() {
+                    if (!this.planted || this.ready) return false;
+                    this.fertilized = true;
+                    return true;
+                }
+                update(dt, currentTime) {
+                    if (!this.planted || this.ready) return;
+                    if (currentTime < this.wateredUntil) {
+                        const rate = this.fertilized ? 1.7 : 1.0;
+                        this.growthTime += dt * rate;
+                        if (this.growthTime >= this.growthNeeded) {
+                            this.growthTime = this.growthNeeded;
+                            this.ready = true;
+                        }
+                    }
+                }
+                harvest() {
+                    this.planted = false;
+                    this.ready = false;
+                    this.seedType = null;
+                    this.growthTime = 0;
+                    this.fertilized = false;
+                }
+                getGrowthPercent() {
+                    if (!this.planted || this.growthNeeded <= 0) return 0;
+                    return Math.min(1, this.growthTime / this.growthNeeded);
+                }
+                needsWater(currentTime) {
+                    return this.planted && !this.ready && currentTime >= this.wateredUntil;
+                }
+                isWatered(currentTime) {
+                    return currentTime < this.wateredUntil;
+                }
+            }
+
+            // ──────────────────────────────────────
+            // FARM GRID
+            // ──────────────────────────────────────
+            class Farm {
+                constructor(startCols, startRows, plotSize, originX, originY) {
+                    this.cols = startCols;
+                    this.rows = startRows;
+                    this.plotSize = plotSize;
+                    this.originX = originX;
+                    this.originY = originY;
+                    this.plots = [];
+                    this._buildPlots();
+                }
+                _buildPlots() {
+                    this.plots = [];
+                    for (let r = 0; r < this.rows; r++) {
+                        for (let c = 0; c < this.cols; c++) {
+                            const px = this.originX + c * (this.plotSize + 4);
+                            const py = this.originY + r * (this.plotSize + 4);
+                            this.plots.push(new Plot(c, r, px, py, this.plotSize));
+                        }
+                    }
+                }
+                expand(newCols, newRows) {
+                    this.cols = newCols;
+                    this.rows = newRows;
+                    this._buildPlots();
+                }
+                getPlotAt(mx, my) {
+                    for (const p of this.plots) {
+                        if (mx >= p.px && mx < p.px + p.size && my >= p.py && my < p.py + p.size) {
+                            return p;
+                        }
+                    }
+                    return null;
+                }
+                updateAll(dt, currentTime) {
+                    for (const p of this.plots) p.update(dt, currentTime);
+                }
+                countReady() {
+                    return this.plots.filter(p => p.ready).length;
+                }
+                countPlanted() {
+                    return this.plots.filter(p => p.planted && !p.ready).length;
+                }
+            }
+
+            // ──────────────────────────────────────
+            // GAME STATE
+            // ──────────────────────────────────────
+            const SEED_TYPES = {
+                basic: { name: 'Basic Carrot', growTime: 25, waterDuration: 35, sellPrice: 10, seedCost: 0,
+                    color: '#FF6B35', unlocked: true },
+                golden: { name: 'Golden Carrot', growTime: 38, waterDuration: 28, sellPrice: 25, seedCost: 60,
+                    color: '#FFD700', unlocked: false },
+                crystal: { name: 'Crystal Carrot', growTime: 55, waterDuration: 22, sellPrice: 55, seedCost: 160,
+                    color: '#00E5FF', unlocked: false },
+                rainbow: { name: 'Rainbow Carrot', growTime: 75, waterDuration: 20, sellPrice: 110, seedCost: 380,
+                    color: '#FF69B4', unlocked: false },
+                moon: { name: 'Moon Carrot', growTime: 130, waterDuration: 16, sellPrice: 600, seedCost: 850,
+                    color: '#F0F0FF', unlocked: false },
+            };
+
+            const UPGRADES = {
+                plotExp1: { name: 'Plot Expansion I', desc: 'Expand to 4x3 (12 plots)', cost: 80, purchased: false },
+                plotExp2: { name: 'Plot Expansion II', desc: 'Expand to 5x4 (20 plots)', cost: 220, purchased: false,
+                    requires: 'plotExp1' },
+                plotExp3: { name: 'Plot Expansion III', desc: 'Expand to 6x5 (30 plots)', cost: 450, purchased: false,
+                    requires: 'plotExp2' },
+                waterCan1: { name: 'Copper Watering Can', desc: 'Waters 3 plots in a row', cost: 50, purchased: false,
+                    waterRadius: 1 },
+                waterCan2: { name: 'Silver Watering Can', desc: 'Waters 5 plots (cross)', cost: 140, purchased: false,
+                    requires: 'waterCan1', waterRadius: 2 },
+                waterCan3: { name: 'Gold Watering Can', desc: 'Waters 3x3 area', cost: 300, purchased: false,
+                    requires: 'waterCan2', waterRadius: 3 },
+                autoWater: { name: 'Auto-Waterer', desc: 'Auto-waters all plots every 22s', cost: 350, purchased: false,
+                    requires: 'waterCan1' },
+                seedGolden: { name: 'Golden Seeds', desc: 'Unlock Golden Carrots (25¢ each)', cost: 60, purchased: false,
+                    unlocks: 'golden' },
+                seedCrystal: { name: 'Crystal Seeds', desc: 'Unlock Crystal Carrots (55¢ each)', cost: 160,
+                    purchased: false, requires: 'seedGolden', unlocks: 'crystal' },
+                seedRainbow: { name: 'Rainbow Seeds', desc: 'Unlock Rainbow Carrots (110¢ each)', cost: 380,
+                    purchased: false, requires: 'seedCrystal', unlocks: 'rainbow' },
+                seedMoon: { name: 'Moon Seeds', desc: 'Unlock Legendary Moon Carrot', cost: 850, purchased: false,
+                    requires: 'seedRainbow', unlocks: 'moon' },
+            };
+
+            class GameState {
+                constructor() {
+                    this.coins = 30;
+                    this.selectedTool = 'seed';
+                    this.selectedSeed = 'basic';
+                    this.waterDuration = 30;
+                    this.waterRadius = 0; // 0= single, 1=row of 3, 2=cross, 3=3x3
+                    this.autoWaterer = false;
+                    this.autoWaterTimer = 0;
+                    this.totalHarvested = 0;
+                    this.gameTime = 0;
+                    this.bestTime = null;
+                    this.loadBestTime();
+                }
+                loadBestTime() {
+                    try {
+                        const bt = localStorage.getItem('carrotKingdom_bestTime');
+                        if (bt !== null) this.bestTime = parseFloat(bt);
+                    } catch (e) {}
+                }
+                saveBestTime(time) {
+                    if (this.bestTime === null || time < this.bestTime) {
+                        this.bestTime = time;
+                        try { localStorage.setItem('carrotKingdom_bestTime', time.toString()); } catch (e) {}
+                    }
+                }
+                getWaterDuration() { return this.waterDuration; }
+                getWaterRadius() { return this.waterRadius; }
+                canAfford(cost) { return this.coins >= cost; }
+                spend(cost) { if (this.canAfford(cost)) { this.coins -= cost; return true; } return false; }
+                earn(amount) { this.coins += amount; }
+            }
+
+            // ──────────────────────────────────────
+            // MAIN GAME CLASS
+            // ──────────────────────────────────────
+            class Game {
+                constructor() {
+                    this.state = 'TITLE'; // TITLE, PLAYING, SHOP, WIN
+                    this.audio = new AudioSystem();
+                    this.particles = new ParticleSystem();
+                    this.gameState = new GameState();
+                    this.farm = new Farm(3, 3, 44, 0, 0);
+                    this._recalcFarmOrigin();
+                    this.currentTime = 0;
+                    this.shopOpen = false;
+                    this.winData = null;
+                    this.titleFlash = 0;
+                    this.transitionAlpha = 0;
+                    this.transitionTarget = 0;
+                    this.tooltipText = '';
+                    this.tooltipTimer = 0;
+                    this.harvestFlash = 0;
+                    this.screenShake = 0;
+                    this.lastHarvestCount = 0;
+                    this.coinDisplay = 0;
+                    this.targetCoinDisplay = 30;
+                    // Season progression for visual variety
+                    this.seasonPhase = 0;
+                }
+                _recalcFarmOrigin() {
+                    const totalW = this.farm.cols * (this.farm.plotSize + 4) - 4;
+                    const totalH = this.farm.rows * (this.farm.plotSize + 4) - 4;
+                    this.farm.originX = Math.round((VW - totalW) / 2);
+                    this.farm.originY = Math.round((VH - totalH) / 2) + 20;
+                    this.farm._buildPlots();
+                }
+                init() {
+                    this.audio.init();
+                    this.audio.startMusic();
+                    this._recalcFarmOrigin();
+                    this.coinDisplay = this.gameState.coins;
+                    this.targetCoinDisplay = this.gameState.coins;
+                    this.state = 'TITLE';
+                }
+                startGame() {
+                    this.gameState = new GameState();
+                    this.farm = new Farm(3, 3, 44, 0, 0);
+                    this._recalcFarmOrigin();
+                    this.currentTime = 0;
+                    this.particles.particles = [];
+                    this.shopOpen = false;
+                    this.winData = null;
+                    this.harvestFlash = 0;
+                    this.screenShake = 0;
+                    this.coinDisplay = this.gameState.coins;
+                    this.targetCoinDisplay = this.gameState.coins;
+                    this.seasonPhase = 0;
+                    this.state = 'PLAYING';
+                    this.audio.init();
+                    this.audio.startMusic();
+                }
+                update(dt) {
+                    this.titleFlash += dt;
+                    // Smooth coin display
+                    const coinSpeed = 8;
+                    if (Math.abs(this.targetCoinDisplay - this.coinDisplay) < 0.5) {
+                        this.coinDisplay = this.targetCoinDisplay;
+                    } else {
+                        this.coinDisplay += (this.targetCoinDisplay - this.coinDisplay) * Math.min(1, coinSpeed * dt);
+                    }
+                    if (this.harvestFlash > 0) this.harvestFlash -= dt;
+                    if (this.screenShake > 0) this.screenShake -= dt;
+                    if (this.tooltipTimer > 0) this.tooltipTimer -= dt;
+                    if (this.state === 'PLAYING') {
+                        this.currentTime += dt;
+                        this.gameState.gameTime = this.currentTime;
+                        // Season phase
+                        if (this.currentTime < 300) this.seasonPhase = 0; // Spring
+                        else if (this.currentTime < 800) this.seasonPhase = 1; // Summer
+                        else if (this.currentTime < 1300) this.seasonPhase = 2; // Autumn
+                        else this.seasonPhase = 3; // Moon phase
+
+                        this.farm.updateAll(dt, this.currentTime);
+                        // Auto-waterer
+                        if (this.gameState.autoWaterer) {
+                            this.gameState.autoWaterTimer += dt;
+                            if (this.gameState.autoWaterTimer >= 22) {
+                                this.gameState.autoWaterTimer -= 22;
+                                for (const p of this.farm.plots) {
+                                    if (p.planted && !p.ready && p.needsWater(this.currentTime)) {
+                                        p.water(this.gameState.getWaterDuration(), this.currentTime);
+                                    }
+                                }
+                            }
+                        }
+                        this.particles.update(dt);
+                    }
+                    if (this.state === 'TITLE' || this.state === 'WIN') {
+                        this.particles.update(dt);
+                    }
+                    // Transition alpha
+                    if (Math.abs(this.transitionAlpha - this.transitionTarget) > 0.005) {
+                        this.transitionAlpha += (this.transitionTarget - this.transitionAlpha) * 10 * dt;
+                        if (Math.abs(this.transitionAlpha - this.transitionTarget) < 0.006) this.transitionAlpha = this
+                            .transitionTarget;
+                    }
+                }
+                handleClick(mx, my) {
+                    if (this.state === 'TITLE') {
+                        this.startGame();
+                        return;
+                    }
+                    if (this.state === 'WIN') {
+                        this.state = 'TITLE';
+                        this.winData = null;
+                        return;
+                    }
+                    if (this.state === 'SHOP') {
+                        this._handleShopClick(mx, my);
+                        return;
+                    }
+                    if (this.state === 'PLAYING') {
+                        // Check toolbar clicks
+                        if (this._handleToolbarClick(mx, my)) return;
+                        // Check shop button
+                        if (mx >= VW - 90 && mx <= VW - 10 && my >= VH - 44 && my <= VH - 8) {
+                            this.state = 'SHOP';
+                            this.audio.sfxCoin();
+                            return;
+                        }
+                        // Check farm plot clicks
+                        const plot = this.farm.getPlotAt(mx, my);
+                        if (plot) {
+                            this._handlePlotAction(plot, mx, my);
+                            return;
+                        }
+                    }
+                }
+                _handlePlotAction(plot, mx, my) {
+                    const ct = this.currentTime;
+                    // If ready, harvest regardless of tool
+                    if (plot.ready) {
+                        const st = plot.seedType;
+                        const price = SEED_TYPES[st] ? SEED_TYPES[st].sellPrice : 10;
+                        this.gameState.earn(price);
+                        this.targetCoinDisplay = this.gameState.coins;
+                        this.gameState.totalHarvested++;
+                        this.particles.emitCoin(plot.px + plot.size / 2, plot.py + plot.size / 2, Math.min(12, price / 5));
+                        this.particles.emit(plot.px + plot.size / 2, plot.py + plot.size / 2, 8, SEED_TYPES[st] ? SEED_TYPES[
+                            st].color : '#FF6B35', 50, 0.5, 4);
+                        this.harvestFlash = 0.3;
+                        if (price >= 100) this.screenShake = Math.max(this.screenShake, 0.2);
+                        if (st === 'moon') {
+                            // WIN!
+                            this.audio.sfxMoonHarvest();
+                            this.particles.emit(plot.px + plot.size / 2, plot.py + plot.size / 2, 40, '#FFFFFF', 150,
+                                1.5, 6);
+                            this.particles.emit(plot.px + plot.size / 2, plot.py + plot.size / 2, 30, '#F0F0FF', 120,
+                                1.8, 5);
+                            this.screenShake = 0.6;
+                            this.gameState.saveBestTime(this.currentTime);
+                            this.winData = { time: this.currentTime, coins: this.gameState.coins };
+                            setTimeout(() => {
+                                this.state = 'WIN';
+                                this.transitionTarget = 1;
+                                setTimeout(() => { this.transitionTarget = 0; }, 400);
+                            }, 600);
+                            plot.harvest();
+                            return;
+                        }
+                        this.audio.sfxHarvest();
+                        plot.harvest();
+                        return;
+                    }
+                    // Handle tool actions
+                    if (this.gameState.selectedTool === 'seed') {
+                        if (!plot.planted) {
+                            const st = this.gameState.selectedSeed;
+                            if (!SEED_TYPES[st] || !SEED_TYPES[st].unlocked) return;
+                            const seedCost = SEED_TYPES[st].seedCost;
+                            if (seedCost > 0 && !this.gameState.spend(seedCost)) {
+                                this._showTooltip('Not enough coins!');
+                                return;
+                            }
+                            if (seedCost > 0) this.targetCoinDisplay = this.gameState.coins;
+                            plot.plant(st, SEED_TYPES[st].growTime, ct + SEED_TYPES[st].waterDuration);
+                            this.audio.sfxPlant();
+                            this.particles.emit(plot.px + plot.size / 2, plot.py + plot.size / 2, 4, '#8B7355', 30,
+                                0.4, 3);
+                        }
+                    } else if (this.gameState.selectedTool === 'water') {
+                        if (plot.planted && !plot.ready) {
+                            this._waterPlotAndNeighbors(plot);
+                        }
+                    } else if (this.gameState.selectedTool === 'fertilizer') {
+                        if (plot.planted && !plot.ready && !plot.fertilized) {
+                            const fertCost = 15;
+                            if (!this.gameState.spend(fertCost)) {
+                                this._showTooltip('Not enough coins! (15 needed)');
+                                return;
+                            }
+                            this.targetCoinDisplay = this.gameState.coins;
+                            plot.applyFertilizer();
+                            this.audio.sfxPlant();
+                            this.particles.emit(plot.px + plot.size / 2, plot.py + plot.size / 2, 6, '#90EE90',
+                                40, 0.5, 3);
+                        }
+                    }
+                }
+                _waterPlotAndNeighbors(plot) {
+                    const ct = this.currentTime;
+                    const dur = this.gameState.getWaterDuration();
+                    const radius = this.gameState.getWaterRadius();
+                    const watered = [];
+                    if (radius === 0) {
+                        if (plot.planted && !plot.ready) {
+                            plot.water(dur, ct);
+                            watered.push(plot);
+                        }
+                    } else if (radius === 1) {
+                        const neighbors = this.farm.plots.filter(p =>
+                            p.gridY === plot.gridY && Math.abs(p.gridX - plot.gridX) <= 1 && p.planted && !p.ready
+                        );
+                        for (const p of neighbors) { p.water(dur, ct);
+                            watered.push(p); }
+                    } else if (radius === 2) {
+                        const neighbors = this.farm.plots.filter(p =>
+                            (Math.abs(p.gridX - plot.gridX) + Math.abs(p.gridY - plot.gridY)) <= 1 && p.planted && !p
+                            .ready
+                        );
+                        for (const p of neighbors) { p.water(dur, ct);
+                            watered.push(p); }
+                    } else if (radius >= 3) {
+                        const neighbors = this.farm.plots.filter(p =>
+                            Math.abs(p.gridX - plot.gridX) <= 1 && Math.abs(p.gridY - plot.gridY) <= 1 && p.planted && !
+                            p.ready
+                        );
+                        for (const p of neighbors) { p.water(dur, ct);
+                            watered.push(p); }
+                    }
+                    if (watered.length > 0) {
+                        this.audio.sfxWater();
+                        for (const p of watered) {
+                            this.particles.emit(p.px + p.size / 2, p.py + p.size / 2, 3, '#87CEEB', 25, 0.35, 2);
+                        }
+                    }
+                }
+                _handleToolbarClick(mx, my) {
+                    const tbY = VH - 50;
+                    const tbX = 15;
+                    const bw = 80;
+                    const bh = 34;
+                    const gap = 8;
+                    // Seed button
+                    if (mx >= tbX && mx <= tbX + bw && my >= tbY && my <= tbY + bh) {
+                        this.gameState.selectedTool = 'seed';
+                        this._cycleSeed();
+                        this.audio.sfxCoin();
+                        return true;
+                    }
+                    // Water button
+                    if (mx >= tbX + bw + gap && mx <= tbX + 2 * bw + gap && my >= tbY && my <= tbY + bh) {
+                        this.gameState.selectedTool = 'water';
+                        this.audio.sfxCoin();
+                        return true;
+                    }
+                    // Fertilizer button
+                    if (mx >= tbX + 2 * (bw + gap) && mx <= tbX + 3 * bw + 2 * gap && my >= tbY && my <= tbY + bh) {
+                        this.gameState.selectedTool = 'fertilizer';
+                        this.audio.sfxCoin();
+                        return true;
+                    }
+                    // Next seed button (small)
+                    if (mx >= tbX + 3 * (bw + gap) && mx <= tbX + 3 * (bw + gap) + 34 && my >= tbY && my <= tbY + bh) {
+                        this._cycleSeed();
+                        this.audio.sfxCoin();
+                        return true;
+                    }
+                    return false;
+                }
+                _cycleSeed() {
+                    const seeds = ['basic', 'golden', 'crystal', 'rainbow', 'moon'];
+                    const unlocked = seeds.filter(s => SEED_TYPES[s].unlocked);
+                    if (unlocked.length === 0) { this.gameState.selectedSeed = 'basic'; return; }
+                    const curIdx = unlocked.indexOf(this.gameState.selectedSeed);
+                    const nextIdx = (curIdx + 1) % unlocked.length;
+                    this.gameState.selectedSeed = unlocked[nextIdx];
+                    this.gameState.selectedTool = 'seed';
+                }
+                _handleShopClick(mx, my) {
+                    const panelX = 80;
+                    const panelY = 40;
+                    const panelW = VW - 160;
+                    const panelH = VH - 80;
+                    // Close button
+                    if (mx >= panelX + panelW - 40 && mx <= panelX + panelW - 5 && my >= panelY + 5 && my <= panelY + 35) {
+                        this.state = 'PLAYING';
+                        this.audio.sfxCoin();
+                        return;
+                    }
+                    // Upgrade buttons
+                    const upgrades = Object.entries(UPGRADES);
+                    const startY = panelY + 55;
+                    const btnH = 34;
+                    const btnGap = 6;
+                    for (let i = 0; i < upgrades.length; i++) {
+                        const [key, upg] = upgrades[i];
+                        const by = startY + i * (btnH + btnGap);
+                        if (mx >= panelX + 20 && mx <= panelX + panelW - 20 && my >= by && my <= by + btnH) {
+                            this._purchaseUpgrade(key, upg);
+                            return;
+                        }
+                    }
+                }
+                _purchaseUpgrade(key, upg) {
+                    if (upg.purchased) {
+                        this._showTooltip('Already purchased!');
+                        return;
+                    }
+                    if (upg.requires && !UPGRADES[upg.requires].purchased) {
+                        this._showTooltip('Requires: ' + UPGRADES[upg.requires].name);
+                        return;
+                    }
+                    if (!this.gameState.spend(upg.cost)) {
+                        this._showTooltip('Not enough coins! Need ' + upg.cost);
+                        return;
+                    }
+                    this.targetCoinDisplay = this.gameState.coins;
+                    upg.purchased = true;
+                    this.audio.sfxUpgrade();
+                    // Apply upgrade effects
+                    if (key === 'plotExp1') {
+                        this.farm.expand(4, 3);
+                        this._recalcFarmOrigin();
+                    } else if (key === 'plotExp2') {
+                        this.farm.expand(5, 4);
+                        this._recalcFarmOrigin();
+                    } else if (key === 'plotExp3') {
+                        this.farm.expand(6, 5);
+                        this._recalcFarmOrigin();
+                    } else if (key === 'waterCan1') {
+                        this.gameState.waterRadius = 1;
+                    } else if (key === 'waterCan2') {
+                        this.gameState.waterRadius = 2;
+                    } else if (key === 'waterCan3') {
+                        this.gameState.waterRadius = 3;
+                    } else if (key === 'autoWater') {
+                        this.gameState.autoWaterer = true;
+                        this.gameState.autoWaterTimer = 0;
+                    } else if (key === 'seedGolden') {
+                        SEED_TYPES.golden.unlocked = true;
+                        if (this.gameState.selectedSeed === 'basic' && SEED_TYPES.golden.unlocked) this.gameState
+                            .selectedSeed = 'golden';
+                    } else if (key === 'seedCrystal') {
+                        SEED_TYPES.crystal.unlocked = true;
+                    } else if (key === 'seedRainbow') {
+                        SEED_TYPES.rainbow.unlocked = true;
+                    } else if (key === 'seedMoon') {
+                        SEED_TYPES.moon.unlocked = true;
+                    }
+                    this.particles.emit(VW / 2, VH / 2, 20, '#FFD700', 180, 0.8, 5);
+                }
+                _showTooltip(text) {
+                    this.tooltipText = text;
+                    this.tooltipTimer = 2.0;
+                }
+                draw() {
+                    offCtx.clearRect(0, 0, VW, VH);
+                    if (this.state === 'TITLE') {
+                        this._drawTitle();
+                    } else if (this.state === 'PLAYING' || this.state === 'SHOP') {
+                        this._drawGameWorld();
+                        if (this.state === 'SHOP') this._drawShopOverlay();
+                    } else if (this.state === 'WIN') {
+                        this._drawGameWorld();
+                        this._drawWinOverlay();
+                    }
+                    // Tooltip
+                    if (this.tooltipTimer > 0) {
+                        offCtx.fillStyle = '#000';
+                        offCtx.globalAlpha = Math.min(1, this.tooltipTimer);
+                        const tw = offCtx.measureText(this.tooltipText).width + 16;
+                        offCtx.fillRect(VW / 2 - tw / 2, VH - 100, tw, 28);
+                        offCtx.fillStyle = '#FFF';
+                        offCtx.font = 'bold 11px monospace';
+                        offCtx.textAlign = 'center';
+                        offCtx.fillText(this.tooltipText, VW / 2, VH - 81);
+                        offCtx.textAlign = 'start';
+                        offCtx.globalAlpha = 1;
+                    }
+                    // Screen shake offset
+                    let shakeX = 0,
+                        shakeY = 0;
+                    if (this.screenShake > 0) {
+                        shakeX = (Math.random() - 0.5) * this.screenShake * 20;
+                        shakeY = (Math.random() - 0.5) * this.screenShake * 20;
+                    }
+                    // Draw offscreen to main canvas
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.imageSmoothingEnabled = false;
+                    ctx.drawImage(offscreen, shakeX, shakeY, VW, VH, 0, 0, canvas.width, canvas.height);
+                }
+                _drawTitle() {
+                    // Background
+                    const gradient = offCtx.createLinearGradient(0, 0, 0, VH);
+                    gradient.addColorStop(0, '#1a1a3e');
+                    gradient.addColorStop(0.5, '#2d1f3d');
+                    gradient.addColorStop(1, '#1a2e1a');
+                    offCtx.fillStyle = gradient;
+                    offCtx.fillRect(0, 0, VW, VH);
+                    // Stars
+                    offCtx.fillStyle = '#FFF';
+                    for (let i = 0; i < 60; i++) {
+                        const sx = (i * 137 + 50) % VW;
+                        const sy = (i * 97 + 30) % (VH * 0.6);
+                        const ss = 1 + (i % 3);
+                        const twinkle = 0.4 + 0.6 * Math.sin(this.titleFlash * 3 + i);
+                        offCtx.globalAlpha = twinkle;
+                        offCtx.fillRect(Math.round(sx), Math.round(sy), ss, ss);
+                    }
+                    offCtx.globalAlpha = 1;
+                    // Ground
+                    offCtx.fillStyle = '#3d2b1f';
+                    offCtx.fillRect(0, VH - 70, VW, 70);
+                    offCtx.fillStyle = '#4a3728';
+                    offCtx.fillRect(0, VH - 68, VW, 4);
+                    // Pixel carrots on ground
+                    for (let i = 0; i < 8; i++) {
+                        const cx = 60 + i * 75;
+                        const cy = VH - 90;
+                        this._drawPixelCarrot(offCtx, cx, cy, 20, ['#FF6B35', '#FF8C42', '#FFD700', '#00E5FF', '#FF69B4',
+                            '#F0F0FF', '#FF6B35', '#FFD700'
+                        ][i], i > 5);
+                    }
+                    // Title
+                    offCtx.fillStyle = '#FF8C42';
+                    offCtx.font = 'bold 38px monospace';
+                    offCtx.textAlign = 'center';
+                    offCtx.fillText('CARROT', VW / 2, 100);
+                    offCtx.fillStyle = '#FFD700';
+                    offCtx.fillText('KINGDOM', VW / 2, 140);
+                    // Subtitle
+                    offCtx.fillStyle = '#CCC';
+                    offCtx.font = '13px monospace';
+                    offCtx.fillText('A Pixel Farming Adventure', VW / 2, 170);
+                    // Best time
+                    if (this.gameState.bestTime !== null) {
+                        const mins = Math.floor(this.gameState.bestTime / 60);
+                        const secs = Math.floor(this.gameState.bestTime % 60);
+                        offCtx.fillStyle = '#AAA';
+                        offCtx.font = '11px monospace';
+                        offCtx.fillText('Best Time: ' + mins + 'm ' + secs + 's', VW / 2, 195);
+                    }
+                    // Start prompt
+                    const pulse = 0.7 + 0.3 * Math.sin(this.titleFlash * 4);
+                    offCtx.fillStyle = '#FFF';
+                    offCtx.globalAlpha = pulse;
+                    offCtx.font = 'bold 16px monospace';
+                    offCtx.fillText('[ CLICK TO START ]', VW / 2, 260);
+                    offCtx.globalAlpha = 1;
+                    // Decorative farm plot
+                    offCtx.fillStyle = '#6B4226';
+                    offCtx.fillRect(VW / 2 - 60, VH - 160, 120, 80);
+                    offCtx.fillStyle = '#8B5E3C';
+                    for (let r = 0; r < 3; r++)
+                        for (let c = 0; c < 4; c++) {
+                            offCtx.fillStyle = (r + c) % 2 === 0 ? '#7B5230' : '#8B5E3C';
+                            offCtx.fillRect(VW / 2 - 54 + c * 26, VH - 156 + r * 24, 22, 20);
+                        }
+                    offCtx.textAlign = 'start';
+                }
+                _drawPixelCarrot(ctx, x, y, size, color, hasGlow) {
+                    if (hasGlow) {
+                        ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                        ctx.fillRect(x - size / 2 - 3, y - size - 3, size + 6, size * 2 + 6);
+                    }
+                    // Body
+                    ctx.fillStyle = color;
+                    const bw = Math.floor(size * 0.4);
+                    const bh = Math.floor(size * 0.8);
+                    ctx.fillRect(x - bw / 2, y - bh, bw, bh);
+                    // Tip
+                    ctx.fillRect(x - bw / 4, y - bh - Math.floor(size * 0.3), Math.floor(bw / 2), Math.floor(size * 0.3));
+                    // Leaves
+                    ctx.fillStyle = '#4CAF50';
+                    const lw = Math.floor(size * 0.15);
+                    const lh = Math.floor(size * 0.5);
+                    ctx.fillRect(x - Math.floor(size * 0.25), y - bh - lh, lw, lh);
+                    ctx.fillRect(x + Math.floor(size * 0.1), y - bh - lh - 2, lw, lh);
+                }
+                _drawGameWorld() {
+                    // Sky
+                    const skyColors = ['#87CEEB', '#FFE4B5', '#FFCC80', '#1a1a3e'];
+                    const skyColor = skyColors[this.seasonPhase] || skyColors[0];
+                    offCtx.fillStyle = skyColor;
+                    offCtx.fillRect(0, 0, VW, VH);
+                    // Ground
+                    const groundColors = ['#5D8A3C', '#7BA23F', '#C4956A', '#3d2b1f'];
+                    const groundColor = groundColors[this.seasonPhase] || groundColors[0];
+                    offCtx.fillStyle = groundColor;
+                    offCtx.fillRect(0, VH - 80, VW, 80);
+                    offCtx.fillStyle = '#4a3728';
+                    offCtx.fillRect(0, VH - 82, VW, 3);
+                    // Farm area background
+                    const farmW = this.farm.cols * (this.farm.plotSize + 4) + 16;
+                    const farmH = this.farm.rows * (this.farm.plotSize + 4) + 16;
+                    offCtx.fillStyle = '#6B4226';
+                    offCtx.fillRect(this.farm.originX - 8, this.farm.originY - 8, farmW, farmH);
+                    offCtx.fillStyle = '#8B5E3C';
+                    offCtx.fillRect(this.farm.originX - 4, this.farm.originY - 4, farmW - 8, farmH - 8);
+                    // Draw plots
+                    for (const plot of this.farm.plots) {
+                        this._drawPlot(plot);
+                    }
+                    // Particles
+                    this.particles.draw(offCtx);
+                    // Harvest flash
+                    if (this.harvestFlash > 0) {
+                        offCtx.fillStyle = 'rgba(255,255,200,' + (this.harvestFlash * 0.6) + ')';
+                        offCtx.fillRect(0, 0, VW, VH);
+                    }
+                    // Toolbar
+                    this._drawToolbar();
+                    // Shop button
+                    offCtx.fillStyle = '#5D3A1A';
+                    offCtx.fillRect(VW - 90, VH - 44, 80, 36);
+                    offCtx.fillStyle = '#8B5E3C';
+                    offCtx.fillRect(VW - 88, VH - 42, 76, 32);
+                    offCtx.fillStyle = '#FFD700';
+                    offCtx.font = 'bold 12px monospace';
+                    offCtx.textAlign = 'center';
+                    offCtx.fillText('SHOP', VW - 50, VH - 18);
+                    offCtx.textAlign = 'start';
+                    // Coin display
+                    offCtx.fillStyle = '#000';
+                    offCtx.fillRect(VW - 145, 8, 130, 28);
+                    offCtx.fillStyle = '#3D2B1F';
+                    offCtx.fillRect(VW - 143, 10, 126, 24);
+                    offCtx.fillStyle = '#FFD700';
+                    offCtx.font = 'bold 13px monospace';
+                    offCtx.textAlign = 'right';
+                    offCtx.fillText('🪙 ' + Math.floor(this.coinDisplay) + ' coins', VW - 22, 28);
+                    offCtx.textAlign = 'start';
+                    // Harvest count
+                    offCtx.fillStyle = '#FFF';
+                    offCtx.font = '10px monospace';
+                    offCtx.fillText('Harvested: ' + this.gameState.totalHarvested, 15, 20);
+                    // Time display
+                    const mins = Math.floor(this.currentTime / 60);
+                    const secs = Math.floor(this.currentTime % 60);
+                    offCtx.fillText('Time: ' + mins + 'm ' + secs + 's', 15, 36);
+                    // Season indicator
+                    const seasonNames = ['Spring', 'Summer', 'Autumn', 'Moon Phase'];
+                    offCtx.fillText('Season: ' + seasonNames[this.seasonPhase], 15, 52);
+                }
+                _drawPlot(plot) {
+                    const px = plot.px;
+                    const py = plot.py;
+                    const s = plot.size;
+                    // Soil
+                    const isWatered = plot.isWatered(this.currentTime);
+                    const baseSoil = isWatered ? '#5C3A1E' : '#7B5230';
+                    offCtx.fillStyle = baseSoil;
+                    offCtx.fillRect(px, py, s, s);
+                    // Soil texture (pixel grid)
+                    offCtx.fillStyle = isWatered ? '#4A2E14' : '#6B4226';
+                    for (let ty = 0; ty < s; ty += 6) {
+                        for (let tx = 0; tx < s; tx += 6) {
+                            if ((tx / 6 + ty / 6) % 3 === 0) {
+                                offCtx.fillRect(px + tx, py + ty, 3, 3);
+                            }
+                        }
+                    }
+                    // Border
+                    offCtx.strokeStyle = '#3D2010';
+                    offCtx.lineWidth = 2;
+                    offCtx.strokeRect(px, py, s, s);
+                    // Plant
+                    if (plot.planted) {
+                        const prog = plot.getGrowthPercent();
+                        const st = plot.seedType;
+                        const color = SEED_TYPES[st] ? SEED_TYPES[st].color : '#FF6B35';
+                        if (plot.ready) {
+                            // Full grown - show harvestable carrot
+                            this._drawGrownCarrot(offCtx, px + s / 2, py + s / 2, s * 0.7, color, st === 'moon');
+                            // Sparkle for ready
+                            if (Math.floor(this.currentTime * 4) % 2 === 0) {
+                                offCtx.fillStyle = '#FFF';
+                                offCtx.fillRect(px + s - 6, py + 2, 4, 4);
+                            }
+                        } else if (prog > 0.05) {
+                            // Growing
+                            const plantHeight = s * 0.25 + prog * s * 0.55;
+                            const stemX = px + s / 2;
+                            const stemBase = py + s - 4;
+                            // Stem
+                            offCtx.fillStyle = '#4CAF50';
+                            const stemW = Math.max(2, Math.floor(s * 0.1));
+                            offCtx.fillRect(stemX - stemW / 2, stemBase - plantHeight, stemW, plantHeight);
+                            // Tiny leaves
+                            if (prog > 0.3) {
+                                offCtx.fillStyle = '#66BB6A';
+                                offCtx.fillRect(stemX - stemW - 1, stemBase - plantHeight + 2, stemW + 1, stemW);
+                                offCtx.fillRect(stemX + 1, stemBase - plantHeight, stemW + 1, stemW);
+                            }
+                            // Small carrot body peeking
+                            if (prog > 0.5) {
+                                const bodyShow = (prog - 0.5) * 2;
+                                const bodyH = Math.floor(s * 0.3 * bodyShow);
+                                offCtx.fillStyle = color;
+                                offCtx.fillRect(stemX - Math.floor(s * 0.12), stemBase - bodyH, Math.floor(s * 0.24),
+                                    bodyH);
+                            }
+                        }
+                        // Fertilized indicator
+                        if (plot.fertilized && !plot.ready) {
+                            offCtx.fillStyle = 'rgba(144,238,144,0.5)';
+                            offCtx.fillRect(px + 2, py + 2, s - 4, 4);
+                        }
+                        // Needs water indicator
+                        if (plot.needsWater(this.currentTime) && !plot.ready) {
+                            offCtx.fillStyle = 'rgba(255,180,100,0.7)';
+                            offCtx.fillRect(px + s - 8, py + 2, 6, 6);
+                        }
+                    }
+                }
+                _drawGrownCarrot(ctx, cx, cy, size, color, isMoon) {
+                    if (isMoon) {
+                        // Glow
+                        const glowGrad = ctx.createRadialGradient(cx, cy - size * 0.3, size * 0.1, cx, cy, size * 0.9);
+                        glowGrad.addColorStop(0, 'rgba(240,240,255,0.7)');
+                        glowGrad.addColorStop(1, 'rgba(240,240,255,0)');
+                        ctx.fillStyle = glowGrad;
+                        ctx.fillRect(cx - size, cy - size, size * 2, size * 2);
+                    }
+                    const bw = Math.floor(size * 0.42);
+                    const bh = Math.floor(size * 0.7);
+                    ctx.fillStyle = color;
+                    ctx.fillRect(cx - bw / 2, cy - bh * 0.6, bw, bh);
+                    ctx.fillRect(cx - bw / 3, cy - bh * 0.6 - Math.floor(size * 0.25), Math.floor(bw * 0.65), Math.floor(size *
+                        0.25));
+                    ctx.fillStyle = '#4CAF50';
+                    const lw = Math.max(3, Math.floor(size * 0.18));
+                    const lh = Math.floor(size * 0.45);
+                    ctx.fillRect(cx - Math.floor(size * 0.22), cy - bh * 0.6 - lh + 4, lw, lh);
+                    ctx.fillRect(cx + Math.floor(size * 0.05), cy - bh * 0.6 - lh + 2, lw, lh);
+                }
+                _drawToolbar() {
+                    const tbY = VH - 50;
+                    const tbX = 15;
+                    const bw = 80;
+                    const bh = 34;
+                    const gap = 8;
+                    const tools = [
+                        { id: 'seed', label: 'Seeds', x: tbX },
+                        { id: 'water', label: 'Water', x: tbX + bw + gap },
+                        { id: 'fertilizer', label: 'Fertilize', x: tbX + 2 * (bw + gap) },
+                    ];
+                    for (const tool of tools) {
+                        const selected = this.gameState.selectedTool === tool.id;
+                        offCtx.fillStyle = selected ? '#8B5E3C' : '#5D3A1A';
+                        offCtx.fillRect(tool.x, tbY, bw, bh);
+                        offCtx.fillStyle = selected ? '#C4956A' : '#7B5230';
+                        offCtx.fillRect(tool.x + 2, tbY + 2, bw - 4, bh - 4);
+                        offCtx.fillStyle = selected ? '#FFF' : '#DDD';
+                        offCtx.font = 'bold 10px monospace';
+                        offCtx.textAlign = 'center';
+                        offCtx.fillText(tool.label, tool.x + bw / 2, tbY + bh / 2 + 4);
+                        if (selected) {
+                            offCtx.strokeStyle = '#FFD700';
+                            offCtx.lineWidth = 2;
+                            offCtx.strokeRect(tool.x + 1, tbY + 1, bw - 2, bh - 2);
+                            offCtx.lineWidth = 1;
+                        }
+                    }
+                    // Current seed indicator
+                    const seedX = tbX + 3 * (bw + gap);
+                    offCtx.fillStyle = '#3D2B1F';
+                    offCtx.fillRect(seedX, tbY, 34, bh);
+                    const st = this.gameState.selectedSeed;
+                    const seedColor = SEED_TYPES[st] ? SEED_TYPES[st].color : '#FF6B35';
+                    offCtx.fillStyle = seedColor;
+                    offCtx.fillRect(seedX + 7, tbY + 7, 20, 20);
+                    offCtx.fillStyle = '#FFF';
+                    offCtx.font = 'bold 8px monospace';
+                    offCtx.textAlign = 'center';
+                    offCtx.fillText(st.charAt(0).toUpperCase(), seedX + 17, tbY + 21);
+                    offCtx.textAlign = 'start';
+                }
+                _drawShopOverlay() {
+                    // Dim background
+                    offCtx.fillStyle = 'rgba(0,0,0,0.6)';
+                    offCtx.fillRect(0, 0, VW, VH);
+                    // Panel
+                    const px = 80;
+                    const py = 30;
+                    const pw = VW - 160;
+                    const ph = VH - 60;
+                    offCtx.fillStyle = '#4A3728';
+                    offCtx.fillRect(px, py, pw, ph);
+                    offCtx.fillStyle = '#6B5035';
+                    offCtx.fillRect(px + 4, py + 4, pw - 8, ph - 8);
+                    // Title
+                    offCtx.fillStyle = '#FFD700';
+                    offCtx.font = 'bold 18px monospace';
+                    offCtx.textAlign = 'center';
+                    offCtx.fillText('FARM SHOP', px + pw / 2, py + 30);
+                    // Close button
+                    offCtx.fillStyle = '#C44';
+                    offCtx.fillRect(px + pw - 40, py + 6, 34, 28);
+                    offCtx.fillStyle = '#FFF';
+                    offCtx.font = 'bold 14px monospace';
+                    offCtx.fillText('X', px + pw - 23, py + 26);
+                    // Coins
+                    offCtx.fillStyle = '#FFD700';
+                    offCtx.font = '12px monospace';
+                    offCtx.fillText('Your Coins: ' + Math.floor(this.coinDisplay), px + pw / 2, py + 50);
+                    // Upgrades
+                    const upgrades = Object.entries(UPGRADES);
+                    const startY = py + 62;
+                    const btnH = 30;
+                    const btnGap = 5;
+                    for (let i = 0; i < upgrades.length; i++) {
+                        const [key, upg] = upgrades[i];
+                        const by = startY + i * (btnH + btnGap);
+                        const purchased = upg.purchased;
+                        const canBuy = !purchased && this.gameState.canAfford(upg.cost) && (!upg.requires || UPGRADES[upg
+                            .requires].purchased);
+                        offCtx.fillStyle = purchased ? '#3a5a3a' : canBuy ? '#5D3A1A' : '#3a2a2a';
+                        offCtx.fillRect(px + 16, by, pw - 32, btnH);
+                        offCtx.fillStyle = purchased ? '#5a8a5a' : canBuy ? '#8B5E3C' : '#4a3a3a';
+                        offCtx.fillRect(px + 18, by + 2, pw - 36, btnH - 4);
+                        offCtx.fillStyle = purchased ? '#AFA' : '#FFF';
+                        offCtx.font = '10px monospace';
+                        offCtx.textAlign = 'left';
+                        const status = purchased ? ' [OWNED]' : canBuy ? ' [' + upg.cost + ' coins]' : ' [' + upg.cost +
+                            ' coins - locked]';
+                        offCtx.fillText(upg.name + status, px + 24, by + btnH / 2 + 4);
+                        offCtx.fillStyle = '#CCC';
+                        offCtx.font = '8px monospace';
+                        offCtx.fillText(upg.desc, px + 24, by + btnH / 2 + 16);
+                    }
+                    offCtx.textAlign = 'start';
+                }
+                _drawWinOverlay() {
+                    offCtx.fillStyle = 'rgba(0,0,0,0.55)';
+                    offCtx.fillRect(0, 0, VW, VH);
+                    const px = 140;
+                    const py = 80;
+                    const pw = VW - 280;
+                    const ph = VH - 160;
+                    offCtx.fillStyle = '#2D1F3D';
+                    offCtx.fillRect(px, py, pw, ph);
+                    offCtx.fillStyle = '#4A3060';
+                    offCtx.fillRect(px + 4, py + 4, pw - 8, ph - 8);
+                    offCtx.fillStyle = '#FFD700';
+                    offCtx.font = 'bold 22px monospace';
+                    offCtx.textAlign = 'center';
+                    offCtx.fillText('YOU WIN!', px + pw / 2, py + 40);
+                    offCtx.fillStyle = '#F0F0FF';
+                    offCtx.font = '13px monospace';
+                    offCtx.fillText('Legendary Moon Carrot Harvested!', px + pw / 2, py + 65);
+                    const wd = this.winData || { time: this.currentTime, coins: this.gameState.coins };
+                    const mins = Math.floor(wd.time / 60);
+                    const secs = Math.floor(wd.time % 60);
+                    offCtx.fillStyle = '#FFF';
+                    offCtx.font = '12px monospace';
+                    offCtx.fillText('Time: ' + mins + 'm ' + secs + 's', px + pw / 2, py + 90);
+                    offCtx.fillText('Coins: ' + wd.coins, px + pw / 2, py + 108);
+                    if (this.gameState.bestTime !== null) {
+                        const bm = Math.floor(this.gameState.bestTime / 60);
+                        const bs = Math.floor(this.gameState.bestTime % 60);
+                        offCtx.fillText('Best: ' + bm + 'm ' + bs + 's', px + pw / 2, py + 126);
+                    }
+                    offCtx.fillStyle = '#FFD700';
+                    offCtx.font = 'bold 14px monospace';
+                    const pulse2 = 0.7 + 0.3 * Math.sin(this.titleFlash * 4);
+                    offCtx.globalAlpha = pulse2;
+                    offCtx.fillText('[ CLICK TO CONTINUE ]', px + pw / 2, py + 155);
+                    offCtx.globalAlpha = 1;
+                    offCtx.textAlign = 'start';
+                    // Extra particles
+                    if (Math.random() < 0.3) {
+                        this.particles.emit(px + pw / 2, py + 40, 2, '#FFD700', 50, 2, 3);
+                    }
+                }
+                getInputPos(e) {
+                    const rect = canvas.getBoundingClientRect();
+                    const scaleX = VW / rect.width;
+                    const scaleY = VH / rect.height;
+                    let clientX, clientY;
+                    if (e.touches && e.touches.length > 0) {
+                        clientX = e.touches[0].clientX;
+                        clientY = e.touches[0].clientY;
+                    } else if (e.changedTouches && e.changedTouches.length > 0) {
+                        clientX = e.changedTouches[0].clientX;
+                        clientY = e.changedTouches[0].clientY;
+                    } else {
+                        clientX = e.clientX;
+                        clientY = e.clientY;
+                    }
+                    return {
+                        x: (clientX - rect.left) * scaleX,
+                        y: (clientY - rect.top) * scaleY,
+                    };
+                }
+            }
+
+            // ──────────────────────────────────────
+            // INITIALIZE AND RUN
+            // ──────────────────────────────────────
+            const game = new Game();
+            game.init();
+
+            // Input handling
+            canvas.addEventListener('click', (e) => {
+                const pos = game.getInputPos(e);
+                game.handleClick(pos.x, pos.y);
+            });
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                const pos = game.getInputPos(e);
+                game.handleClick(pos.x, pos.y);
+            }, { passive: false });
+            canvas.addEventListener('touchend', (e) => {
+                e.preventDefault();
+            }, { passive: false });
+
+            // Game loop
+            let lastTime = performance.now();
+            function loop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.2) dt = 0.2; // Cap to prevent jumps
+                lastTime = timestamp;
+                game.update(dt);
+                game.draw();
+                requestAnimationFrame(loop);
+            }
+            requestAnimationFrame(loop);
+
+            // Handle resize
+            window.addEventListener('resize', () => {
+                resize();
+                game._recalcFarmOrigin();
+            });
+
+            console.log('🥕 Carrot Kingdom ready! Grow carrots, earn coins, and harvest the Legendary Moon Carrot!');
+            console.log('🕹️  Click plots to plant/water/fertilize. Use toolbar to switch tools.');
+            console.log('🏆  Goal: Unlock and harvest a Moon Carrot (~25 min adventure)');
+        })();
+    </script>
+</body>
+</html>
