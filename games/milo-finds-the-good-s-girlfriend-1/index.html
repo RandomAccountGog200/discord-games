@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>Milo Finds the Good's Girlfriend 1</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="gameShell">
+    <canvas id="gameCanvas" aria-label="Milo Finds the Good's Girlfriend 1"></canvas>
+
+    <section id="hud" class="hud hidden">
+      <div class="hud-card"><span class="label">LEVEL</span><strong id="levelText">1 / 4</strong></div>
+      <div class="hud-card"><span class="label">STARS</span><strong id="starText">0 / 0</strong></div>
+      <div class="hud-card"><span class="label">HEARTS</span><strong id="heartText">♥♥♥</strong></div>
+      <div class="hud-card score-card"><span class="label">SCORE</span><strong id="scoreText">0</strong></div>
+      <button id="pauseBtn" class="small-button">Ⅱ</button>
+    </section>
+
+    <section id="message" class="message hidden"></section>
+
+    <section id="overlay" class="overlay">
+      <div id="panel" class="panel"></div>
+    </section>
+
+    <nav id="touchControls" class="touch-controls" aria-label="Touch controls">
+      <div class="touch-cluster left-cluster">
+        <button class="touch-button" data-action="left">◀</button>
+        <button class="touch-button" data-action="right">▶</button>
+      </div>
+      <div class="touch-cluster right-cluster">
+        <button class="touch-button dash-button" data-action="dash">✦</button>
+        <button class="touch-button jump-button" data-action="jump">▲</button>
+      </div>
+    </nav>
+  </main>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
