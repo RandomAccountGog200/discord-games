@@ -988,5 +988,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-08-05T21:05:16.077Z",
     "updatedAt": "2026-08-05T21:05:16.077Z"
+  },
+  {
+    "slug": "carrot-country",
+    "title": "Carrot Country",
+    "description": "a very good game where you farm carrots make it very good and atticting because i want it to be good also i must have pixle art and be like farming simulator but just with carrots i want to beat the game make it take 25 minutes to beat the game and make it very fun and not board to play for those 25 minutes",
+    "creator": "burger778",
+    "model": "openai/gpt-5.6-luna",
+    "createdAt": "2026-08-05T21:07:13.206Z",
+    "updatedAt": "2026-08-05T21:07:13.206Z"
   }
 ]
