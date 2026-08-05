@@ -1042,5 +1042,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-08-05T21:19:08.631Z",
     "updatedAt": "2026-08-05T21:19:08.631Z"
+  },
+  {
+    "slug": "eweiuweuh-neon-shepherd",
+    "title": "EWEIUWEUH — Neon Shepherd",
+    "description": "eweiuweuhwliuwi",
+    "creator": "burger778",
+    "model": "openai/gpt-5.6-luna",
+    "createdAt": "2026-08-05T21:21:29.035Z",
+    "updatedAt": "2026-08-05T21:21:29.035Z"
   }
 ]
