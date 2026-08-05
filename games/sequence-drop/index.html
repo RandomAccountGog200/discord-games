@@ -1,0 +1,1330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Sequence Drop</title>
+    <style>
+        :root {
+            --bg: #0a0a1a;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Courier New', monospace;
+            touch-action: manipulation;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        canvas {
+            display: block;
+            image-rendering: auto;
+            max-width: 100vw;
+            max-height: 100vh;
+            border-radius: 8px;
+            box-shadow: 0 0 40px rgba(100, 100, 255, 0.3), 0 0 80px rgba(100, 50, 200, 0.15);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+
+            // --- Canvas internal resolution ---
+            const W = 480;
+            const H = 800;
+            canvas.width = W;
+            canvas.height = H;
+
+            // --- Responsive scaling ---
+            function resizeCanvas() {
+                const scaleX = window.innerWidth / W;
+                const scaleY = window.innerHeight / H;
+                const scale = Math.min(scaleX, scaleY, 1.2);
+                canvas.style.width = (W * scale) + 'px';
+                canvas.style.height = (H * scale) + 'px';
+            }
+            window.addEventListener('resize', resizeCanvas);
+            window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 100));
+            resizeCanvas();
+
+            // --- Game States ---
+            const STATE = { TITLE: 0, PLAYING: 1, PAUSED: 2, GAMEOVER: 3, WAVE_TRANS: 4 };
+            let gameState = STATE.TITLE;
+            let waveTransitionTimer = 0;
+            let waveTransitionWave = 1;
+
+            // --- Audio Engine ---
+            class AudioEngine {
+                constructor() {
+                    this.ctx = null;
+                    this.initialized = false;
+                }
+                init() {
+                    if (this.initialized) return;
+                    try {
+                        this.ctx = new(window.AudioContext || window.webkitAudioContext)();
+                        this.initialized = true;
+                    } catch (e) {
+                        console.warn('Web Audio API not available');
+                    }
+                }
+                playTone(freq, duration, type = 'sine', vol = 0.25, ramp = true) {
+                    if (!this.initialized || !this.ctx) return;
+                    const t = this.ctx.currentTime;
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    gain.gain.setValueAtTime(vol, t);
+                    if (ramp) {
+                        gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    } else {
+                        gain.gain.setValueAtTime(0, t + duration);
+                    }
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration + 0.05);
+                }
+                playHit(noteIndex) {
+                    const freqs = [261.63, 293.66, 329.63, 392.00, 440.00, 493.88];
+                    const freq = freqs[noteIndex] || 440;
+                    this.playTone(freq, 0.35, 'triangle', 0.3);
+                    // Add a bright harmonic
+                    setTimeout(() => {
+                        if (this.initialized && this.ctx) this.playTone(freq * 1.5, 0.15, 'sine', 0.12);
+                    }, 30);
+                }
+                playMiss() {
+                    this.playTone(80, 0.3, 'sawtooth', 0.2);
+                    this.playTone(55, 0.4, 'square', 0.15);
+                }
+                playUIClick() {
+                    this.playTone(800, 0.08, 'square', 0.1);
+                }
+                playBeat() {
+                    this.playTone(50, 0.15, 'sine', 0.18, false);
+                }
+                playWaveComplete() {
+                    const t = this.ctx ? this.ctx.currentTime : 0;
+                    if (!this.initialized || !this.ctx) return;
+                    [523, 659, 784, 1047].forEach((f, i) => {
+                        const osc = this.ctx.createOscillator();
+                        const gain = this.ctx.createGain();
+                        osc.type = 'triangle';
+                        osc.frequency.setValueAtTime(f, t + i * 0.12);
+                        gain.gain.setValueAtTime(0.25, t + i * 0.12);
+                        gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.12 + 0.4);
+                        osc.connect(gain);
+                        gain.connect(this.ctx.destination);
+                        osc.start(t + i * 0.12);
+                        osc.stop(t + i * 0.12 + 0.5);
+                    });
+                }
+            }
+            const audio = new AudioEngine();
+
+            // --- Particle System ---
+            class Particle {
+                constructor(x, y, vx, vy, color, life, size = 3) {
+                    this.x = x;
+                    this.y = y;
+                    this.vx = vx;
+                    this.vy = vy;
+                    this.color = color;
+                    this.life = life;
+                    this.maxLife = life;
+                    this.size = size;
+                    this.alive = true;
+                }
+                update(dt) {
+                    this.x += this.vx * dt;
+                    this.y += this.vy * dt;
+                    this.vy += 300 * dt; // gravity
+                    this.life -= dt;
+                    if (this.life <= 0) this.alive = false;
+                }
+                draw(ctx) {
+                    const alpha = Math.max(0, this.life / this.maxLife);
+                    const s = this.size * (0.6 + 0.4 * alpha);
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = this.color;
+                    ctx.shadowColor = this.color;
+                    ctx.shadowBlur = 8;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, s, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+            }
+
+            const particles = [];
+            const MAX_PARTICLES = 250;
+
+            function spawnParticles(x, y, color, count = 15, force = 200) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = force * (0.4 + Math.random() * 0.6);
+                    const vx = Math.cos(angle) * speed;
+                    const vy = Math.sin(angle) * speed - 150;
+                    const life = 0.3 + Math.random() * 0.6;
+                    const size = 1.5 + Math.random() * 4;
+                    particles.push(new Particle(x, y, vx, vy, color, life, size));
+                }
+                while (particles.length > MAX_PARTICLES) particles.shift();
+            }
+
+            // --- Screen Shake ---
+            let shakeAmount = 0;
+            let shakeDuration = 0;
+            let shakeX = 0;
+            let shakeY = 0;
+
+            function triggerShake(amount = 8, duration = 0.25) {
+                shakeAmount = Math.max(shakeAmount, amount);
+                shakeDuration = Math.max(shakeDuration, duration);
+            }
+
+            // --- Note Colors ---
+            const NOTE_COLORS = ['#ff4455', '#ff8844', '#ffcc33', '#44ee55', '#4499ff', '#cc44ff'];
+            const NOTE_GLOWS = ['#ff4455', '#ff8844', '#ffcc33', '#44ee55', '#4499ff', '#cc44ff'];
+            const NOTE_NAMES = ['1', '2', '3', '7', '8', '9'];
+            const NOTE_KEYS = ['1', '2', '3', '7', '8', '9'];
+            const NUM_LANES = 6;
+            const LANE_CENTERS = [48, 124, 200, 276, 352, 428]; // 6 lanes evenly spaced in 480px
+
+            // --- Note class ---
+            class Note {
+                constructor(laneIndex, y, speed) {
+                    this.laneIndex = laneIndex;
+                    this.x = LANE_CENTERS[laneIndex];
+                    this.y = y;
+                    this.speed = speed;
+                    this.hit = false;
+                    this.missed = false;
+                    this.alive = true;
+                    this.width = 56;
+                    this.height = 44;
+                    this.glowPhase = Math.random() * Math.PI * 2;
+                }
+                update(dt) {
+                    this.y += this.speed * dt;
+                    this.glowPhase += dt * 4;
+                    if (this.y > 630 && !this.hit) {
+                        this.missed = true;
+                        this.alive = false;
+                    }
+                }
+                getHitZoneDist() {
+                    return Math.abs(this.y - 565);
+                }
+                draw(ctx) {
+                    const alpha = this.hit ? 0 : 1;
+                    if (alpha <= 0) return;
+                    const glow = 0.5 + 0.5 * Math.sin(this.glowPhase);
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    const color = NOTE_COLORS[this.laneIndex];
+                    // Glow
+                    ctx.shadowColor = color;
+                    ctx.shadowBlur = 12 + glow * 10;
+                    // Main body
+                    const rx = 10;
+                    const ry = 10;
+                    const x = this.x - this.width / 2;
+                    const y = this.y - this.height / 2;
+                    const w = this.width;
+                    const h = this.height;
+                    ctx.fillStyle = 'rgba(20,20,40,0.9)';
+                    ctx.beginPath();
+                    ctx.moveTo(x + rx, y);
+                    ctx.lineTo(x + w - rx, y);
+                    ctx.quadraticCurveTo(x + w, y, x + w, y + rx);
+                    ctx.lineTo(x + w, y + h - ry);
+                    ctx.quadraticCurveTo(x + w, y + h, x + w - rx, y + h);
+                    ctx.lineTo(x + rx, y + h);
+                    ctx.quadraticCurveTo(x, y + h, x, y + h - ry);
+                    ctx.lineTo(x, y + rx);
+                    ctx.quadraticCurveTo(x, y, x + rx, y);
+                    ctx.closePath();
+                    ctx.fill();
+                    // Border
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 3;
+                    ctx.shadowBlur = 16 + glow * 8;
+                    ctx.stroke();
+                    // Inner glow border
+                    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                    ctx.lineWidth = 1;
+                    ctx.shadowBlur = 0;
+                    ctx.stroke();
+                    // Number text
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 22px "Courier New", monospace';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.shadowColor = color;
+                    ctx.shadowBlur = 10;
+                    ctx.fillText(NOTE_NAMES[this.laneIndex], this.x, this.y + 1);
+                    ctx.shadowBlur = 0;
+                    // Small trail dots
+                    for (let i = 1; i <= 3; i++) {
+                        const ty = this.y - i * 16;
+                        if (ty > -20 && ty < 620) {
+                            ctx.fillStyle = color;
+                            ctx.globalAlpha = alpha * (0.35 - i * 0.1);
+                            ctx.beginPath();
+                            ctx.arc(this.x, ty, 4 - i * 0.8, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                    }
+                    ctx.restore();
+                }
+            }
+
+            // --- Game State ---
+            let notes = [];
+            let score = 0;
+            let combo = 0;
+            let maxCombo = 0;
+            let health = 100;
+            let wave = 1;
+            let waveScoreTarget = 2000;
+            let noteSpeed = 220;
+            let noteInterval = 0.85;
+            let noteSpawnTimer = 0;
+            let patternIndex = 0;
+            let highScore = 0;
+            let judgmentTexts = [];
+            let beatTimer = 0;
+            let beatInterval = 0.5;
+            let healthRegenTimer = 0;
+            let comboFlashTimer = 0;
+            let waveCompleteDisplay = 0;
+            let totalNotesHit = 0;
+            let totalNotesMissed = 0;
+
+            function loadHighScore() {
+                try {
+                    const hs = localStorage.getItem('seqdrop_highscore');
+                    return hs ? parseInt(hs, 10) : 0;
+                } catch (e) { return 0; }
+            }
+
+            function saveHighScore(s) {
+                try {
+                    localStorage.setItem('seqdrop_highscore', s.toString());
+                } catch (e) {}
+            }
+            highScore = loadHighScore();
+
+            function resetGame() {
+                notes = [];
+                particles.length = 0;
+                judgmentTexts = [];
+                score = 0;
+                combo = 0;
+                maxCombo = 0;
+                health = 100;
+                wave = 1;
+                waveScoreTarget = 2000;
+                noteSpeed = 220;
+                noteInterval = 0.85;
+                noteSpawnTimer = 0;
+                patternIndex = 0;
+                beatTimer = 0;
+                beatInterval = 0.5;
+                healthRegenTimer = 0;
+                comboFlashTimer = 0;
+                waveCompleteDisplay = 0;
+                totalNotesHit = 0;
+                totalNotesMissed = 0;
+                shakeAmount = 0;
+                shakeDuration = 0;
+                shakeX = 0;
+                shakeY = 0;
+            }
+
+            function addJudgment(text, x, y, color) {
+                judgmentTexts.push({
+                    text,
+                    x,
+                    y,
+                    color,
+                    life: 0.9,
+                    maxLife: 0.9,
+                    vy: -120
+                });
+                if (judgmentTexts.length > 15) judgmentTexts.shift();
+            }
+
+            // --- Spawn note ---
+            function spawnNote(laneIndex, y = -60) {
+                notes.push(new Note(laneIndex, y, noteSpeed));
+            }
+
+            function spawnNextPatternNote() {
+                const laneIndex = patternIndex % NUM_LANES;
+                spawnNote(laneIndex);
+                patternIndex++;
+                // At higher waves, occasionally spawn doubles
+                if (wave >= 3 && Math.random() < 0.25 + wave * 0.04) {
+                    const extraLane = (laneIndex + 2 + Math.floor(Math.random() * 3)) % NUM_LANES;
+                    if (extraLane !== laneIndex) {
+                        setTimeout(() => {
+                            if (gameState === STATE.PLAYING) spawnNote(extraLane, -80);
+                        }, 60 + Math.random() * 120);
+                    }
+                }
+                if (wave >= 5 && Math.random() < 0.12 + wave * 0.03) {
+                    const extraLane2 = (laneIndex + 4) % NUM_LANES;
+                    if (extraLane2 !== laneIndex) {
+                        setTimeout(() => {
+                            if (gameState === STATE.PLAYING) spawnNote(extraLane2, -70);
+                        }, 30 + Math.random() * 80);
+                    }
+                }
+            }
+
+            // --- Handle input ---
+            function handleLanePress(laneIndex) {
+                if (gameState !== STATE.PLAYING) return;
+                // Find closest note in this lane
+                let bestNote = null;
+                let bestDist = Infinity;
+                for (const note of notes) {
+                    if (!note.alive || note.hit || note.missed) continue;
+                    if (note.laneIndex !== laneIndex) continue;
+                    const dist = note.getHitZoneDist();
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        bestNote = note;
+                    }
+                }
+                if (bestNote && bestDist < 55) {
+                    // Hit!
+                    bestNote.hit = true;
+                    bestNote.alive = false;
+                    const isPerfect = bestDist < 22;
+                    const points = isPerfect ? 300 : 100;
+                    const comboMult = Math.min(5, 1 + Math.floor(combo / 15));
+                    const earnedPoints = points * comboMult;
+                    score += earnedPoints;
+                    combo++;
+                    totalNotesHit++;
+                    if (combo > maxCombo) maxCombo = combo;
+                    health = Math.min(100, health + 3);
+                    comboFlashTimer = 0.3;
+                    // Particles
+                    spawnParticles(bestNote.x, bestNote.y, NOTE_COLORS[laneIndex], isPerfect ? 25 : 15, isPerfect ? 300 :
+                        180);
+                    // Judgment text
+                    const jText = isPerfect ? 'PERFECT!' : 'GOOD';
+                    const jColor = isPerfect ? '#ffdd00' : '#ffffff';
+                    addJudgment(jText, bestNote.x, bestNote.y - 20, jColor);
+                    // Audio
+                    audio.playHit(laneIndex);
+                    if (isPerfect) {
+                        triggerShake(3, 0.08);
+                    }
+                    // Wave score check
+                    checkWaveProgress();
+                } else if (bestNote && bestDist < 80) {
+                    // Early/late - still count but less points
+                    bestNote.hit = true;
+                    bestNote.alive = false;
+                    const earnedPoints = 50;
+                    score += earnedPoints;
+                    combo = 0;
+                    totalNotesHit++;
+                    health = Math.min(100, health + 1);
+                    addJudgment('OK', bestNote.x, bestNote.y - 20, '#aaaaaa');
+                    audio.playHit(laneIndex);
+                    spawnParticles(bestNote.x, bestNote.y, '#888888', 8, 80);
+                }
+            }
+
+            function checkWaveProgress() {
+                if (score >= waveScoreTarget && gameState === STATE.PLAYING) {
+                    // Advance wave
+                    wave++;
+                    waveScoreTarget = Math.floor(waveScoreTarget * 1.6 + 1000);
+                    noteSpeed += 35;
+                    noteInterval = Math.max(0.3, noteInterval - 0.06);
+                    beatInterval = Math.max(0.22, beatInterval - 0.025);
+                    gameState = STATE.WAVE_TRANS;
+                    waveTransitionTimer = 2.5;
+                    waveTransitionWave = wave;
+                    waveCompleteDisplay = 2.5;
+                    audio.playWaveComplete();
+                    // Clear remaining notes gracefully
+                    for (const note of notes) {
+                        if (!note.hit && !note.missed && note.alive) {
+                            spawnParticles(note.x, note.y, '#ffdd00', 6, 60);
+                            note.alive = false;
+                        }
+                    }
+                    notes = notes.filter(n => n.alive);
+                }
+            }
+
+            function handleMiss(note) {
+                if (note.missed && !note.hit && note.alive) {
+                    note.alive = false;
+                    combo = 0;
+                    health = Math.max(0, health - 10);
+                    totalNotesMissed++;
+                    addJudgment('MISS', note.x, 580, '#ff3333');
+                    audio.playMiss();
+                    triggerShake(10, 0.3);
+                    spawnParticles(note.x, note.y, '#ff3333', 10, 100);
+                    if (health <= 0) {
+                        endGame();
+                    }
+                }
+            }
+
+            function endGame() {
+                gameState = STATE.GAMEOVER;
+                if (score > highScore) {
+                    highScore = score;
+                    saveHighScore(highScore);
+                }
+                triggerShake(16, 0.5);
+                // Explode remaining notes
+                for (const note of notes) {
+                    if (note.alive && !note.hit && !note.missed) {
+                        spawnParticles(note.x, note.y, '#ff0000', 8, 120);
+                    }
+                }
+                notes = [];
+            }
+
+            // --- Input Handling ---
+            const keyToLane = {};
+            NOTE_KEYS.forEach((k, i) => { keyToLane[k] = i; });
+
+            function onKeyDown(e) {
+                if (e.repeat) return;
+                audio.init();
+                const key = e.key;
+                if (gameState === STATE.TITLE) {
+                    if (key === 'Enter' || key === ' ' || key === 'enter') {
+                        audio.playUIClick();
+                        startGame();
+                        return;
+                    }
+                }
+                if (gameState === STATE.GAMEOVER) {
+                    if (key === 'Enter' || key === ' ' || key === 'enter' || key === 'r' || key === 'R') {
+                        audio.playUIClick();
+                        resetGame();
+                        startGame();
+                        return;
+                    }
+                }
+                if (gameState === STATE.PLAYING) {
+                    if (key === 'Escape' || key === 'p' || key === 'P') {
+                        audio.playUIClick();
+                        gameState = STATE.PAUSED;
+                        return;
+                    }
+                    if (keyToLane.hasOwnProperty(key)) {
+                        handleLanePress(keyToLane[key]);
+                        return;
+                    }
+                }
+                if (gameState === STATE.PAUSED) {
+                    if (key === 'Escape' || key === 'p' || key === 'P') {
+                        audio.playUIClick();
+                        gameState = STATE.PLAYING;
+                        return;
+                    }
+                    if (key === 'q' || key === 'Q') {
+                        audio.playUIClick();
+                        resetGame();
+                        gameState = STATE.TITLE;
+                        return;
+                    }
+                }
+                if (gameState === STATE.WAVE_TRANS) {
+                    // Can't skip wave transition
+                }
+            }
+
+            function onKeyUp(e) {}
+
+            function getTouchLane(tx, ty) {
+                // Convert touch position to canvas coordinates
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = W / rect.width;
+                const scaleY = H / rect.height;
+                const cx = (tx - rect.left) * scaleX;
+                const cy = (ty - rect.top) * scaleY;
+                // Check touch buttons at bottom (y > 600)
+                if (cy > 610 && cy < 770) {
+                    const btnWidth = 62;
+                    const totalWidth = NUM_LANES * btnWidth;
+                    const startX = (W - totalWidth) / 2;
+                    for (let i = 0; i < NUM_LANES; i++) {
+                        const bx = startX + i * btnWidth;
+                        if (cx >= bx && cx <= bx + btnWidth) {
+                            return i; // lane index
+                        }
+                    }
+                }
+                // Also allow tapping near the hit zone area (y 520-600)
+                if (cy > 500 && cy < 610) {
+                    let closestLane = 0;
+                    let closestDist = Infinity;
+                    for (let i = 0; i < NUM_LANES; i++) {
+                        const dist = Math.abs(cx - LANE_CENTERS[i]);
+                        if (dist < closestDist) {
+                            closestDist = dist;
+                            closestLane = i;
+                        }
+                    }
+                    if (closestDist < 50) return closestLane;
+                }
+                return -1;
+            }
+
+            function onTouchStart(e) {
+                e.preventDefault();
+                audio.init();
+                if (gameState === STATE.TITLE) {
+                    audio.playUIClick();
+                    startGame();
+                    return;
+                }
+                if (gameState === STATE.GAMEOVER) {
+                    audio.playUIClick();
+                    resetGame();
+                    startGame();
+                    return;
+                }
+                if (gameState === STATE.PAUSED) {
+                    const rect = canvas.getBoundingClientRect();
+                    const scaleX = W / rect.width;
+                    const scaleY = H / rect.height;
+                    for (const touch of e.changedTouches) {
+                        const cx = (touch.clientX - rect.left) * scaleX;
+                        const cy = (touch.clientY - rect.top) * scaleY;
+                        // Resume button area (center of screen)
+                        if (cy > 300 && cy < 500 && cx > 140 && cx < 340) {
+                            audio.playUIClick();
+                            gameState = STATE.PLAYING;
+                            return;
+                        }
+                        // Quit button area
+                        if (cy > 500 && cy < 560 && cx > 140 && cx < 340) {
+                            audio.playUIClick();
+                            resetGame();
+                            gameState = STATE.TITLE;
+                            return;
+                        }
+                    }
+                    return;
+                }
+                if (gameState === STATE.WAVE_TRANS) return;
+                if (gameState === STATE.PLAYING) {
+                    for (const touch of e.changedTouches) {
+                        const lane = getTouchLane(touch.clientX, touch.clientY);
+                        if (lane >= 0) {
+                            handleLanePress(lane);
+                        }
+                    }
+                }
+            }
+
+            function onTouchMove(e) {
+                e.preventDefault();
+                if (gameState === STATE.PLAYING) {
+                    for (const touch of e.changedTouches) {
+                        const lane = getTouchLane(touch.clientX, touch.clientY);
+                        if (lane >= 0) {
+                            handleLanePress(lane);
+                        }
+                    }
+                }
+            }
+
+            function onTouchEnd(e) { e.preventDefault(); }
+
+            function onClick(e) {
+                audio.init();
+                if (gameState === STATE.TITLE) {
+                    audio.playUIClick();
+                    startGame();
+                    return;
+                }
+                if (gameState === STATE.GAMEOVER) {
+                    audio.playUIClick();
+                    resetGame();
+                    startGame();
+                    return;
+                }
+                if (gameState === STATE.PAUSED) {
+                    const rect = canvas.getBoundingClientRect();
+                    const scaleX = W / rect.width;
+                    const scaleY = H / rect.height;
+                    const cx = (e.clientX - rect.left) * scaleX;
+                    const cy = (e.clientY - rect.top) * scaleY;
+                    if (cy > 300 && cy < 500 && cx > 140 && cx < 340) {
+                        audio.playUIClick();
+                        gameState = STATE.PLAYING;
+                        return;
+                    }
+                    if (cy > 500 && cy < 560 && cx > 140 && cx < 340) {
+                        audio.playUIClick();
+                        resetGame();
+                        gameState = STATE.TITLE;
+                        return;
+                    }
+                    return;
+                }
+                if (gameState === STATE.WAVE_TRANS) return;
+                if (gameState === STATE.PLAYING) {
+                    const lane = getTouchLane(e.clientX, e.clientY);
+                    if (lane >= 0) handleLanePress(lane);
+                }
+            }
+
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+            canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+            canvas.addEventListener('touchmove', onTouchMove, { passive: false });
+            canvas.addEventListener('touchend', onTouchEnd, { passive: false });
+            canvas.addEventListener('click', onClick);
+
+            function startGame() {
+                resetGame();
+                gameState = STATE.PLAYING;
+                noteSpawnTimer = 0.3;
+                patternIndex = 0;
+                audio.init();
+            }
+
+            // --- Update ---
+            function update(dt) {
+                // Clamp dt
+                if (dt > 0.1) dt = 0.1;
+                if (dt <= 0) dt = 0.016;
+
+                // Update shake
+                if (shakeDuration > 0) {
+                    shakeDuration -= dt;
+                    const decay = Math.max(0, shakeDuration / (shakeDuration + dt));
+                    shakeAmount *= decay;
+                    shakeX = (Math.random() - 0.5) * shakeAmount * 2;
+                    shakeY = (Math.random() - 0.5) * shakeAmount * 2;
+                    if (shakeDuration <= 0) {
+                        shakeAmount = 0;
+                        shakeX = 0;
+                        shakeY = 0;
+                    }
+                }
+
+                // Update particles
+                for (const p of particles) p.update(dt);
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    if (!particles[i].alive) particles.splice(i, 1);
+                }
+
+                // Update judgment texts
+                for (const jt of judgmentTexts) {
+                    jt.life -= dt;
+                    jt.y += jt.vy * dt;
+                }
+                for (let i = judgmentTexts.length - 1; i >= 0; i--) {
+                    if (judgmentTexts[i].life <= 0) judgmentTexts.splice(i, 1);
+                }
+
+                // Update combo flash
+                if (comboFlashTimer > 0) comboFlashTimer -= dt;
+
+                // Update wave complete display
+                if (waveCompleteDisplay > 0) waveCompleteDisplay -= dt;
+
+                if (gameState === STATE.WAVE_TRANS) {
+                    waveTransitionTimer -= dt;
+                    if (waveTransitionTimer <= 0) {
+                        gameState = STATE.PLAYING;
+                        noteSpawnTimer = 0.5;
+                        notes = [];
+                    }
+                    // Still update notes during transition
+                    for (const note of notes) {
+                        if (note.alive) note.update(dt);
+                    }
+                    for (const note of notes) {
+                        if (note.missed && note.alive) handleMiss(note);
+                    }
+                    notes = notes.filter(n => n.alive || (!n.hit && !n.missed && n.y < 640));
+                    notes = notes.filter(n => n.alive && n.y < 640);
+                    return;
+                }
+
+                if (gameState !== STATE.PLAYING) return;
+
+                // Health regen
+                healthRegenTimer += dt;
+                if (healthRegenTimer > 1.5 && health < 100) {
+                    health = Math.min(100, health + 1);
+                    healthRegenTimer = 0;
+                }
+
+                // Beat timer for background pulse
+                beatTimer += dt;
+                if (beatTimer >= beatInterval) {
+                    beatTimer -= beatInterval;
+                    audio.playBeat();
+                }
+
+                // Spawn notes
+                noteSpawnTimer -= dt;
+                if (noteSpawnTimer <= 0) {
+                    spawnNextPatternNote();
+                    noteSpawnTimer = noteInterval * (0.85 + Math.random() * 0.3);
+                }
+
+                // Update notes
+                for (const note of notes) {
+                    if (note.alive) note.update(dt);
+                }
+
+                // Check for missed notes
+                for (const note of notes) {
+                    if (note.missed && note.alive) {
+                        handleMiss(note);
+                    }
+                }
+
+                // Remove dead notes
+                notes = notes.filter(n => n.alive && n.y < 640);
+
+                // Check game over
+                if (health <= 0 && gameState === STATE.PLAYING) {
+                    endGame();
+                }
+            }
+
+            // --- Render ---
+            function drawBackground() {
+                // Dark gradient background
+                const grad = ctx.createLinearGradient(0, 0, 0, H);
+                grad.addColorStop(0, '#0a0a20');
+                grad.addColorStop(0.5, '#0d0d28');
+                grad.addColorStop(1, '#080818');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, W, H);
+
+                // Subtle grid lines
+                ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+                ctx.lineWidth = 1;
+                for (let y = 0; y < H; y += 40) {
+                    ctx.beginPath();
+                    ctx.moveTo(0, y);
+                    ctx.lineTo(W, y);
+                    ctx.stroke();
+                }
+                for (let x = 0; x < W; x += 40) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, 0);
+                    ctx.lineTo(x, H);
+                    ctx.stroke();
+                }
+            }
+
+            function drawLanes() {
+                // Lane dividers
+                ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([8, 20]);
+                for (let i = 0; i < NUM_LANES; i++) {
+                    const lx = LANE_CENTERS[i];
+                    ctx.beginPath();
+                    ctx.moveTo(lx, 0);
+                    ctx.lineTo(lx, 600);
+                    ctx.stroke();
+                }
+                ctx.setLineDash([]);
+
+                // Hit zone
+                const hzY = 565;
+                const hzH = 50;
+                const hzGrad = ctx.createLinearGradient(0, hzY - hzH / 2, 0, hzY + hzH / 2);
+                hzGrad.addColorStop(0, 'rgba(255,255,255,0.02)');
+                hzGrad.addColorStop(0.4, 'rgba(200,200,255,0.08)');
+                hzGrad.addColorStop(0.5, 'rgba(200,200,255,0.15)');
+                hzGrad.addColorStop(0.6, 'rgba(200,200,255,0.08)');
+                hzGrad.addColorStop(1, 'rgba(255,255,255,0.02)');
+                ctx.fillStyle = hzGrad;
+                ctx.fillRect(0, hzY - hzH / 2, W, hzH);
+
+                // Hit zone center line
+                ctx.strokeStyle = 'rgba(200,220,255,0.5)';
+                ctx.lineWidth = 2;
+                ctx.shadowColor = 'rgba(150,180,255,0.6)';
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                ctx.moveTo(10, hzY);
+                ctx.lineTo(W - 10, hzY);
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+
+                // Hit zone top and bottom lines
+                ctx.strokeStyle = 'rgba(200,220,255,0.2)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(20, hzY - hzH / 2);
+                ctx.lineTo(W - 20, hzY - hzH / 2);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(20, hzY + hzH / 2);
+                ctx.lineTo(W - 20, hzY + hzH / 2);
+                ctx.stroke();
+            }
+
+            function drawTouchButtons() {
+                const btnY = 618;
+                const btnH = 150;
+                const btnWidth = 62;
+                const totalWidth = NUM_LANES * btnWidth;
+                const startX = (W - totalWidth) / 2;
+
+                for (let i = 0; i < NUM_LANES; i++) {
+                    const bx = startX + i * btnWidth;
+                    const by = btnY;
+                    const color = NOTE_COLORS[i];
+
+                    // Button background
+                    const btnGrad = ctx.createLinearGradient(0, by, 0, by + btnH);
+                    btnGrad.addColorStop(0, 'rgba(30,30,50,0.8)');
+                    btnGrad.addColorStop(0.5, 'rgba(40,40,60,0.7)');
+                    btnGrad.addColorStop(1, 'rgba(20,20,35,0.9)');
+                    ctx.fillStyle = btnGrad;
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 2;
+                    ctx.shadowColor = color;
+                    ctx.shadowBlur = 8;
+                    const br = 8;
+                    ctx.beginPath();
+                    ctx.moveTo(bx + br, by);
+                    ctx.lineTo(bx + btnWidth - br, by);
+                    ctx.quadraticCurveTo(bx + btnWidth, by, bx + btnWidth, by + br);
+                    ctx.lineTo(bx + btnWidth, by + btnH - br);
+                    ctx.quadraticCurveTo(bx + btnWidth, by + btnH, bx + btnWidth - br, by + btnH);
+                    ctx.lineTo(bx + br, by + btnH);
+                    ctx.quadraticCurveTo(bx, by + btnH, bx, by + btnH - br);
+                    ctx.lineTo(bx, by + br);
+                    ctx.quadraticCurveTo(bx, by, bx + br, by);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.shadowBlur = 0;
+
+                    // Button label
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 28px "Courier New", monospace';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.shadowColor = color;
+                    ctx.shadowBlur = 12;
+                    ctx.fillText(NOTE_NAMES[i], bx + btnWidth / 2, by + btnH / 2);
+                    ctx.shadowBlur = 0;
+
+                    // Subtle top highlight
+                    ctx.fillStyle = 'rgba(255,255,255,0.05)';
+                    ctx.fillRect(bx + 4, by + 2, btnWidth - 8, btnH / 2 - 2);
+                }
+            }
+
+            function drawHUD() {
+                // Score
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 20px "Courier New", monospace';
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'top';
+                ctx.shadowColor = 'rgba(200,200,255,0.5)';
+                ctx.shadowBlur = 6;
+                ctx.fillText(`SCORE: ${Math.floor(score)}`, 15, 12);
+                ctx.shadowBlur = 0;
+
+                // Wave
+                ctx.fillStyle = '#aaccff';
+                ctx.font = 'bold 16px "Courier New", monospace';
+                ctx.textAlign = 'right';
+                ctx.fillText(`WAVE ${wave}`, W - 15, 14);
+
+                // Wave target
+                ctx.fillStyle = 'rgba(200,200,200,0.6)';
+                ctx.font = '12px "Courier New", monospace';
+                ctx.fillText(`NEXT: ${Math.floor(waveScoreTarget)}`, W - 15, 36);
+
+                // Combo
+                if (combo >= 5) {
+                    const comboScale = 1 + Math.min(0.5, comboFlashTimer * 3);
+                    const comboAlpha = Math.min(1, comboFlashTimer * 4);
+                    ctx.save();
+                    ctx.globalAlpha = comboAlpha;
+                    ctx.fillStyle = '#ffdd00';
+                    ctx.font = `bold ${Math.floor(28 * comboScale)}px "Courier New", monospace`;
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = '#ffaa00';
+                    ctx.shadowBlur = 20;
+                    const comboMult = Math.min(5, 1 + Math.floor(combo / 15));
+                    ctx.fillText(`${combo}x (${comboMult}x)`, W / 2, 50);
+                    ctx.shadowBlur = 0;
+                    ctx.restore();
+                }
+
+                // Health bar
+                const hbX = 15;
+                const hbY = 70;
+                const hbW = W - 30;
+                const hbH = 10;
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(hbX, hbY, hbW, hbH);
+                const healthColor = health > 50 ? '#44ee55' : health > 25 ? '#ffaa00' : '#ff3333';
+                const hbGrad = ctx.createLinearGradient(hbX, 0, hbX + hbW, 0);
+                hbGrad.addColorStop(0, healthColor);
+                hbGrad.addColorStop(1, healthColor);
+                ctx.fillStyle = hbGrad;
+                ctx.fillRect(hbX, hbY, hbW * (health / 100), hbH);
+                ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(hbX, hbY, hbW, hbH);
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '10px "Courier New", monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText(`HP: ${Math.floor(health)}%`, W / 2, hbY + hbH + 4);
+            }
+
+            function drawTitleScreen() {
+                drawBackground();
+                // Title
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 42px "Courier New", monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.shadowColor = '#8888ff';
+                ctx.shadowBlur = 30;
+                ctx.fillText('SEQUENCE', W / 2, 200);
+                ctx.fillText('DROP', W / 2, 260);
+                ctx.shadowBlur = 0;
+
+                // Subtitle
+                ctx.fillStyle = '#aabbee';
+                ctx.font = '16px "Courier New", monospace';
+                ctx.fillText('1 2 3 7 8 9', W / 2, 310);
+
+                // Decorative line
+                const lineY = 340;
+                const lineGrad = ctx.createLinearGradient(60, 0, W - 60, 0);
+                lineGrad.addColorStop(0, 'rgba(100,100,255,0)');
+                lineGrad.addColorStop(0.5, 'rgba(150,150,255,0.8)');
+                lineGrad.addColorStop(1, 'rgba(100,100,255,0)');
+                ctx.strokeStyle = lineGrad;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(60, lineY);
+                ctx.lineTo(W - 60, lineY);
+                ctx.stroke();
+
+                // High score
+                ctx.fillStyle = '#ffdd88';
+                ctx.font = 'bold 18px "Courier New", monospace';
+                ctx.fillText(`BEST: ${Math.floor(highScore)}`, W / 2, 380);
+
+                // Instructions
+                ctx.fillStyle = '#cccccc';
+                ctx.font = '14px "Courier New", monospace';
+                ctx.fillText('Press number keys or tap buttons', W / 2, 440);
+                ctx.fillText('when notes reach the glowing line', W / 2, 465);
+
+                // Start prompt
+                const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 800);
+                ctx.fillStyle = `rgba(255,255,255,${pulse})`;
+                ctx.font = 'bold 22px "Courier New", monospace';
+                ctx.fillText('PRESS ENTER OR TAP TO START', W / 2, 530);
+
+                // Draw some decorative falling notes
+                const demoNotes = [];
+                const demoStart = Math.floor(Date.now() / 2000) % 6;
+                for (let i = 0; i < 6; i++) {
+                    const laneIdx = (demoStart + i) % 6;
+                    const ny = 340 + i * 55;
+                    if (ny < 600) {
+                        const dn = new Note(laneIdx, ny, 0);
+                        dn.draw(ctx);
+                    }
+                }
+
+                // Touch hint
+                ctx.fillStyle = 'rgba(200,200,200,0.5)';
+                ctx.font = '12px "Courier New", monospace';
+                ctx.fillText('Keyboard: 1 2 3 7 8 9 | Mobile: tap buttons below', W / 2, 575);
+            }
+
+            function drawGameOverScreen() {
+                // Dim overlay
+                ctx.fillStyle = 'rgba(0,0,0,0.75)';
+                ctx.fillRect(0, 0, W, H);
+
+                ctx.fillStyle = '#ff4444';
+                ctx.font = 'bold 44px "Courier New", monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.shadowColor = '#ff0000';
+                ctx.shadowBlur = 25;
+                ctx.fillText('GAME OVER', W / 2, 240);
+                ctx.shadowBlur = 0;
+
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 24px "Courier New", monospace';
+                ctx.fillText(`SCORE: ${Math.floor(score)}`, W / 2, 310);
+
+                if (score >= highScore && score > 0) {
+                    ctx.fillStyle = '#ffdd00';
+                    ctx.font = 'bold 20px "Courier New", monospace';
+                    ctx.shadowColor = '#ffaa00';
+                    ctx.shadowBlur = 15;
+                    ctx.fillText('★ NEW BEST! ★', W / 2, 350);
+                    ctx.shadowBlur = 0;
+                } else {
+                    ctx.fillStyle = '#cccccc';
+                    ctx.font = '18px "Courier New", monospace';
+                    ctx.fillText(`BEST: ${Math.floor(highScore)}`, W / 2, 350);
+                }
+
+                ctx.fillStyle = '#aaccff';
+                ctx.font = '16px "Courier New", monospace';
+                ctx.fillText(`Wave: ${wave} | Max Combo: ${maxCombo}`, W / 2, 390);
+                ctx.fillText(`Hits: ${totalNotesHit} | Misses: ${totalNotesMissed}`, W / 2, 415);
+
+                const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 800);
+                ctx.fillStyle = `rgba(255,255,255,${pulse})`;
+                ctx.font = 'bold 20px "Courier New", monospace';
+                ctx.fillText('PRESS ENTER OR TAP TO RETRY', W / 2, 480);
+            }
+
+            function drawPauseScreen() {
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, W, H);
+
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 40px "Courier New", monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.shadowColor = '#8888ff';
+                ctx.shadowBlur = 20;
+                ctx.fillText('PAUSED', W / 2, 300);
+                ctx.shadowBlur = 0;
+
+                // Resume button
+                const btnX = 140;
+                const btnW = 200;
+                const btnY1 = 360;
+                const btnH = 50;
+                ctx.fillStyle = 'rgba(60,60,100,0.8)';
+                ctx.strokeStyle = '#8888ff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.roundRect(btnX, btnY1, btnW, btnH, 10);
+                ctx.fill();
+                ctx.stroke();
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 18px "Courier New", monospace';
+                ctx.fillText('RESUME (P/ESC)', W / 2, btnY1 + btnH / 2);
+
+                // Quit button
+                const btnY2 = 430;
+                ctx.fillStyle = 'rgba(60,60,100,0.6)';
+                ctx.strokeStyle = '#ff8888';
+                ctx.beginPath();
+                ctx.roundRect(btnX, btnY2, btnW, btnH, 10);
+                ctx.fill();
+                ctx.stroke();
+                ctx.fillStyle = '#ffaaaa';
+                ctx.fillText('QUIT (Q)', W / 2, btnY2 + btnH / 2);
+
+                ctx.fillStyle = 'rgba(200,200,200,0.6)';
+                ctx.font = '13px "Courier New", monospace';
+                ctx.fillText('Tap buttons above on mobile', W / 2, 510);
+            }
+
+            function drawWaveTransition() {
+                const alpha = Math.min(1, waveTransitionTimer / 1.5);
+                ctx.fillStyle = `rgba(0,0,0,${0.6 * alpha})`;
+                ctx.fillRect(0, 0, W, H);
+
+                const scale = 1 + (1 - Math.min(1, waveTransitionTimer / 2.5)) * 0.3;
+                ctx.save();
+                ctx.translate(W / 2, H / 2 - 40);
+                ctx.scale(scale, scale);
+                ctx.fillStyle = '#ffdd00';
+                ctx.font = 'bold 38px "Courier New", monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.shadowColor = '#ffaa00';
+                ctx.shadowBlur = 30;
+                ctx.fillText(`WAVE ${waveTransitionWave}`, 0, 0);
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 20px "Courier New", monospace';
+                ctx.fillText('COMPLETE!', 0, 50);
+                ctx.restore();
+
+                const countdown = Math.ceil(waveTransitionTimer);
+                if (countdown > 0 && countdown <= 3) {
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 50px "Courier New", monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(countdown, W / 2, H / 2 + 80);
+                }
+            }
+
+            // --- Main Render ---
+            function render() {
+                ctx.clearRect(0, 0, W, H);
+
+                if (gameState === STATE.TITLE) {
+                    drawTitleScreen();
+                    return;
+                }
+
+                // Apply screen shake
+                ctx.save();
+                if (shakeDuration > 0 || shakeAmount > 0.1) {
+                    ctx.translate(shakeX, shakeY);
+                }
+
+                drawBackground();
+                drawLanes();
+
+                // Draw notes
+                for (const note of notes) {
+                    if (note.alive || (!note.hit && !note.missed && note.y < 620)) {
+                        note.draw(ctx);
+                    }
+                }
+
+                // Draw particles
+                for (const p of particles) p.draw(ctx);
+
+                // Draw judgment texts
+                for (const jt of judgmentTexts) {
+                    const alpha = Math.max(0, jt.life / jt.maxLife);
+                    const scale = 1 + (1 - alpha) * 0.3;
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = jt.color;
+                    ctx.font = `bold ${Math.floor(20 * scale)}px "Courier New", monospace`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.shadowColor = jt.color;
+                    ctx.shadowBlur = 10;
+                    ctx.fillText(jt.text, jt.x, jt.y);
+                    ctx.restore();
+                }
+
+                ctx.restore(); // End shake
+
+                // HUD (not affected by shake)
+                if (gameState === STATE.PLAYING || gameState === STATE.WAVE_TRANS) {
+                    drawHUD();
+                }
+
+                // Touch buttons (always visible during gameplay)
+                if (gameState === STATE.PLAYING || gameState === STATE.WAVE_TRANS) {
+                    drawTouchButtons();
+                }
+
+                // Overlays
+                if (gameState === STATE.GAMEOVER) {
+                    drawGameOverScreen();
+                }
+                if (gameState === STATE.PAUSED) {
+                    drawPauseScreen();
+                }
+                if (gameState === STATE.WAVE_TRANS && waveTransitionTimer > 0) {
+                    drawWaveTransition();
+                }
+            }
+
+            // --- Game Loop ---
+            let lastTime = performance.now();
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt > 0.15) dt = 0.15; // Clamp large deltas
+                if (dt <= 0) dt = 0.016;
+                lastTime = timestamp;
+
+                update(dt);
+                render();
+
+                requestAnimationFrame(gameLoop);
+            }
+
+            // --- roundRect polyfill ---
+            if (!ctx.roundRect) {
+                ctx.roundRect = function(x, y, w, h, r) {
+                    if (typeof r === 'number') r = { tl: r, tr: r, br: r, bl: r };
+                    ctx.beginPath();
+                    ctx.moveTo(x + r.tl, y);
+                    ctx.lineTo(x + w - r.tr, y);
+                    ctx.quadraticCurveTo(x + w, y, x + w, y + r.tr);
+                    ctx.lineTo(x + w, y + h - r.br);
+                    ctx.quadraticCurveTo(x + w, y + h, x + w - r.br, y + h);
+                    ctx.lineTo(x + r.bl, y + h);
+                    ctx.quadraticCurveTo(x, y + h, x, y + h - r.bl);
+                    ctx.lineTo(x, y + r.tl);
+                    ctx.quadraticCurveTo(x, y, x + r.tl, y);
+                    ctx.closePath();
+                };
+            }
+
+            // --- Initialize ---
+            function init() {
+                resizeCanvas();
+                audio.init();
+                lastTime = performance.now();
+                requestAnimationFrame(gameLoop);
+            }
+
+            // --- Handle visibility change ---
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden && gameState === STATE.PLAYING) {
+                    gameState = STATE.PAUSED;
+                }
+                if (!document.hidden) {
+                    lastTime = performance.now(); // Reset delta time
+                }
+            });
+
+            init();
+            console.log('Sequence Drop ready! Press 1-2-3-7-8-9 or tap the buttons.');
+            console.log('Pattern: 1→2→3→7→8→9 repeating. Match the falling notes!');
+        })();
+    </script>
+</body>
+</html>
