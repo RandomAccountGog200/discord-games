@@ -1051,5 +1051,14 @@
     "model": "openai/gpt-5.6-luna",
     "createdAt": "2026-08-05T21:21:29.035Z",
     "updatedAt": "2026-08-05T21:21:29.035Z"
+  },
+  {
+    "slug": "sequence-drop",
+    "title": "Sequence Drop",
+    "description": "123789123789123789123789123789",
+    "creator": "burger778",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-08-05T21:22:11.035Z",
+    "updatedAt": "2026-08-05T21:22:11.035Z"
   }
 ]
