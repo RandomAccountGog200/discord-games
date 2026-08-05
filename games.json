@@ -907,5 +907,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-08-05T19:47:38.164Z",
     "updatedAt": "2026-08-05T19:47:38.164Z"
+  },
+  {
+    "slug": "100000-feet-in-the-deep",
+    "title": "100000 Feet in the Deep",
+    "description": "100000 feet in the deep with the cookie shark and ice cream octopus",
+    "creator": "kaipie16",
+    "model": "openai/gpt-5.6-luna",
+    "createdAt": "2026-08-05T19:48:10.934Z",
+    "updatedAt": "2026-08-05T19:48:10.934Z"
   }
 ]
