@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Zlatan Juice RPG</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main id="gameShell">
+    <canvas id="gameCanvas" width="960" height="600"></canvas>
+
+    <section id="menu" class="panel">
+      <div class="eyebrow">THE LEGENDARY JUICE QUEST</div>
+      <h1>ZLATAN<br><span>JUICE</span></h1>
+      <p class="tagline">A football RPG about confidence, chaos, and perfectly chilled juice.</p>
+      <button id="startButton" class="primary">START THE JOURNEY</button>
+      <div class="menu-stats">BEST SCORE <strong id="menuBest">0</strong></div>
+      <p class="controls-copy">WASD / ARROWS MOVE &nbsp; • &nbsp; MOUSE AIM + CLICK SHOOT &nbsp; • &nbsp; SPACE DASH &nbsp; • &nbsp; ESC PAUSE</p>
+    </section>
+
+    <section id="pause" class="panel hidden">
+      <div class="eyebrow">TIMEOUT</div>
+      <h2>THE LEGEND<br>TAKES A BREATH</h2>
+      <button id="resumeButton" class="primary">RESUME</button>
+      <button id="pauseMenuButton" class="secondary">QUIT TO MENU</button>
+    </section>
+
+    <section id="upgrade" class="panel hidden">
+      <div class="eyebrow">HALF-TIME JUICE BAR</div>
+      <h2>CHOOSE YOUR<br>UPGRADE</h2>
+      <p class="upgrade-sub">The next round will be harder. Pick one advantage.</p>
+      <div id="upgradeChoices" class="choices"></div>
+    </section>
+
+    <section id="gameOver" class="panel hidden">
+      <div class="eyebrow">THE WHISTLE BLOWS</div>
+      <h2>LEGEND<br>DENIED</h2>
+      <div class="result-line">SCORE <strong id="gameOverScore">0</strong></div>
+      <div class="result-line">BEST <strong id="gameOverBest">0</strong></div>
+      <button id="retryButton" class="primary">RUN IT BACK</button>
+      <button id="gameOverMenuButton" class="secondary">MAIN MENU</button>
+    </section>
+
+    <section id="win" class="panel hidden">
+      <div class="eyebrow">THE FINAL WHISTLE</div>
+      <h2>JUICE<br>CHAMPION</h2>
+      <p class="tagline">Five rounds. One legend. Absolutely no weak juice.</p>
+      <div class="result-line">FINAL SCORE <strong id="winScore">0</strong></div>
+      <div class="result-line">BEST <strong id="winBest">0</strong></div>
+      <button id="winRetryButton" class="primary">PLAY AGAIN</button>
+      <button id="winMenuButton" class="secondary">MAIN MENU</button>
+    </section>
+
+    <div id="touchControls" aria-label="Touch controls">
+      <div class="dpad">
+        <button data-key="up">▲</button>
+        <button data-key="left">◀</button>
+        <button data-key="down">▼</button>
+        <button data-key="right">▶</button>
+      </div>
+      <button class="touch-action dash" data-key="dash">DASH</button>
+      <button class="touch-action fire" data-key="fire">KICK</button>
+    </div>
+  </main>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
