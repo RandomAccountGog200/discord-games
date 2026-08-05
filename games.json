@@ -889,5 +889,14 @@
     "model": "openai/gpt-5.6-luna",
     "createdAt": "2026-08-05T19:43:49.061Z",
     "updatedAt": "2026-08-05T19:43:49.061Z"
+  },
+  {
+    "slug": "dewey-vs-brick-vs-sheldon",
+    "title": "Dewey vs Brick vs Sheldon",
+    "description": "Dewey vs brick vs Sheldon",
+    "creator": "cheese5332",
+    "model": "openai/gpt-5.6-luna",
+    "createdAt": "2026-08-05T19:45:50.073Z",
+    "updatedAt": "2026-08-05T19:45:50.073Z"
   }
 ]
