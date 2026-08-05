@@ -1,0 +1,1721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>100,000 Feet Deep - Cookie Shark & Ice Cream Octopus</title>
+    <style>
+        :root {
+            --bg: #0a0a14;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            font-family: 'Segoe UI', 'Arial', sans-serif;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #game-container {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            height: 100%;
+            max-width: 900px;
+            max-height: 600px;
+        }
+        canvas {
+            display: block;
+            border-radius: 12px;
+            box-shadow: 0 0 60px rgba(0, 150, 255, 0.3), 0 0 120px rgba(0, 80, 200, 0.2);
+            image-rendering: auto;
+            max-width: 100%;
+            max-height: 100%;
+            aspect-ratio: 4/3;
+        }
+        #touch-zone {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 45%;
+            display: none;
+            z-index: 10;
+            pointer-events: none;
+        }
+        .touch-btn {
+            position: absolute;
+            pointer-events: auto;
+            background: rgba(255, 255, 255, 0.12);
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 24px;
+            transition: background 0.1s;
+        }
+        .touch-btn:active {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        #btn-up {
+            bottom: 90px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        #btn-down {
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        #btn-left {
+            bottom: 55px;
+            left: calc(50% - 70px);
+        }
+        #btn-right {
+            bottom: 55px;
+            left: calc(50% + 10px);
+        }
+        @media (max-width: 768px) {
+            #touch-zone {
+                display: block;
+            }
+            canvas {
+                border-radius: 8px;
+            }
+        }
+        @media (hover: none) and (pointer: coarse) {
+            #touch-zone {
+                display: block;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="game"></canvas>
+        <div id="touch-zone">
+            <button class="touch-btn" id="btn-up">▲</button>
+            <button class="touch-btn" id="btn-down">▼</button>
+            <button class="touch-btn" id="btn-left">◀</button>
+            <button class="touch-btn" id="btn-right">▶</button>
+        </div>
+    </div>
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+            const container = document.getElementById('game-container');
+
+            const GAME_W = 800;
+            const GAME_H = 600;
+            const TARGET_DEPTH = 100000;
+
+            let scale = 1;
+            let canvasOffsetX = 0;
+            let canvasOffsetY = 0;
+
+            function resize() {
+                const cw = container.clientWidth;
+                const ch = container.clientHeight;
+                const aspect = GAME_W / GAME_H;
+                let w, h;
+                if (cw / ch > aspect) {
+                    h = Math.min(ch, GAME_H);
+                    w = h * aspect;
+                } else {
+                    w = Math.min(cw, GAME_W);
+                    h = w / aspect;
+                }
+                scale = w / GAME_W;
+                canvas.width = GAME_W;
+                canvas.height = GAME_H;
+                canvas.style.width = w + 'px';
+                canvas.style.height = h + 'px';
+                canvasOffsetX = (container.clientWidth - w) / 2;
+                canvasOffsetY = (container.clientHeight - h) / 2;
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            // ──────────────────────────────────────
+            // AUDIO MANAGER
+            // ──────────────────────────────────────
+            class AudioManager {
+                constructor() {
+                    this.ctx = null;
+                    this.initialized = false;
+                    this.musicGain = null;
+                    this.musicOsc = null;
+                    this.musicFilter = null;
+                    this.musicActive = false;
+                }
+                init() {
+                    if (this.initialized) return;
+                    try {
+                        this.ctx = new(window.AudioContext || window.webkitAudioContext)();
+                        this.initialized = true;
+                    } catch (e) {
+                        this.initialized = false;
+                    }
+                }
+                playTone(freq, duration, type = 'sine', vol = 0.1, glide = 0) {
+                    if (!this.initialized) return;
+                    const t = this.ctx.currentTime;
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (glide) osc.frequency.linearRampToValueAtTime(freq + glide, t + duration);
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                }
+                playBubblePop() {
+                    this.playTone(800 + Math.random() * 400, 0.08, 'sine', 0.06);
+                }
+                playHit() {
+                    if (!this.initialized) return;
+                    const t = this.ctx.currentTime;
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(200, t);
+                    osc.frequency.exponentialRampToValueAtTime(40, t + 0.25);
+                    gain.gain.setValueAtTime(0.15, t);
+                    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start(t);
+                    osc.stop(t + 0.3);
+                    this.playTone(60, 0.2, 'triangle', 0.1);
+                }
+                playPickup() {
+                    this.playTone(1200, 0.1, 'sine', 0.07);
+                    setTimeout(() => this.playTone(1600, 0.1, 'sine', 0.07), 80);
+                }
+                playDepthMilestone() {
+                    this.playTone(500, 0.15, 'triangle', 0.08);
+                    setTimeout(() => this.playTone(700, 0.15, 'triangle', 0.08), 120);
+                    setTimeout(() => this.playTone(1000, 0.2, 'triangle', 0.08), 240);
+                }
+                playClick() {
+                    this.playTone(600, 0.05, 'square', 0.04);
+                }
+                playWin() {
+                    const notes = [523, 659, 784, 1047];
+                    notes.forEach((n, i) => {
+                        setTimeout(() => this.playTone(n, 0.3, 'triangle', 0.1), i * 150);
+                    });
+                }
+                startMusic(depth) {
+                    if (!this.initialized || this.musicActive) return;
+                    this.musicActive = true;
+                    const t = this.ctx.currentTime;
+                    this.musicGain = this.ctx.createGain();
+                    this.musicGain.gain.setValueAtTime(0.025, t);
+                    this.musicFilter = this.ctx.createBiquadFilter();
+                    this.musicFilter.type = 'lowpass';
+                    this.musicFilter.frequency.setValueAtTime(400, t);
+                    this.musicFilter.Q.setValueAtTime(1.5, t);
+                    this.musicOsc = this.ctx.createOscillator();
+                    this.musicOsc.type = 'sine';
+                    this.musicOsc.frequency.setValueAtTime(55, t);
+                    this.musicOsc.connect(this.musicFilter);
+                    this.musicFilter.connect(this.musicGain);
+                    this.musicGain.connect(this.ctx.destination);
+                    this.musicOsc.start(t);
+                    this.updateMusicParams(depth);
+                }
+                updateMusicParams(depth) {
+                    if (!this.musicActive || !this.musicFilter) return;
+                    const frac = Math.min(depth / TARGET_DEPTH, 1);
+                    const freq = 55 + frac * 30;
+                    const lpf = 400 - frac * 250;
+                    const t = this.ctx.currentTime;
+                    this.musicOsc.frequency.setTargetAtTime(freq, t, 0.5);
+                    this.musicFilter.frequency.setTargetAtTime(lpf, t, 0.5);
+                    this.musicGain.gain.setTargetAtTime(0.02 + frac * 0.03, t, 0.5);
+                }
+                stopMusic() {
+                    if (!this.musicActive) return;
+                    this.musicActive = false;
+                    const t = this.ctx.currentTime;
+                    if (this.musicGain) {
+                        this.musicGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+                    }
+                    if (this.musicOsc) {
+                        this.musicOsc.stop(t + 0.6);
+                    }
+                    this.musicOsc = null;
+                    this.musicGain = null;
+                    this.musicFilter = null;
+                }
+            }
+            const audio = new AudioManager();
+
+            // ──────────────────────────────────────
+            // PARTICLE SYSTEM
+            // ──────────────────────────────────────
+            class Particle {
+                constructor(x, y, vx, vy, life, color, size = 3) {
+                    this.x = x;
+                    this.y = y;
+                    this.vx = vx;
+                    this.vy = vy;
+                    this.life = life;
+                    this.maxLife = life;
+                    this.color = color;
+                    this.size = size;
+                }
+                update(dt) {
+                    this.x += this.vx * dt;
+                    this.y += this.vy * dt;
+                    this.life -= dt;
+                    return this.life > 0;
+                }
+                draw(ctx) {
+                    const alpha = Math.max(0, this.life / this.maxLife);
+                    const s = this.size * (0.5 + 0.5 * alpha);
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = this.color;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, s, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+                }
+            }
+            let particles = [];
+
+            function spawnParticles(x, y, count, color, spread = 80, life = 0.6, size = 3) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * spread;
+                    const vx = Math.cos(angle) * speed;
+                    const vy = Math.sin(angle) * speed;
+                    particles.push(new Particle(x, y, vx, vy, life + Math.random() * 0.3, color, size + Math.random() *
+                        3));
+                }
+            }
+
+            // ──────────────────────────────────────
+            // BUBBLES (ambient)
+            // ──────────────────────────────────────
+            class Bubble {
+                constructor(x, y, size, speed) {
+                    this.x = x;
+                    this.y = y;
+                    this.size = size;
+                    this.speed = speed;
+                    this.wobble = Math.random() * Math.PI * 2;
+                    this.wobbleSpeed = (Math.random() - 0.5) * 3;
+                    this.wobbleAmp = Math.random() * 15;
+                }
+                update(dt) {
+                    this.y -= this.speed * dt;
+                    this.wobble += this.wobbleSpeed * dt;
+                    this.x += Math.sin(this.wobble) * this.wobbleAmp * dt;
+                    if (this.y < -20) {
+                        this.y = GAME_H + 20;
+                        this.x = Math.random() * GAME_W;
+                    }
+                    if (this.x < -20) this.x = GAME_W + 20;
+                    if (this.x > GAME_W + 20) this.x = -20;
+                }
+                draw(ctx, alpha = 0.4) {
+                    ctx.globalAlpha = alpha;
+                    ctx.strokeStyle = 'rgba(200,230,255,0.6)';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.fillStyle = 'rgba(200,230,255,0.2)';
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+                }
+            }
+            let bubbles = [];
+            for (let i = 0; i < 30; i++) {
+                bubbles.push(new Bubble(Math.random() * GAME_W, Math.random() * GAME_H, 2 + Math.random() * 6, 20 + Math
+                .random() * 60));
+            }
+
+            // ──────────────────────────────────────
+            // PLAYER
+            // ──────────────────────────────────────
+            class Player {
+                constructor() {
+                    this.x = GAME_W * 0.35;
+                    this.y = GAME_H * 0.5;
+                    this.width = 44;
+                    this.height = 28;
+                    this.vx = 0;
+                    this.vy = 0;
+                    this.speed = 280;
+                    this.health = 3;
+                    this.maxHealth = 3;
+                    this.oxygen = 100;
+                    this.maxOxygen = 100;
+                    this.invincible = 0;
+                    this.tilt = 0;
+                    this.propellerAngle = 0;
+                    this.engineGlow = 0;
+                }
+                update(dt, keys, depth) {
+                    let ax = 0,
+                        ay = 0;
+                    if (keys['ArrowLeft'] || keys['KeyA'] || keys['touchLeft']) ax = -1;
+                    if (keys['ArrowRight'] || keys['KeyD'] || keys['touchRight']) ax = 1;
+                    if (keys['ArrowUp'] || keys['KeyW'] || keys['touchUp']) ay = -1;
+                    if (keys['ArrowDown'] || keys['KeyS'] || keys['touchDown']) ay = 1;
+
+                    const targetVx = ax * this.speed;
+                    const targetVy = ay * this.speed;
+                    const accel = 800;
+                    this.vx += (targetVx - this.vx) * Math.min(1, accel * dt / this.speed);
+                    this.vy += (targetVy - this.vy) * Math.min(1, accel * dt / this.speed);
+
+                    this.x += this.vx * dt;
+                    this.y += this.vy * dt;
+
+                    const margin = 30;
+                    this.x = Math.max(margin, Math.min(GAME_W - margin, this.x));
+                    this.y = Math.max(margin, Math.min(GAME_H - margin, this.y));
+
+                    this.tilt += (this.vy * 0.003 - this.tilt) * Math.min(1, 6 * dt);
+                    this.tilt = Math.max(-0.4, Math.min(0.4, this.tilt));
+                    this.propellerAngle += (Math.abs(this.vx) + Math.abs(this.vy) + 200) * dt * 0.05;
+                    this.engineGlow += (Math.abs(this.vx) + Math.abs(this.vy)) * dt * 0.01;
+                    this.engineGlow *= 0.95;
+
+                    if (this.invincible > 0) this.invincible -= dt;
+                    this.oxygen -= 2 * dt;
+                    if (this.oxygen < 0) this.oxygen = 0;
+                }
+                draw(ctx) {
+                    if (this.invincible > 0 && Math.floor(this.invincible * 20) % 2 === 0) return;
+                    ctx.save();
+                    ctx.translate(this.x, this.y);
+                    ctx.rotate(this.tilt);
+
+                    const glowAlpha = 0.3 + this.engineGlow * 0.5;
+                    ctx.fillStyle = `rgba(255,200,80,${glowAlpha})`;
+                    ctx.beginPath();
+                    ctx.arc(-18, 0, 10, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Submarine body
+                    const bodyGrad = ctx.createLinearGradient(0, -14, 0, 14);
+                    bodyGrad.addColorStop(0, '#ffe066');
+                    bodyGrad.addColorStop(0.5, '#f5c842');
+                    bodyGrad.addColorStop(1, '#c99420');
+                    ctx.fillStyle = bodyGrad;
+                    ctx.beginPath();
+                    ctx.ellipse(0, 0, 22, 14, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#a07020';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    // Portholes
+                    for (let px = -8; px <= 8; px += 8) {
+                        ctx.fillStyle = '#87ceeb';
+                        ctx.beginPath();
+                        ctx.arc(px, -2, 5, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.strokeStyle = '#555';
+                        ctx.lineWidth = 1.5;
+                        ctx.stroke();
+                        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                        ctx.beginPath();
+                        ctx.arc(px - 1.5, -3.5, 2, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+
+                    // Top fin
+                    ctx.fillStyle = '#e8b830';
+                    ctx.beginPath();
+                    ctx.moveTo(-4, -14);
+                    ctx.lineTo(4, -14);
+                    ctx.lineTo(0, -24);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.strokeStyle = '#a07020';
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+
+                    // Periscope
+                    ctx.fillStyle = '#888';
+                    ctx.fillRect(-1, -26, 3, 12);
+                    ctx.fillStyle = '#aaa';
+                    ctx.fillRect(-2, -28, 5, 4);
+
+                    // Propeller
+                    const px = -20;
+                    ctx.fillStyle = '#777';
+                    ctx.save();
+                    ctx.translate(px, 0);
+                    ctx.rotate(this.propellerAngle);
+                    ctx.fillRect(-1, -8, 2, 16);
+                    ctx.fillRect(-6, -1.5, 12, 3);
+                    ctx.restore();
+
+                    // Tail fin
+                    ctx.fillStyle = '#e8b830';
+                    ctx.beginPath();
+                    ctx.moveTo(-18, 0);
+                    ctx.lineTo(-26, -10);
+                    ctx.lineTo(-26, 10);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.strokeStyle = '#a07020';
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+
+                    ctx.restore();
+                }
+                getBounds() {
+                    return {
+                        x: this.x - 20,
+                        y: this.y - 12,
+                        w: 40,
+                        h: 24
+                    };
+                }
+                hit() {
+                    if (this.invincible > 0) return false;
+                    this.health--;
+                    this.invincible = 2.0;
+                    audio.playHit();
+                    spawnParticles(this.x, this.y, 20, '#ff6644', 120, 0.5, 4);
+                    return true;
+                }
+                addOxygen(amount) {
+                    this.oxygen = Math.min(this.maxOxygen, this.oxygen + amount);
+                    audio.playPickup();
+                    spawnParticles(this.x, this.y, 12, '#88ffcc', 60, 0.4, 3);
+                }
+                addHealth() {
+                    if (this.health < this.maxHealth) {
+                        this.health++;
+                        audio.playPickup();
+                        spawnParticles(this.x, this.y, 15, '#ff8888', 70, 0.5, 3);
+                    }
+                }
+            }
+
+            // ──────────────────────────────────────
+            // ENEMIES
+            // ──────────────────────────────────────
+            class CookieShark {
+                constructor(x, y, dir, speed, depth) {
+                    this.x = x;
+                    this.y = y;
+                    this.width = 50;
+                    this.height = 30;
+                    this.dir = dir;
+                    this.speed = speed;
+                    this.wobble = Math.random() * Math.PI * 2;
+                    this.wobbleSpeed = 1 + Math.random() * 2;
+                    this.wobbleAmp = 20 + Math.random() * 30;
+                    this.baseY = y;
+                    this.alive = true;
+                    this.chipPositions = [];
+                    for (let i = 0; i < 8; i++) {
+                        this.chipPositions.push({
+                            rx: (Math.random() - 0.5) * 30,
+                            ry: (Math.random() - 0.5) * 16,
+                            r: 2 + Math.random() * 3.5
+                        });
+                    }
+                }
+                update(dt, playerX, playerY) {
+                    this.wobble += this.wobbleSpeed * dt;
+                    this.x += this.dir * this.speed * dt;
+                    this.y = this.baseY + Math.sin(this.wobble) * this.wobbleAmp;
+                    if (this.dir > 0 && this.x > GAME_W + 80) this.alive = false;
+                    if (this.dir < 0 && this.x < -80) this.alive = false;
+                    if (this.y > GAME_H + 80 || this.y < -80) this.alive = false;
+                }
+                draw(ctx) {
+                    ctx.save();
+                    ctx.translate(this.x, this.y);
+                    const sx = this.dir > 0 ? 1 : -1;
+                    ctx.scale(sx, 1);
+
+                    // Body
+                    const bodyGrad = ctx.createRadialGradient(0, 0, 5, 0, 0, 22);
+                    bodyGrad.addColorStop(0, '#d4a054');
+                    bodyGrad.addColorStop(0.7, '#b87830');
+                    bodyGrad.addColorStop(1, '#8b5a20');
+                    ctx.fillStyle = bodyGrad;
+                    ctx.beginPath();
+                    ctx.ellipse(0, 0, 22, 13, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#6b3a10';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    // Chocolate chips
+                    this.chipPositions.forEach(cp => {
+                        ctx.fillStyle = '#3e2010';
+                        ctx.beginPath();
+                        ctx.arc(cp.rx, cp.ry, cp.r, 0, Math.PI * 2);
+                        ctx.fill();
+                    });
+
+                    // Dorsal fin
+                    ctx.fillStyle = '#c08040';
+                    ctx.beginPath();
+                    ctx.moveTo(-2, -13);
+                    ctx.lineTo(6, -13);
+                    ctx.lineTo(0, -24);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.strokeStyle = '#6b3a10';
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+
+                    // Tail
+                    ctx.fillStyle = '#c08040';
+                    ctx.beginPath();
+                    ctx.moveTo(-20, 0);
+                    ctx.lineTo(-32, -11);
+                    ctx.lineTo(-32, 11);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // Eye
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(12, -4, 7, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#111';
+                    ctx.beginPath();
+                    ctx.arc(14, -4, 3.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(15, -5.5, 1.3, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Mouth
+                    ctx.strokeStyle = '#3e2010';
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.arc(16, 3, 6, 0, Math.PI * 0.8);
+                    ctx.stroke();
+
+                    ctx.restore();
+                }
+                getBounds() {
+                    return {
+                        x: this.x - 20,
+                        y: this.y - 11,
+                        w: 40,
+                        h: 22
+                    };
+                }
+            }
+
+            class IceCreamOctopus {
+                constructor(x, y, vx, vy, depth) {
+                    this.x = x;
+                    this.y = y;
+                    this.vx = vx;
+                    this.vy = vy;
+                    this.width = 44;
+                    this.height = 44;
+                    this.alive = true;
+                    this.tentaclePhase = Math.random() * Math.PI * 2;
+                    this.tentacleSpeed = 3 + Math.random() * 4;
+                    this.bodyColor = ['#ff9ecf', '#ffb8d0', '#ffd1e8', '#ffe0b0', '#d4f0c0'][Math.floor(Math.random() *
+                        5)];
+                    this.tentacleColors = [];
+                    for (let i = 0; i < 8; i++) {
+                        const colors = ['#ff6b9d', '#ffcc80', '#b8f0b8', '#ffdd99', '#ffb3c6', '#c9e4ff', '#ffe0a0',
+                            '#ff9ecf'
+                        ];
+                        this.tentacleColors.push(colors[Math.floor(Math.random() * colors.length)]);
+                    }
+                    this.shootTimer = 2 + Math.random() * 3;
+                    this.projectiles = [];
+                }
+                update(dt, playerX, playerY) {
+                    this.x += this.vx * dt;
+                    this.y += this.vy * dt;
+                    this.tentaclePhase += this.tentacleSpeed * dt;
+
+                    if (this.x < -60 || this.x > GAME_W + 60 || this.y < -60 || this.y > GAME_H + 60) {
+                        if (this.x < -60 && this.vx < 0) this.alive = false;
+                        if (this.x > GAME_W + 60 && this.vx > 0) this.alive = false;
+                        if (this.y < -60 && this.vy < 0) this.alive = false;
+                        if (this.y > GAME_H + 60 && this.vy > 0) this.alive = false;
+                    }
+
+                    this.shootTimer -= dt;
+                    if (this.shootTimer <= 0) {
+                        this.shootTimer = 2.5 + Math.random() * 3;
+                        const dx = playerX - this.x;
+                        const dy = playerY - this.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                        const spd = 180 + Math.random() * 100;
+                        this.projectiles.push({
+                            x: this.x,
+                            y: this.y,
+                            vx: (dx / dist) * spd,
+                            vy: (dy / dist) * spd,
+                            life: 3.0,
+                            size: 6 + Math.random() * 3,
+                            color: ['#ff6b9d', '#ffcc80', '#b8f0b8', '#ffe0a0'][Math.floor(Math.random() * 4)]
+                        });
+                    }
+
+                    for (let i = this.projectiles.length - 1; i >= 0; i--) {
+                        const p = this.projectiles[i];
+                        p.x += p.vx * dt;
+                        p.y += p.vy * dt;
+                        p.life -= dt;
+                        if (p.life <= 0 || p.x < -30 || p.x > GAME_W + 30 || p.y < -30 || p.y > GAME_H + 30) {
+                            this.projectiles.splice(i, 1);
+                        }
+                    }
+                }
+                draw(ctx) {
+                    // Tentacles
+                    for (let i = 0; i < 8; i++) {
+                        const angle = (i / 8) * Math.PI * 2 + this.tentaclePhase * 0.3;
+                        const baseR = 14;
+                        const bx = this.x + Math.cos(angle) * baseR;
+                        const by = this.y + Math.sin(angle) * baseR;
+                        const wave = Math.sin(this.tentaclePhase + i * 1.2) * 12;
+                        const midX = this.x + Math.cos(angle) * (baseR + 16) + Math.cos(angle + 1.2) * wave;
+                        const midY = this.y + Math.sin(angle) * (baseR + 16) + Math.sin(angle + 1.2) * wave;
+                        const endX = this.x + Math.cos(angle) * (baseR + 30) + Math.cos(angle + 0.8) * wave * 1.5;
+                        const endY = this.y + Math.sin(angle) * (baseR + 30) + Math.sin(angle + 0.8) * wave * 1.5;
+
+                        ctx.strokeStyle = this.tentacleColors[i];
+                        ctx.lineWidth = 5;
+                        ctx.lineCap = 'round';
+                        ctx.beginPath();
+                        ctx.moveTo(bx, by);
+                        ctx.quadraticCurveTo(midX, midY, endX, endY);
+                        ctx.stroke();
+
+                        // Scoop at end
+                        ctx.fillStyle = this.tentacleColors[i];
+                        ctx.beginPath();
+                        ctx.arc(endX, endY, 7, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                        ctx.beginPath();
+                        ctx.arc(endX - 2, endY - 2, 3, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+
+                    // Body (ice cream scoop)
+                    const bodyGrad = ctx.createRadialGradient(this.x - 2, this.y - 4, 3, this.x, this.y, 17);
+                    bodyGrad.addColorStop(0, '#ffffff');
+                    bodyGrad.addColorStop(0.5, this.bodyColor);
+                    bodyGrad.addColorStop(1, '#cc8899');
+                    ctx.fillStyle = bodyGrad;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, 16, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    // Sprinkles
+                    for (let s = 0; s < 10; s++) {
+                        const sa = (s / 10) * Math.PI * 2 + 0.3;
+                        const sr = 9 + Math.random() * 5;
+                        const sx = this.x + Math.cos(sa) * sr;
+                        const sy = this.y + Math.sin(sa) * sr - 2;
+                        ctx.fillStyle = ['#ff4444', '#44ff44', '#4444ff', '#ffff44', '#ff44ff'][s % 5];
+                        ctx.fillRect(sx - 1.5, sy - 0.5, 3, 1.5);
+                    }
+
+                    // Eyes
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(this.x - 5, this.y - 4, 6, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(this.x + 5, this.y - 4, 6, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#111';
+                    ctx.beginPath();
+                    ctx.arc(this.x - 3, this.y - 3, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(this.x + 7, this.y - 3, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(this.x - 2, this.y - 4.5, 1.2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(this.x + 8, this.y - 4.5, 1.2, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Cute smile
+                    ctx.strokeStyle = '#333';
+                    ctx.lineWidth = 1.2;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y + 3, 5, 0.1, Math.PI - 0.1);
+                    ctx.stroke();
+
+                    // Projectiles
+                    this.projectiles.forEach(p => {
+                        ctx.fillStyle = p.color;
+                        ctx.globalAlpha = Math.min(1, p.life);
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                        ctx.beginPath();
+                        ctx.arc(p.x - 1, p.y - 1, p.size * 0.4, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.globalAlpha = 1;
+                    });
+                }
+                getBounds() {
+                    return {
+                        x: this.x - 15,
+                        y: this.y - 15,
+                        w: 30,
+                        h: 30
+                    };
+                }
+                getProjectileBounds() {
+                    return this.projectiles.map(p => ({
+                        x: p.x - p.size,
+                        y: p.y - p.size,
+                        w: p.size * 2,
+                        h: p.size * 2
+                    }));
+                }
+            }
+
+            // ──────────────────────────────────────
+            // COLLECTIBLES
+            // ──────────────────────────────────────
+            class Collectible {
+                constructor(x, y, type) {
+                    this.x = x;
+                    this.y = y;
+                    this.type = type; // 'oxygen' | 'health' | 'gem'
+                    this.width = 22;
+                    this.height = 22;
+                    this.alive = true;
+                    this.bobPhase = Math.random() * Math.PI * 2;
+                }
+                update(dt) {
+                    this.bobPhase += 3 * dt;
+                    if (this.y > GAME_H + 40 || this.y < -40 || this.x > GAME_W + 40 || this.x < -40) {
+                        this.alive = false;
+                    }
+                }
+                draw(ctx) {
+                    const bobY = Math.sin(this.bobPhase) * 5;
+                    const drawY = this.y + bobY;
+                    ctx.save();
+                    ctx.translate(this.x, drawY);
+
+                    if (this.type === 'oxygen') {
+                        const grad = ctx.createLinearGradient(0, -11, 0, 11);
+                        grad.addColorStop(0, '#88ffee');
+                        grad.addColorStop(0.5, '#44ccaa');
+                        grad.addColorStop(1, '#228866');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.roundRect(-8, -11, 16, 22, 6);
+                        ctx.fill();
+                        ctx.strokeStyle = '#116644';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                        ctx.fillStyle = '#fff';
+                        ctx.font = 'bold 10px sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('O₂', 0, 4);
+                    } else if (this.type === 'health') {
+                        const grad = ctx.createRadialGradient(0, -2, 2, 0, 0, 11);
+                        grad.addColorStop(0, '#ffaaaa');
+                        grad.addColorStop(0.7, '#ee4444');
+                        grad.addColorStop(1, '#aa1111');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        // Heart shape
+                        const s = 11;
+                        ctx.moveTo(0, s * 0.7);
+                        ctx.bezierCurveTo(-s, -s * 0.3, -s * 0.5, -s, 0, -s * 0.4);
+                        ctx.bezierCurveTo(s * 0.5, -s, s, -s * 0.3, 0, s * 0.7);
+                        ctx.fill();
+                        ctx.strokeStyle = '#880000';
+                        ctx.lineWidth = 1.5;
+                        ctx.stroke();
+                    } else if (this.type === 'gem') {
+                        const grad = ctx.createRadialGradient(0, -3, 1, 0, 0, 9);
+                        grad.addColorStop(0, '#ffffff');
+                        grad.addColorStop(0.4, '#ffdd44');
+                        grad.addColorStop(1, '#cc8800');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.moveTo(0, -9);
+                        ctx.lineTo(7, 0);
+                        ctx.lineTo(0, 9);
+                        ctx.lineTo(-7, 0);
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.strokeStyle = '#886600';
+                        ctx.lineWidth = 1.5;
+                        ctx.stroke();
+                    }
+                    ctx.restore();
+                }
+                getBounds() {
+                    return {
+                        x: this.x - 10,
+                        y: this.y - 10,
+                        w: 20,
+                        h: 20
+                    };
+                }
+            }
+
+            // ──────────────────────────────────────
+            // COLLISION HELPERS
+            // ──────────────────────────────────────
+            function rectsOverlap(a, b) {
+                return !(a.x + a.w < b.x || a.x > b.x + b.w || a.y + a.h < b.y || a.y > b.y + b.h);
+            }
+
+            // ──────────────────────────────────────
+            // GAME STATE
+            // ──────────────────────────────────────
+            const STATE = { MENU: 'menu', PLAYING: 'playing', PAUSED: 'paused', GAMEOVER: 'gameover', WIN: 'win' };
+            let gameState = STATE.MENU;
+            let player;
+            let enemies = [];
+            let collectibles = [];
+            let depth = 0;
+            let depthDisplay = 0;
+            let gameTime = 0;
+            let enemySpawnTimer = 0;
+            let collectibleSpawnTimer = 0;
+            let milestoneTimer = 0;
+            let lastMilestone = 0;
+            let screenShake = 0;
+            let screenShakeX = 0;
+            let screenShakeY = 0;
+            let keys = {};
+            let highScore = 0;
+            let zoneTransition = 0;
+            let currentZone = 0;
+            let flashAlpha = 0;
+
+            try {
+                highScore = parseFloat(localStorage.getItem('deepestDepth')) || 0;
+            } catch (e) {
+                highScore = 0;
+            }
+
+            function getZone(d) {
+                if (d < 15000) return 0; // Sunlight
+                if (d < 40000) return 1; // Twilight
+                if (d < 70000) return 2; // Midnight
+                return 3; // Abyssal
+            }
+
+            function getZoneName(z) {
+                return ['Sunlight Zone', 'Twilight Zone', 'Midnight Zone', 'Abyssal Zone'][z];
+            }
+
+            function getZoneColors(z) {
+                const zones = [
+                    { top: '#1a6fa0', bottom: '#0d4a6e', particles: 'rgba(255,255,200,0.6)', name: 'Sunlight' },
+                    { top: '#0d3d5c', bottom: '#061e30', particles: 'rgba(180,220,255,0.5)', name: 'Twilight' },
+                    { top: '#051525', bottom: '#020a14', particles: 'rgba(140,200,255,0.4)', name: 'Midnight' },
+                    { top: '#020810', bottom: '#000408', particles: 'rgba(100,160,220,0.35)', name: 'Abyssal' },
+                ];
+                return zones[Math.min(z, 3)];
+            }
+
+            function resetGame() {
+                player = new Player();
+                enemies = [];
+                collectibles = [];
+                particles = [];
+                depth = 0;
+                depthDisplay = 0;
+                gameTime = 0;
+                enemySpawnTimer = 0;
+                collectibleSpawnTimer = 0;
+                milestoneTimer = 0;
+                lastMilestone = 0;
+                screenShake = 0;
+                screenShakeX = 0;
+                screenShakeY = 0;
+                zoneTransition = 0;
+                currentZone = 0;
+                flashAlpha = 0;
+                keys = {};
+            }
+
+            function spawnEnemy() {
+                const zone = getZone(depth);
+                const side = Math.floor(Math.random() * 4);
+                let x, y, vx, vy, speed;
+                const baseSpeed = 100 + zone * 50 + depth * 0.15;
+                const rng = Math.random();
+
+                if (rng < 0.5) {
+                    // Cookie Shark
+                    speed = baseSpeed + Math.random() * 60;
+                    if (side === 0) { x = -50;
+                        y = Math.random() * GAME_H;
+                        vx = speed;
+                        vy = 0; } else if (side === 1) { x = GAME_W + 50;
+                        y = Math.random() * GAME_H;
+                        vx = -speed;
+                        vy = 0; } else if (side === 2) { x = Math.random() * GAME_W;
+                        y = -50;
+                        vx = (Math.random() - 0.5) * speed;
+                        vy = speed; } else { x = Math.random() * GAME_W;
+                        y = GAME_H + 50;
+                        vx = (Math.random() - 0.5) * speed;
+                        vy = -speed; }
+                    const shark = new CookieShark(x, y, vx > 0 ? 1 : -1, Math.abs(vx) || speed, depth);
+                    if (side >= 2) { shark.baseY = y;
+                        shark.wobbleAmp = 30; }
+                    enemies.push(shark);
+                } else {
+                    // Ice Cream Octopus
+                    speed = baseSpeed * 0.7 + Math.random() * 40;
+                    if (side === 0) { x = -50;
+                        y = Math.random() * GAME_H;
+                        vx = speed;
+                        vy = (Math.random() - 0.5) * speed * 0.6; } else if (side === 1) { x = GAME_W + 50;
+                        y = Math.random() * GAME_H;
+                        vx = -speed;
+                        vy = (Math.random() - 0.5) * speed * 0.6; } else if (side === 2) { x = Math.random() * GAME_W;
+                        y = -50;
+                        vx = (Math.random() - 0.5) * speed * 0.6;
+                        vy = speed; } else { x = Math.random() * GAME_W;
+                        y = GAME_H + 50;
+                        vx = (Math.random() - 0.5) * speed * 0.6;
+                        vy = -speed; }
+                    enemies.push(new IceCreamOctopus(x, y, vx, vy, depth));
+                }
+            }
+
+            function spawnCollectible() {
+                const types = ['oxygen', 'oxygen', 'oxygen', 'health', 'gem', 'gem'];
+                const type = types[Math.floor(Math.random() * types.length)];
+                const x = 40 + Math.random() * (GAME_W - 80);
+                const y = 40 + Math.random() * (GAME_H - 80);
+                collectibles.push(new Collectible(x, y, type));
+            }
+
+            function triggerScreenShake(intensity) {
+                screenShake = Math.max(screenShake, intensity);
+            }
+
+            // ──────────────────────────────────────
+            // INPUT HANDLING
+            // ──────────────────────────────────────
+            window.addEventListener('keydown', e => {
+                keys[e.code] = true;
+                if (e.code === 'KeyP' || e.code === 'Escape') {
+                    if (gameState === STATE.PLAYING) {
+                        gameState = STATE.PAUSED;
+                        audio.playClick();
+                    } else if (gameState === STATE.PAUSED) {
+                        gameState = STATE.PLAYING;
+                        audio.playClick();
+                    }
+                }
+                if (e.code === 'Space' || e.code === 'Enter') {
+                    if (gameState === STATE.MENU) {
+                        audio.init();
+                        audio.playClick();
+                        resetGame();
+                        gameState = STATE.PLAYING;
+                        audio.startMusic(0);
+                    } else if (gameState === STATE.GAMEOVER || gameState === STATE.WIN) {
+                        audio.playClick();
+                        resetGame();
+                        gameState = STATE.PLAYING;
+                        audio.startMusic(0);
+                    }
+                }
+                e.preventDefault();
+            });
+            window.addEventListener('keyup', e => {
+                keys[e.code] = false;
+            });
+
+            // Touch controls
+            const btnUp = document.getElementById('btn-up');
+            const btnDown = document.getElementById('btn-down');
+            const btnLeft = document.getElementById('btn-left');
+            const btnRight = document.getElementById('btn-right');
+
+            function setupTouchButton(el, key) {
+                el.addEventListener('pointerdown', e => {
+                    e.preventDefault();
+                    keys[key] = true;
+                    if (gameState === STATE.MENU) {
+                        audio.init();
+                        audio.playClick();
+                        resetGame();
+                        gameState = STATE.PLAYING;
+                        audio.startMusic(0);
+                    } else if (gameState === STATE.GAMEOVER || gameState === STATE.WIN) {
+                        audio.playClick();
+                        resetGame();
+                        gameState = STATE.PLAYING;
+                        audio.startMusic(0);
+                    } else if (gameState === STATE.PAUSED) {
+                        gameState = STATE.PLAYING;
+                        audio.playClick();
+                    }
+                });
+                el.addEventListener('pointerup', e => {
+                    e.preventDefault();
+                    keys[key] = false;
+                });
+                el.addEventListener('pointerleave', e => {
+                    keys[key] = false;
+                });
+                el.addEventListener('pointercancel', e => {
+                    keys[key] = false;
+                });
+            }
+            setupTouchButton(btnUp, 'touchUp');
+            setupTouchButton(btnDown, 'touchDown');
+            setupTouchButton(btnLeft, 'touchLeft');
+            setupTouchButton(btnRight, 'touchRight');
+
+            canvas.addEventListener('pointerdown', e => {
+                if (gameState === STATE.MENU) {
+                    audio.init();
+                    audio.playClick();
+                    resetGame();
+                    gameState = STATE.PLAYING;
+                    audio.startMusic(0);
+                } else if (gameState === STATE.GAMEOVER || gameState === STATE.WIN) {
+                    audio.playClick();
+                    resetGame();
+                    gameState = STATE.PLAYING;
+                    audio.startMusic(0);
+                } else if (gameState === STATE.PAUSED) {
+                    gameState = STATE.PLAYING;
+                    audio.playClick();
+                }
+            });
+
+            // ──────────────────────────────────────
+            // RENDERING HELPERS
+            // ──────────────────────────────────────
+            function drawBackground(ctx, zone) {
+                const colors = getZoneColors(zone);
+                const grad = ctx.createLinearGradient(0, 0, 0, GAME_H);
+                grad.addColorStop(0, colors.top);
+                grad.addColorStop(1, colors.bottom);
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, GAME_W, GAME_H);
+
+                // Light rays in upper zones
+                if (zone <= 1) {
+                    const rayAlpha = zone === 0 ? 0.06 : 0.03;
+                    for (let i = 0; i < 5; i++) {
+                        const rx = (i * 180 + gameTime * 15) % GAME_W;
+                        const grad2 = ctx.createLinearGradient(rx, 0, rx + 40, GAME_H);
+                        grad2.addColorStop(0, `rgba(255,255,220,${rayAlpha})`);
+                        grad2.addColorStop(1, 'rgba(255,255,220,0)');
+                        ctx.fillStyle = grad2;
+                        ctx.fillRect(rx - 20, 0, 60, GAME_H);
+                    }
+                }
+
+                // Bioluminescent particles in deep zones
+                if (zone >= 2) {
+                    const bioCount = zone === 3 ? 25 : 12;
+                    for (let i = 0; i < bioCount; i++) {
+                        const bx = ((i * 137 + gameTime * 20 * (i % 3 + 1)) % GAME_W);
+                        const by = ((i * 251 + gameTime * 15 * (i % 4 + 1)) % GAME_H);
+                        const alpha = 0.3 + Math.sin(gameTime * 3 + i) * 0.3;
+                        ctx.fillStyle = `rgba(150,220,255,${alpha})`;
+                        ctx.beginPath();
+                        ctx.arc(bx, by, 1.5, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = `rgba(200,240,255,${alpha*0.5})`;
+                        ctx.beginPath();
+                        ctx.arc(bx, by, 3, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            function drawDepthMeter(ctx, d) {
+                const frac = Math.min(d / TARGET_DEPTH, 1);
+                const barX = GAME_W - 50;
+                const barY = 30;
+                const barW = 22;
+                const barH = GAME_H - 80;
+                const filledH = barH * frac;
+
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.roundRect(barX - 2, barY - 2, barW + 4, barH + 4, 8);
+                ctx.fill();
+                ctx.stroke();
+
+                const grad = ctx.createLinearGradient(0, barY + barH, 0, barY);
+                grad.addColorStop(0, '#ff4444');
+                grad.addColorStop(0.3, '#ffaa00');
+                grad.addColorStop(0.6, '#44ccff');
+                grad.addColorStop(1, '#0044ff');
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.roundRect(barX, barY + barH - filledH, barW, filledH, 6);
+                ctx.fill();
+
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 11px sans-serif';
+                ctx.textAlign = 'center';
+                const labelY = barY + barH - filledH;
+                ctx.fillText(Math.floor(d) + ' ft', barX + barW / 2, Math.max(barY + 16, Math.min(barY + barH - 8, labelY -
+                    6)));
+                ctx.fillText('100000', barX + barW / 2, barY + barH + 18);
+                ctx.fillText('0', barX + barW / 2, barY - 8);
+
+                // Zone indicator
+                const zone = getZone(d);
+                const zn = getZoneName(zone);
+                ctx.fillStyle = 'rgba(255,255,255,0.8)';
+                ctx.font = 'bold 10px sans-serif';
+                ctx.fillText(zn, barX + barW / 2, barY + barH + 34);
+            }
+
+            function drawHUD(ctx, p, d) {
+                // Oxygen bar
+                const oxBarX = 20;
+                const oxBarY = 20;
+                const oxBarW = 160;
+                const oxBarH = 16;
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.beginPath();
+                ctx.roundRect(oxBarX - 2, oxBarY - 2, oxBarW + 4, oxBarH + 4, 6);
+                ctx.fill();
+                ctx.fillStyle = 'rgba(0,40,60,0.7)';
+                ctx.beginPath();
+                ctx.roundRect(oxBarX, oxBarY, oxBarW, oxBarH, 4);
+                ctx.fill();
+                const oxFrac = p.oxygen / p.maxOxygen;
+                const oxGrad = ctx.createLinearGradient(oxBarX, 0, oxBarX + oxBarW, 0);
+                oxGrad.addColorStop(0, '#44ddff');
+                oxGrad.addColorStop(1, '#0088cc');
+                ctx.fillStyle = oxGrad;
+                ctx.beginPath();
+                ctx.roundRect(oxBarX, oxBarY, oxBarW * oxFrac, oxBarH, 4);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 10px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('OXYGEN', oxBarX + oxBarW / 2, oxBarY + oxBarH - 3);
+
+                // Health hearts
+                for (let i = 0; i < p.maxHealth; i++) {
+                    const hx = 20 + i * 28;
+                    const hy = 48;
+                    ctx.fillStyle = i < p.health ? '#ff4455' : '#333';
+                    ctx.beginPath();
+                    const s = 9;
+                    const cx = hx;
+                    const cy = hy;
+                    ctx.moveTo(cx, cy + s * 0.7);
+                    ctx.bezierCurveTo(cx - s, cy - s * 0.3, cx - s * 0.5, cy - s, cx, cy - s * 0.4);
+                    ctx.bezierCurveTo(cx + s * 0.5, cy - s, cx + s, cy - s * 0.3, cx, cy + s * 0.7);
+                    ctx.fill();
+                }
+
+                // Depth display
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 18px sans-serif';
+                ctx.textAlign = 'right';
+                ctx.fillText(Math.floor(d) + ' ft', GAME_W - 80, 28);
+                const zone = getZone(d);
+                ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                ctx.font = '11px sans-serif';
+                ctx.fillText(getZoneName(zone), GAME_W - 80, 44);
+            }
+
+            // ──────────────────────────────────────
+            // MAIN GAME LOOP
+            // ──────────────────────────────────────
+            let lastTime = performance.now();
+            let dtAccum = 0;
+            const fixedDt = 1 / 60;
+
+            function gameLoop(timestamp) {
+                requestAnimationFrame(gameLoop);
+                let rawDt = (timestamp - lastTime) / 1000;
+                lastTime = timestamp;
+                if (rawDt > 0.15) rawDt = 0.15;
+                if (rawDt <= 0) rawDt = fixedDt;
+                dtAccum += rawDt;
+
+                while (dtAccum >= fixedDt) {
+                    dtAccum -= fixedDt;
+                    update(fixedDt);
+                }
+
+                const alpha = dtAccum / fixedDt;
+                render(alpha);
+            }
+
+            function update(dt) {
+                if (gameState === STATE.PLAYING) {
+                    gameTime += dt;
+
+                    // Depth increase
+                    const baseDescent = 300;
+                    const zoneBonus = getZone(depth) * 60;
+                    let descentRate = baseDescent + zoneBonus + depth * 0.08;
+                    if (keys['ArrowDown'] || keys['KeyS'] || keys['touchDown']) descentRate *= 1.8;
+                    if (keys['ArrowUp'] || keys['KeyW'] || keys['touchUp']) descentRate *= 0.6;
+                    depth += descentRate * dt;
+                    depthDisplay += (depth - depthDisplay) * Math.min(1, 8 * dt);
+
+                    const newZone = getZone(depth);
+                    if (newZone !== currentZone) {
+                        zoneTransition = 1.0;
+                        currentZone = newZone;
+                        audio.playDepthMilestone();
+                        spawnParticles(player.x, player.y, 30, '#ffffff', 150, 0.8, 5);
+                    }
+                    zoneTransition = Math.max(0, zoneTransition - dt * 1.5);
+
+                    // Milestone
+                    milestoneTimer += dt;
+                    if (milestoneTimer > 15 && depth - lastMilestone > 8000) {
+                        lastMilestone = Math.floor(depth / 5000) * 5000;
+                        audio.playDepthMilestone();
+                        milestoneTimer = 0;
+                    }
+
+                    // Update player
+                    player.update(dt, keys, depth);
+                    if (player.oxygen <= 0 || player.health <= 0) {
+                        gameOver();
+                        return;
+                    }
+                    if (depth >= TARGET_DEPTH) {
+                        winGame();
+                        return;
+                    }
+
+                    // Update enemies
+                    enemySpawnTimer -= dt;
+                    const spawnInterval = Math.max(0.6, 2.5 - getZone(depth) * 0.5 - depth * 0.000008);
+                    if (enemySpawnTimer <= 0) {
+                        enemySpawnTimer = spawnInterval + Math.random() * 1.5;
+                        spawnEnemy();
+                        if (getZone(depth) >= 2 && Math.random() < 0.4) spawnEnemy();
+                    }
+
+                    for (let i = enemies.length - 1; i >= 0; i--) {
+                        const enemy = enemies[i];
+                        enemy.update(dt, player.x, player.y);
+                        if (!enemy.alive) {
+                            enemies.splice(i, 1);
+                            continue;
+                        }
+                        // Check collision with player
+                        const eb = enemy.getBounds();
+                        const pb = player.getBounds();
+                        if (rectsOverlap(eb, pb)) {
+                            if (player.hit()) {
+                                triggerScreenShake(8);
+                                flashAlpha = 0.4;
+                                if (player.health <= 0) {
+                                    gameOver();
+                                    return;
+                                }
+                            }
+                        }
+                        // Check projectiles
+                        if (enemy instanceof IceCreamOctopus) {
+                            const projBounds = enemy.getProjectileBounds();
+                            for (const pjb of projBounds) {
+                                if (rectsOverlap(pjb, pb)) {
+                                    if (player.hit()) {
+                                        triggerScreenShake(6);
+                                        flashAlpha = 0.3;
+                                        enemy.projectiles = [];
+                                        if (player.health <= 0) {
+                                            gameOver();
+                                            return;
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Update collectibles
+                    collectibleSpawnTimer -= dt;
+                    if (collectibleSpawnTimer <= 0) {
+                        collectibleSpawnTimer = 6 + Math.random() * 8;
+                        spawnCollectible();
+                    }
+                    for (let i = collectibles.length - 1; i >= 0; i--) {
+                        const col = collectibles[i];
+                        col.update(dt);
+                        if (!col.alive) {
+                            collectibles.splice(i, 1);
+                            continue;
+                        }
+                        if (rectsOverlap(col.getBounds(), player.getBounds())) {
+                            if (col.type === 'oxygen') player.addOxygen(30);
+                            else if (col.type === 'health') player.addHealth();
+                            else if (col.type === 'gem') {
+                                player.addOxygen(10);
+                                depth += 1500;
+                                spawnParticles(col.x, col.y, 20, '#ffdd44', 80, 0.5, 4);
+                                audio.playPickup();
+                            }
+                            collectibles.splice(i, 1);
+                        }
+                    }
+
+                    // Update particles
+                    for (let i = particles.length - 1; i >= 0; i--) {
+                        if (!particles[i].update(dt)) particles.splice(i, 1);
+                    }
+
+                    // Update bubbles
+                    bubbles.forEach(b => b.update(dt));
+
+                    // Screen shake decay
+                    if (screenShake > 0) {
+                        screenShakeX = (Math.random() - 0.5) * screenShake * 2;
+                        screenShakeY = (Math.random() - 0.5) * screenShake * 2;
+                        screenShake *= Math.exp(-10 * dt);
+                        if (screenShake < 0.1) { screenShake = 0;
+                            screenShakeX = 0;
+                            screenShakeY = 0; }
+                    }
+                    if (flashAlpha > 0) flashAlpha *= Math.exp(-8 * dt);
+
+                    // Update audio
+                    audio.updateMusicParams(depth);
+                }
+            }
+
+            function gameOver() {
+                gameState = STATE.GAMEOVER;
+                audio.stopMusic();
+                const finalDepth = Math.floor(depth);
+                if (finalDepth > highScore) {
+                    highScore = finalDepth;
+                    try { localStorage.setItem('deepestDepth', highScore); } catch (e) {}
+                }
+                triggerScreenShake(12);
+                spawnParticles(player.x, player.y, 40, '#ff4444', 200, 1.0, 6);
+                audio.playHit();
+                setTimeout(() => audio.playTone(80, 0.5, 'triangle', 0.12), 200);
+            }
+
+            function winGame() {
+                gameState = STATE.WIN;
+                audio.stopMusic();
+                audio.playWin();
+                const finalDepth = TARGET_DEPTH;
+                if (finalDepth > highScore) {
+                    highScore = finalDepth;
+                    try { localStorage.setItem('deepestDepth', highScore); } catch (e) {}
+                }
+                spawnParticles(GAME_W / 2, GAME_H / 2, 80, '#ffdd44', 300, 1.5, 8);
+                spawnParticles(GAME_W / 2, GAME_H / 2, 60, '#ff88cc', 250, 1.2, 6);
+                spawnParticles(GAME_W / 2, GAME_H / 2, 40, '#88ffcc', 200, 1.0, 5);
+            }
+
+            function render(alpha) {
+                ctx.clearRect(0, 0, GAME_W, GAME_H);
+                const zone = getZone(depth);
+                const displayZone = zoneTransition > 0.01 ? currentZone : zone;
+
+                ctx.save();
+                if (screenShake > 0.1) {
+                    ctx.translate(screenShakeX, screenShakeY);
+                }
+                drawBackground(ctx, displayZone);
+
+                // Zone transition overlay
+                if (zoneTransition > 0.01) {
+                    const prevZone = currentZone;
+                    const prevColors = getZoneColors(prevZone);
+                    ctx.fillStyle = prevColors.bottom;
+                    ctx.globalAlpha = zoneTransition;
+                    ctx.fillRect(0, 0, GAME_W, GAME_H);
+                    ctx.globalAlpha = 1;
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 22px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.globalAlpha = zoneTransition;
+                    ctx.fillText('▼ ' + getZoneName(currentZone) + ' ▼', GAME_W / 2, GAME_H / 2 - 30);
+                    ctx.globalAlpha = 1;
+                }
+
+                // Bubbles
+                bubbles.forEach(b => b.draw(ctx, 0.35 + zone * 0.05));
+
+                // Collectibles
+                collectibles.forEach(c => c.draw(ctx));
+
+                // Enemies
+                enemies.forEach(e => e.draw(ctx));
+
+                // Player
+                if (gameState === STATE.PLAYING || gameState === STATE.PAUSED) {
+                    player.draw(ctx);
+                }
+
+                // Particles
+                particles.forEach(p => p.draw(ctx));
+
+                // Flash overlay
+                if (flashAlpha > 0.005) {
+                    ctx.fillStyle = `rgba(255,80,60,${flashAlpha})`;
+                    ctx.fillRect(0, 0, GAME_W, GAME_H);
+                }
+
+                ctx.restore();
+
+                // HUD
+                if (gameState === STATE.PLAYING || gameState === STATE.PAUSED) {
+                    drawHUD(ctx, player, depthDisplay);
+                    drawDepthMeter(ctx, depthDisplay);
+                }
+
+                // Menu overlay
+                if (gameState === STATE.MENU) {
+                    drawMenu(ctx);
+                } else if (gameState === STATE.PAUSED) {
+                    drawPauseOverlay(ctx);
+                } else if (gameState === STATE.GAMEOVER) {
+                    drawGameOver(ctx);
+                } else if (gameState === STATE.WIN) {
+                    drawWin(ctx);
+                }
+            }
+
+            function drawMenu(ctx) {
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, GAME_W, GAME_H);
+
+                // Title
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 36px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('100,000 FEET', GAME_W / 2, GAME_H / 2 - 70);
+                ctx.fillText('DEEP', GAME_W / 2, GAME_H / 2 - 30);
+
+                ctx.fillStyle = '#ffcc44';
+                ctx.font = 'bold 18px sans-serif';
+                ctx.fillText('Cookie Shark & Ice Cream Octopus', GAME_W / 2, GAME_H / 2 + 10);
+
+                // Subtitle
+                ctx.fillStyle = '#aaddff';
+                ctx.font = '15px sans-serif';
+                ctx.fillText('Dive to the abyss. Survive the depths.', GAME_W / 2, GAME_H / 2 + 40);
+
+                // High score
+                ctx.fillStyle = '#ffdd88';
+                ctx.font = 'bold 14px sans-serif';
+                ctx.fillText('Deepest Dive: ' + Math.floor(highScore).toLocaleString() + ' ft', GAME_W / 2, GAME_H / 2 + 70);
+
+                // Start button
+                const bx = GAME_W / 2 - 100;
+                const by = GAME_H / 2 + 100;
+                const bw = 200;
+                const bh = 50;
+                const pulse = Math.sin(gameTime * 3) * 0.15 + 0.85;
+                ctx.fillStyle = `rgba(255,180,40,${pulse})`;
+                ctx.beginPath();
+                ctx.roundRect(bx, by, bw, bh, 25);
+                ctx.fill();
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 20px sans-serif';
+                ctx.fillText('DIVE IN', GAME_W / 2, by + 34);
+
+                // Controls info
+                ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                ctx.font = '12px sans-serif';
+                ctx.fillText('Arrow Keys / WASD to move  |  P to pause', GAME_W / 2, GAME_H / 2 + 175);
+                ctx.fillText('Press SPACE or tap to start', GAME_W / 2, GAME_H / 2 + 195);
+
+                // Draw a small cookie shark and ice cream octopus
+                const demoShark = new CookieShark(GAME_W / 2 - 120, GAME_H / 2 - 100, 1, 0, 0);
+                demoShark.wobble = gameTime * 1.5;
+                demoShark.draw(ctx);
+                const demoOcto = new IceCreamOctopus(GAME_W / 2 + 120, GAME_H / 2 - 100, 0, 0, 0);
+                demoOcto.tentaclePhase = gameTime * 2;
+                demoOcto.draw(ctx);
+            }
+
+            function drawPauseOverlay(ctx) {
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(0, 0, GAME_W, GAME_H);
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 36px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('PAUSED', GAME_W / 2, GAME_H / 2 - 10);
+                ctx.font = '16px sans-serif';
+                ctx.fillText('Press P or tap to resume', GAME_W / 2, GAME_H / 2 + 30);
+            }
+
+            function drawGameOver(ctx) {
+                ctx.fillStyle = 'rgba(0,0,0,0.75)';
+                ctx.fillRect(0, 0, GAME_W, GAME_H);
+                ctx.fillStyle = '#ff5555';
+                ctx.font = 'bold 32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER', GAME_W / 2, GAME_H / 2 - 40);
+                ctx.fillStyle = '#fff';
+                ctx.font = '18px sans-serif';
+                ctx.fillText('Depth Reached: ' + Math.floor(depth).toLocaleString() + ' ft', GAME_W / 2, GAME_H / 2 + 5);
+                ctx.fillStyle = '#ffdd88';
+                ctx.font = 'bold 15px sans-serif';
+                ctx.fillText('Best: ' + Math.floor(highScore).toLocaleString() + ' ft', GAME_W / 2, GAME_H / 2 + 32);
+                ctx.fillStyle = '#fff';
+                ctx.font = '14px sans-serif';
+                ctx.fillText('Press SPACE or tap to try again', GAME_W / 2, GAME_H / 2 + 65);
+            }
+
+            function drawWin(ctx) {
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, GAME_W, GAME_H);
+                ctx.fillStyle = '#ffdd44';
+                ctx.font = 'bold 34px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('YOU REACHED', GAME_W / 2, GAME_H / 2 - 50);
+                ctx.fillText('100,000 FEET!', GAME_W / 2, GAME_H / 2 - 10);
+                ctx.fillStyle = '#fff';
+                ctx.font = '18px sans-serif';
+                ctx.fillText('The abyss is conquered!', GAME_W / 2, GAME_H / 2 + 30);
+                ctx.fillStyle = '#ffdd88';
+                ctx.font = 'bold 14px sans-serif';
+                ctx.fillText('Best: ' + Math.floor(highScore).toLocaleString() + ' ft', GAME_W / 2, GAME_H / 2 + 60);
+                ctx.fillStyle = '#fff';
+                ctx.font = '14px sans-serif';
+                ctx.fillText('Press SPACE or tap to play again', GAME_W / 2, GAME_H / 2 + 95);
+            }
+
+            // ──────────────────────────────────────
+            // INITIAL SETUP
+            // ──────────────────────────────────────
+            resetGame();
+            gameState = STATE.MENU;
+            // Start with a static menu render
+            gameTime = 0;
+            // Animate menu
+            function menuAnimLoop(ts) {
+                if (gameState !== STATE.MENU) {
+                    requestAnimationFrame(gameLoop);
+                    lastTime = performance.now();
+                    dtAccum = 0;
+                    return;
+                }
+                gameTime += 0.016;
+                render(0);
+                requestAnimationFrame(menuAnimLoop);
+            }
+            requestAnimationFrame(menuAnimLoop);
+
+            // Actually, let's use a unified approach
+            // Cancel the above and just use gameLoop for everything
+            // But we need gameTime to animate the menu even when not playing
+            // Let's handle this in the gameLoop
+            // Override: use a single loop
+            let menuTime = 0;
+            const origGameLoop = gameLoop;
+            // We'll just use gameLoop for everything, but update gameTime for menu
+            const realUpdate = update;
+            const realRender = render;
+
+            function unifiedUpdate(dt) {
+                if (gameState === STATE.MENU || gameState === STATE.GAMEOVER || gameState === STATE.WIN) {
+                    gameTime += dt;
+                    // Update particles even in menu/gameover
+                    for (let i = particles.length - 1; i >= 0; i--) {
+                        if (!particles[i].update(dt)) particles.splice(i, 1);
+                    }
+                    if (screenShake > 0) {
+                        screenShakeX = (Math.random() - 0.5) * screenShake * 2;
+                        screenShakeY = (Math.random() - 0.5) * screenShake * 2;
+                        screenShake *= Math.exp(-10 * dt);
+                        if (screenShake < 0.1) { screenShake = 0;
+                            screenShakeX = 0;
+                            screenShakeY = 0; }
+                    }
+                    if (flashAlpha > 0) flashAlpha *= Math.exp(-8 * dt);
+                } else {
+                    realUpdate(dt);
+                }
+            }
+
+            function unifiedRender(alpha) {
+                realRender(alpha);
+            }
+
+            // Replace
+            update = unifiedUpdate;
+            render = unifiedRender;
+
+            // Restart the loop properly
+            lastTime = performance.now();
+            dtAccum = 0;
+            // Cancel any existing animation frame loop and restart
+            // We'll just let the existing requestAnimationFrame chain continue
+            // The functions are now replaced, so it'll work
+
+            console.log('🐠 100,000 Feet Deep - Ready to dive!');
+            console.log('🦈 Cookie Shark and 🐙 Ice Cream Octopus await...');
+            console.log('Controls: Arrow Keys / WASD to move, P to pause');
+            console.log('Reach 100,000 feet to win!');
+        })();
+    </script>
+</body>
+</html>
