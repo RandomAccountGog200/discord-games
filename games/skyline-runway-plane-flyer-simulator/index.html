@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Skyline Runway — Plane Flyer Simulator</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main id="game-shell">
+    <canvas id="game-canvas" aria-label="Skyline Runway game canvas"></canvas>
+
+    <section id="hud" class="hud hidden">
+      <div class="hud-block mission">
+        <span class="eyebrow">MISSION</span>
+        <strong id="level-label">SECTOR 1 / 5</strong>
+        <div class="progress"><i id="distance-progress"></i></div>
+      </div>
+      <div class="hud-block score-block">
+        <span class="eyebrow">FLIGHT SCORE</span>
+        <strong id="score-label">000000</strong>
+      </div>
+      <div class="hud-block gauges">
+        <div><span>HULL</span><b id="hull-gauge"></b></div>
+        <div><span>FUEL</span><b class="fuel"><i id="fuel-gauge"></i></b></div>
+      </div>
+      <button class="icon-button" data-action="pause" aria-label="Pause game">Ⅱ</button>
+    </section>
+
+    <section id="menu-panel" class="panel visible">
+      <div class="brand-mark"><span>✦</span> AERODYNE // 07</div>
+      <h1>SKYLINE<br><em>RUNWAY</em></h1>
+      <p class="tagline">A plane flyer simulator for pilots who fly by feel.</p>
+      <div class="menu-stats">
+        <span>BEST FLIGHT</span><strong id="menu-best">000000</strong>
+      </div>
+      <button class="primary-button" data-action="start">START FLIGHT <span>→</span></button>
+      <p class="controls-copy"><b>WASD / ARROWS</b> steer &nbsp; <b>SPACE</b> afterburner<br><b>DRAG</b> the aircraft on mouse or touch</p>
+    </section>
+
+    <section id="pause-panel" class="panel hidden compact">
+      <div class="brand-mark">FLIGHT COMPUTER // PAUSED</div>
+      <h2>HOLD POSITION</h2>
+      <p>Engines idling. Your route is safe for now.</p>
+      <button class="primary-button" data-action="resume">RESUME FLIGHT <span>→</span></button>
+      <button class="secondary-button" data-action="restart">RESTART ROUTE</button>
+      <button class="text-button" data-action="menu">RETURN TO HANGAR</button>
+    </section>
+
+    <section id="upgrade-panel" class="panel upgrade-panel hidden">
+      <div class="brand-mark">SECTOR CLEARED // SYSTEMS CHECK</div>
+      <h2 id="upgrade-title">SELECT A SYSTEM</h2>
+      <p>Choose one permanent modification before entering the next air corridor.</p>
+      <div id="upgrade-cards" class="upgrade-cards"></div>
+    </section>
+
+    <section id="end-panel" class="panel hidden compact">
+      <div id="end-kicker" class="brand-mark">FLIGHT REPORT</div>
+      <h2 id="end-title">FLIGHT COMPLETE</h2>
+      <p id="end-reason">All five sectors cleared.</p>
+      <div class="report-grid">
+        <span>FINAL SCORE</span><strong id="end-score">000000</strong>
+        <span>BEST RESULT</span><strong id="end-best">000000</strong>
+      </div>
+      <button class="primary-button" data-action="restart">FLY AGAIN <span>↻</span></button>
+      <button class="text-button" data-action="menu">RETURN TO HANGAR</button>
+    </section>
+
+    <div id="toast" class="toast"></div>
+
+    <div id="touch-controls" class="touch-controls hidden" aria-label="Touch flight controls">
+      <button data-control="up" aria-label="Climb">▲</button>
+      <button data-control="down" aria-label="Descend">▼</button>
+      <button class="boost-control" data-control="boost" aria-label="Afterburner">BOOST</button>
+    </div>
+  </main>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
