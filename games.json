@@ -790,5 +790,14 @@
     "model": "deepseek/deepseek-v4-flash-0731",
     "createdAt": "2026-08-04T23:59:05.035Z",
     "updatedAt": "2026-08-04T23:59:05.035Z"
+  },
+  {
+    "slug": "sushi-night-shift",
+    "title": "SUSHI NIGHT SHIFT",
+    "description": "sushi restaurant but then the bad things happen",
+    "creator": "kaipie16",
+    "model": "deepseek/deepseek-v4-flash-0731",
+    "createdAt": "2026-08-05T04:35:26.133Z",
+    "updatedAt": "2026-08-05T04:35:26.133Z"
   }
 ]
