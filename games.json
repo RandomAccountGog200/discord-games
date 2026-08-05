@@ -817,5 +817,14 @@
     "model": "deepseek/deepseek-v4-flash-0731",
     "createdAt": "2026-08-05T04:40:53.222Z",
     "updatedAt": "2026-08-05T04:40:53.222Z"
+  },
+  {
+    "slug": "destroy-milo-s-girlfriends-8-2",
+    "title": "Destroy Milo's Girlfriends 8",
+    "description": "Destroy Milo's Girlfriends 8",
+    "creator": "burger778",
+    "model": "moonshotai/kimi-k3",
+    "createdAt": "2026-08-05T05:21:27.537Z",
+    "updatedAt": "2026-08-05T05:21:27.537Z"
   }
 ]
