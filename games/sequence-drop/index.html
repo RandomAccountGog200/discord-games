@@ -72,23 +72,41 @@
             // --- Audio Engine ---
             class AudioEngine {
                 constructor() {
-                    this.ctx = null;
+                    this.actx = null;
                     this.initialized = false;
+                    this.noiseBuffer = null;
                 }
                 init() {
                     if (this.initialized) return;
                     try {
-                        this.ctx = new(window.AudioContext || window.webkitAudioContext)();
+                        this.actx = new(window.AudioContext || window.webkitAudioContext)();
                         this.initialized = true;
+                        // Create noise buffer for drum sounds
+                        if (!this.noiseBuffer) {
+                            const sampleRate = this.actx.sampleRate;
+                            const length = Math.floor(sampleRate * 0.5);
+                            const buffer = this.actx.createBuffer(1, length, sampleRate);
+                            const data = buffer.getChannelData(0);
+                            for (let i = 0; i < length; i++) {
+                                data[i] = Math.random() * 2 - 1;
+                            }
+                            this.noiseBuffer = buffer;
+                        }
                     } catch (e) {
                         console.warn('Web Audio API not available');
                     }
                 }
-                playTone(freq, duration, type = 'sine', vol = 0.25, ramp = true) {
-                    if (!this.initialized || !this.ctx) return;
-                    const t = this.ctx.currentTime;
-                    const osc = this.ctx.createOscillator();
-                    const gain = this.ctx.createGain();
+                suspend() {
+                    if (this.initialized && this.actx && this.actx.state === 'running') this.actx.suspend();
+                }
+                resume() {
+                    if (this.initialized && this.actx && this.actx.state === 'suspended') this.actx.resume();
+                }
+                playTone(time, freq, duration, type = 'sine', vol = 0.25, ramp = true) {
+                    if (!this.initialized || !this.actx) return;
+                    const t = time || this.actx.currentTime;
+                    const osc = this.actx.createOscillator();
+                    const gain = this.actx.createGain();
                     osc.type = type;
                     osc.frequency.setValueAtTime(freq, t);
                     gain.gain.setValueAtTime(vol, t);
@@ -98,44 +116,134 @@
                         gain.gain.setValueAtTime(0, t + duration);
                     }
                     osc.connect(gain);
-                    gain.connect(this.ctx.destination);
+                    gain.connect(this.actx.destination);
                     osc.start(t);
                     osc.stop(t + duration + 0.05);
                 }
                 playHit(noteIndex) {
                     const freqs = [261.63, 293.66, 329.63, 392.00, 440.00, 493.88];
                     const freq = freqs[noteIndex] || 440;
-                    this.playTone(freq, 0.35, 'triangle', 0.3);
-                    // Add a bright harmonic
+                    this.playTone(null, freq, 0.35, 'triangle', 0.3);
                     setTimeout(() => {
-                        if (this.initialized && this.ctx) this.playTone(freq * 1.5, 0.15, 'sine', 0.12);
+                        if (this.initialized && this.actx) this.playTone(null, freq * 1.5, 0.15, 'sine', 0.12);
                     }, 30);
                 }
                 playMiss() {
-                    this.playTone(80, 0.3, 'sawtooth', 0.2);
-                    this.playTone(55, 0.4, 'square', 0.15);
+                    this.playTone(null, 80, 0.3, 'sawtooth', 0.2);
+                    this.playTone(null, 55, 0.4, 'square', 0.15);
                 }
                 playUIClick() {
-                    this.playTone(800, 0.08, 'square', 0.1);
-                }
-                playBeat() {
-                    this.playTone(50, 0.15, 'sine', 0.18, false);
+                    this.playTone(null, 800, 0.08, 'square', 0.1);
                 }
                 playWaveComplete() {
-                    const t = this.ctx ? this.ctx.currentTime : 0;
-                    if (!this.initialized || !this.ctx) return;
+                    const t = this.actx ? this.actx.currentTime : 0;
+                    if (!this.initialized || !this.actx) return;
                     [523, 659, 784, 1047].forEach((f, i) => {
-                        const osc = this.ctx.createOscillator();
-                        const gain = this.ctx.createGain();
+                        const osc = this.actx.createOscillator();
+                        const gain = this.actx.createGain();
                         osc.type = 'triangle';
                         osc.frequency.setValueAtTime(f, t + i * 0.12);
                         gain.gain.setValueAtTime(0.25, t + i * 0.12);
                         gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.12 + 0.4);
                         osc.connect(gain);
-                        gain.connect(this.ctx.destination);
+                        gain.connect(this.actx.destination);
                         osc.start(t + i * 0.12);
                         osc.stop(t + i * 0.12 + 0.5);
                     });
+                }
+                // Schedule a full beat sequence (kick, hats, snare, bass, lead)
+                scheduleBeatSequence(time, beatDuration, beatCount) {
+                    if (!this.initialized || !this.actx) return;
+                    const actx = this.actx;
+
+                    // Kick drum (low sine burst)
+                    const kickGain = actx.createGain();
+                    kickGain.gain.setValueAtTime(0.35, time);
+                    kickGain.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
+                    const kickOsc = actx.createOscillator();
+                    kickOsc.type = 'sine';
+                    kickOsc.frequency.setValueAtTime(50, time);
+                    kickOsc.connect(kickGain);
+                    kickGain.connect(actx.destination);
+                    kickOsc.start(time);
+                    kickOsc.stop(time + 0.2);
+
+                    // Hi-hat on off-beat (high frequency noise)
+                    const hatTime = time + beatDuration * 0.5;
+                    if (this.noiseBuffer) {
+                        const hatGain = actx.createGain();
+                        hatGain.gain.setValueAtTime(0.18, hatTime);
+                        hatGain.gain.exponentialRampToValueAtTime(0.001, hatTime + 0.06);
+                        const hatSource = actx.createBufferSource();
+                        hatSource.buffer = this.noiseBuffer;
+                        const hatFilter = actx.createBiquadFilter();
+                        hatFilter.type = 'highpass';
+                        hatFilter.frequency.setValueAtTime(5000, hatTime);
+                        hatSource.connect(hatFilter);
+                        hatFilter.connect(hatGain);
+                        hatGain.connect(actx.destination);
+                        hatSource.start(hatTime);
+                        hatSource.stop(hatTime + 0.06);
+                    }
+
+                    // Snare on every second beat (backbeat)
+                    if (beatCount % 2 === 1) {
+                        const snareTime = time;
+                        // Snare body tone
+                        const bodyGain = actx.createGain();
+                        bodyGain.gain.setValueAtTime(0.25, snareTime);
+                        bodyGain.gain.exponentialRampToValueAtTime(0.001, snareTime + 0.12);
+                        const bodyOsc = actx.createOscillator();
+                        bodyOsc.type = 'triangle';
+                        bodyOsc.frequency.setValueAtTime(180, snareTime);
+                        bodyOsc.connect(bodyGain);
+                        bodyGain.connect(actx.destination);
+                        bodyOsc.start(snareTime);
+                        bodyOsc.stop(snareTime + 0.15);
+                        // Snare noise component
+                        if (this.noiseBuffer) {
+                            const noiseGain = actx.createGain();
+                            noiseGain.gain.setValueAtTime(0.22, snareTime);
+                            noiseGain.gain.exponentialRampToValueAtTime(0.001, snareTime + 0.08);
+                            const noiseSource = actx.createBufferSource();
+                            noiseSource.buffer = this.noiseBuffer;
+                            noiseSource.connect(noiseGain);
+                            noiseGain.connect(actx.destination);
+                            noiseSource.start(snareTime);
+                            noiseSource.stop(snareTime + 0.1);
+                        }
+                    }
+
+                    // Bass line (triangle wave, every beat, changing notes)
+                    const bassFreqs = [130.81, 164.81, 196.00, 164.81, 146.83, 164.81, 196.00, 220.00];
+                    const bassFreq = bassFreqs[beatCount % bassFreqs.length];
+                    const bassGain = actx.createGain();
+                    bassGain.gain.setValueAtTime(0.3, time);
+                    bassGain.gain.exponentialRampToValueAtTime(0.001, time + 0.5);
+                    const bassOsc = actx.createOscillator();
+                    bassOsc.type = 'triangle';
+                    bassOsc.frequency.setValueAtTime(bassFreq, time);
+                    bassOsc.connect(bassGain);
+                    bassGain.connect(actx.destination);
+                    bassOsc.start(time);
+                    bassOsc.stop(time + 0.55);
+
+                    // Lead melody on beats 0,2,4,... at offset 0.25
+                    const leadFreqs = [523.25, 587.33, 659.25, 587.33, 523.25, 493.88, 440.00, 493.88];
+                    if (beatCount % 2 === 0) {
+                        const leadTime = time + beatDuration * 0.25;
+                        const leadFreq = leadFreqs[beatCount % leadFreqs.length];
+                        const leadGain = actx.createGain();
+                        leadGain.gain.setValueAtTime(0.25, leadTime);
+                        leadGain.gain.exponentialRampToValueAtTime(0.001, leadTime + 0.2);
+                        const leadOsc = actx.createOscillator();
+                        leadOsc.type = 'sine';
+                        leadOsc.frequency.setValueAtTime(leadFreq, leadTime);
+                        leadOsc.connect(leadGain);
+                        leadGain.connect(actx.destination);
+                        leadOsc.start(leadTime);
+                        leadOsc.stop(leadTime + 0.25);
+                    }
                 }
             }
             const audio = new AudioEngine();
@@ -315,6 +423,7 @@
             let judgmentTexts = [];
             let beatTimer = 0;
             let beatInterval = 0.5;
+            let beatCount = 0;
             let healthRegenTimer = 0;
             let comboFlashTimer = 0;
             let waveCompleteDisplay = 0;
@@ -351,6 +460,7 @@
                 patternIndex = 0;
                 beatTimer = 0;
                 beatInterval = 0.5;
+                beatCount = 0;
                 healthRegenTimer = 0;
                 comboFlashTimer = 0;
                 waveCompleteDisplay = 0;
@@ -544,6 +654,7 @@
                     if (key === 'Escape' || key === 'p' || key === 'P') {
                         audio.playUIClick();
                         gameState = STATE.PAUSED;
+                        audio.suspend();
                         return;
                     }
                     if (keyToLane.hasOwnProperty(key)) {
@@ -555,6 +666,7 @@
                     if (key === 'Escape' || key === 'p' || key === 'P') {
                         audio.playUIClick();
                         gameState = STATE.PLAYING;
+                        audio.resume();
                         return;
                     }
                     if (key === 'q' || key === 'Q') {
@@ -631,6 +743,7 @@
                         if (cy > 300 && cy < 500 && cx > 140 && cx < 340) {
                             audio.playUIClick();
                             gameState = STATE.PLAYING;
+                            audio.resume();
                             return;
                         }
                         // Quit button area
@@ -690,6 +803,7 @@
                     if (cy > 300 && cy < 500 && cx > 140 && cx < 340) {
                         audio.playUIClick();
                         gameState = STATE.PLAYING;
+                        audio.resume();
                         return;
                     }
                     if (cy > 500 && cy < 560 && cx > 140 && cx < 340) {
@@ -720,6 +834,7 @@
                 noteSpawnTimer = 0.3;
                 patternIndex = 0;
                 audio.init();
+                audio.resume(); // ensure context is running
             }
 
             // --- Update ---
@@ -759,7 +874,6 @@
 
                 // Update combo flash
                 if (comboFlashTimer > 0) comboFlashTimer -= dt;
-
                 // Update wave complete display
                 if (waveCompleteDisplay > 0) waveCompleteDisplay -= dt;
 
@@ -769,6 +883,7 @@
                         gameState = STATE.PLAYING;
                         noteSpawnTimer = 0.5;
                         notes = [];
+                        audio.resume();
                     }
                     // Still update notes during transition
                     for (const note of notes) {
@@ -791,11 +906,13 @@
                     healthRegenTimer = 0;
                 }
 
-                // Beat timer for background pulse
+                // Beat timer and song sequencer
                 beatTimer += dt;
                 if (beatTimer >= beatInterval) {
                     beatTimer -= beatInterval;
-                    audio.playBeat();
+                    beatCount++;
+                    // Schedule the beat sequence using precise audio timing
+                    audio.scheduleBeatSequence(audio.actx.currentTime, beatInterval, beatCount);
                 }
 
                 // Spawn notes
@@ -1315,9 +1432,13 @@
             document.addEventListener('visibilitychange', () => {
                 if (document.hidden && gameState === STATE.PLAYING) {
                     gameState = STATE.PAUSED;
+                    audio.suspend();
                 }
                 if (!document.hidden) {
                     lastTime = performance.now(); // Reset delta time
+                    if (gameState === STATE.PAUSED) {
+                        // Don't auto-unpause; let user resume manually
+                    }
                 }
             });
 
