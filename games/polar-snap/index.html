@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Polar Snap</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+
+  <div id="hud" class="hud hidden">
+    <div class="brand">POLAR <b>SNAP</b></div>
+    <div class="stat"><span>WAVE</span><strong id="waveValue">1</strong></div>
+    <div class="stat"><span>SCORE</span><strong id="scoreValue">0</strong></div>
+    <div class="health"><span>VITALITY</span><div class="bar"><i id="healthBar"></i></div></div>
+    <button id="pauseButton" class="smallButton">Ⅱ</button>
+  </div>
+
+  <main id="titlePanel" class="panel titlePanel">
+    <div class="eyebrow">A NEON ARCADE SURVIVAL</div>
+    <h1>POLAR<br><em>SNAP</em></h1>
+    <p class="tagline">Point. Snap. Survive the cold.</p>
+    <button id="startButton" class="primaryButton">START RUN</button>
+    <div class="bestLine">BEST RUN <b id="menuBest">WAVE 0 · 0</b></div>
+    <div class="controlsHint">WASD / ARROWS to move · MOUSE / SPACE to snap</div>
+    <button id="soundButton" class="textButton">SOUND: ON</button>
+  </main>
+
+  <main id="pausePanel" class="panel overlayPanel hidden">
+    <div class="eyebrow">RUN PAUSED</div>
+    <h2>Take a breath.</h2>
+    <button id="resumeButton" class="primaryButton">RESUME</button>
+    <button id="pauseMenuButton" class="textButton">QUIT TO MENU</button>
+  </main>
+
+  <main id="upgradePanel" class="panel upgradePanel hidden">
+    <div class="eyebrow">WAVE CLEARED</div>
+    <h2>Choose your edge</h2>
+    <p class="subtext">Your build is permanent for this run.</p>
+    <div id="upgradeChoices" class="upgradeChoices"></div>
+  </main>
+
+  <main id="gameOverPanel" class="panel overlayPanel hidden">
+    <div class="eyebrow danger">SIGNAL LOST</div>
+    <h2>Frozen solid.</h2>
+    <div id="gameOverStats" class="resultStats"></div>
+    <button id="retryButton" class="primaryButton">TRY AGAIN</button>
+    <button id="gameOverMenuButton" class="textButton">MAIN MENU</button>
+  </main>
+
+  <main id="winPanel" class="panel overlayPanel hidden">
+    <div class="eyebrow gold">THE STORM BREAKS</div>
+    <h2>You made it out.</h2>
+    <div id="winStats" class="resultStats"></div>
+    <button id="winRetryButton" class="primaryButton">RUN IT BACK</button>
+    <button id="winMenuButton" class="textButton">MAIN MENU</button>
+  </main>
+
+  <div id="mobileControls" class="mobileControls">
+    <div id="joystick" class="joystick"><div id="joystickKnob"></div></div>
+    <button id="attackButton" class="attackButton">SNAP</button>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
