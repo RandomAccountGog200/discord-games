@@ -916,5 +916,14 @@
     "model": "openai/gpt-5.6-luna",
     "createdAt": "2026-08-05T19:48:10.934Z",
     "updatedAt": "2026-08-05T19:48:10.934Z"
+  },
+  {
+    "slug": "100000-feet-cookie-shark",
+    "title": "100000 Feet: Cookie Shark",
+    "description": "100000 feet in the deep with the cookie shark and ice cream",
+    "creator": "kaipie16",
+    "model": "openai/gpt-5.6-luna",
+    "createdAt": "2026-08-05T19:48:35.604Z",
+    "updatedAt": "2026-08-05T19:48:35.604Z"
   }
 ]
