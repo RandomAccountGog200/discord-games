@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <title>Super Stail Cracker</title>
+  <title>Super Stail Cracker — Co-op</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -12,34 +12,36 @@
 
     <section id="hud" class="hud hidden">
       <div class="hud-left">
-        <div class="brand-small">SUPER STAIL CRACKER</div>
+        <div class="brand-small">SUPER STAIL CRACKER <span>· LOCAL CO-OP</span></div>
         <div class="stat-row"><span>WAVE</span><strong id="wave-value">1</strong><span>SCORE</span><strong id="score-value">0</strong></div>
       </div>
       <div class="hud-center">
-        <div class="health-label"><span>CRUNCH INTEGRITY</span><strong id="hp-value">100 / 100</strong></div>
+        <div class="health-label"><span>CRUNCH INTEGRITY</span><strong id="hp-value">P1 100 · P2 100</strong></div>
         <div class="health-bar"><i id="hp-fill"></i></div>
       </div>
       <div class="hud-right">
         <button id="pause-button" class="icon-button">Ⅱ</button>
-        <div id="dash-status">DASH READY</div>
+        <div id="dash-status">P1 READY · P2 READY</div>
       </div>
     </section>
 
     <section id="menu-screen" class="screen">
       <div class="logo-cracker">✦</div>
-      <p class="eyebrow">THE CRUNCHIEST ARENA SURVIVAL</p>
+      <p class="eyebrow">THE CRUNCHIEST TWO-PLAYER ARENA</p>
       <h1>SUPER <span>STAIL</span><br>CRACKER</h1>
-      <p class="tagline">Break the stale. Keep the crunch.</p>
-      <button id="start-button" class="primary-button">START CRACKING</button>
+      <p class="tagline">Break the stale. Keep the crunch. Together.</p>
+      <button id="start-button" class="primary-button">START CO-OP RUN</button>
       <div class="menu-info">
         <p>BEST RUN <strong id="menu-best">0</strong></p>
-        <p class="controls-copy">WASD / ARROWS move · MOUSE aim · CLICK or SPACE fire · SHIFT dash</p>
+        <p class="controls-copy">P1: WASD · MOUSE + CLICK / SPACE · SHIFT DASH</p>
+        <p class="controls-copy">P2: ARROWS · IJKL AIM · ENTER / NUMPAD 0 · RIGHT SHIFT DASH</p>
+        <p class="controls-copy mobile-copy">MOBILE: TWO JOYSTICKS, FIRE BUTTONS, AND DASH BUTTONS</p>
       </div>
     </section>
 
     <section id="pause-screen" class="screen panel-screen hidden">
       <div class="panel">
-        <p class="eyebrow">CRACKER ON THE COUNTER</p>
+        <p class="eyebrow">CRACKER CREW ON THE COUNTER</p>
         <h2>PAUSED</h2>
         <button id="resume-button" class="primary-button">RESUME</button>
         <button id="pause-restart-button" class="secondary-button">RESTART RUN</button>
@@ -51,7 +53,7 @@
       <div class="upgrade-panel">
         <p class="eyebrow">WAVE CLEARED</p>
         <h2>CHOOSE YOUR CRUNCH</h2>
-        <p class="upgrade-subtitle">One upgrade. Make it count.</p>
+        <p class="upgrade-subtitle">The upgrade helps both crackers.</p>
         <div id="upgrade-cards" class="upgrade-cards"></div>
       </div>
     </section>
@@ -72,8 +74,12 @@
     </section>
 
     <div id="touch-controls" class="touch-controls hidden">
-      <div id="joystick" class="joystick"><div id="joystick-knob"></div></div>
+      <div id="joystick" class="joystick"><b>P1</b><div id="joystick-knob"></div></div>
+      <button id="fire-button" class="fire-touch">FIRE</button>
       <button id="dash-button" class="dash-touch">DASH</button>
+      <div id="joystick-two" class="joystick joystick-two"><b>P2</b><div id="joystick-knob-two"></div></div>
+      <button id="fire-button-two" class="fire-touch fire-touch-two">FIRE</button>
+      <button id="dash-button-two" class="dash-touch dash-touch-two">DASH</button>
     </div>
   </main>
   <script type="module" src="main.js"></script>
