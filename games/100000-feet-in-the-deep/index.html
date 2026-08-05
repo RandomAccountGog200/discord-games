@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>100000 Feet in the Deep</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="game-shell">
+    <canvas id="game-canvas" aria-label="100000 Feet in the Deep game"></canvas>
+
+    <section id="hud" class="hud hidden">
+      <div class="hud-block depth-block">
+        <span class="label">DEPTH</span>
+        <strong id="depth-value">0 FT</strong>
+      </div>
+      <div class="hud-block score-block">
+        <span class="label">COOKIE SCORE</span>
+        <strong id="score-value">0</strong>
+      </div>
+      <div class="hud-block health-block">
+        <span class="label">HULL</span>
+        <div id="health-hearts"></div>
+      </div>
+      <div class="hud-zone" id="zone-value">SUNLIT TRENCH</div>
+      <button id="pause-button" class="small-button">Ⅱ</button>
+      <div id="boss-wrap" class="boss-wrap hidden">
+        <div class="boss-name">ICE CREAM OCTOPUS</div>
+        <div class="boss-track"><div id="boss-fill"></div></div>
+      </div>
+    </section>
+
+    <div id="touch-controls" class="touch-controls hidden">
+      <div class="dpad">
+        <button class="touch-key up" data-control="up">▲</button>
+        <button class="touch-key left" data-control="left">◀</button>
+        <button class="touch-key down" data-control="down">▼</button>
+        <button class="touch-key right" data-control="right">▶</button>
+      </div>
+      <button id="dash-touch" class="dash-key" data-control="dash">DASH</button>
+    </div>
+
+    <section id="menu-screen" class="screen-panel">
+      <div class="eyebrow">A DEEP-SEA COOKIE QUEST</div>
+      <h1>100000<br><span>FEET IN THE DEEP</span></h1>
+      <div class="mascot-row"><span class="cookie-mascot">◉</span><span class="sparkle">✦</span><span class="octo-mascot">♣</span></div>
+      <p class="tagline">Swim farther than any shark has swum.<br>Outwit the Ice Cream Octopus.</p>
+      <button id="start-button" class="main-button">DIVE IN</button>
+      <div class="best-line">BEST DIVE <strong id="menu-best">0 FT</strong></div>
+      <div class="controls-line">WASD / ARROWS to swim · SPACE to dash · P to pause</div>
+    </section>
+
+    <section id="pause-screen" class="screen-panel hidden">
+      <div class="eyebrow">CURRENT SUSPENDED</div>
+      <h2>PAUSED</h2>
+      <p>Even cookies need a breather.</p>
+      <button id="resume-button" class="main-button">RESUME DIVE</button>
+      <button id="pause-menu-button" class="text-button">RETURN TO SURFACE</button>
+    </section>
+
+    <section id="upgrade-screen" class="screen-panel hidden">
+      <div class="eyebrow">ZONE CLEARED</div>
+      <h2>CHOOSE YOUR<br><span>SECRET INGREDIENT</span></h2>
+      <p class="upgrade-prompt">The pressure rises. Pick one upgrade.</p>
+      <div id="upgrade-cards" class="upgrade-cards"></div>
+    </section>
+
+    <section id="gameover-screen" class="screen-panel hidden">
+      <div class="eyebrow">SIGNAL LOST</div>
+      <h2>COOKIE<br><span>CRUSHED</span></h2>
+      <p id="gameover-copy">The deep has claimed another snack.</p>
+      <div class="result-line">DEPTH <strong id="final-depth">0 FT</strong></div>
+      <div class="result-line">SCORE <strong id="final-score">0</strong></div>
+      <div class="result-line best-result">BEST <strong id="final-best">0 FT</strong></div>
+      <button id="retry-button" class="main-button">DIVE AGAIN</button>
+      <button id="gameover-menu-button" class="text-button">MAIN MENU</button>
+    </section>
+
+    <section id="win-screen" class="screen-panel hidden">
+      <div class="eyebrow">THE BOTTOM OF THE WORLD</div>
+      <h2>100000<br><span>FEET DOWN!</span></h2>
+      <p>You defeated the Ice Cream Octopus and became the deepest cookie shark alive.</p>
+      <div class="result-line">COOKIE SCORE <strong id="win-score">0</strong></div>
+      <div class="result-line best-result">BEST DIVE <strong id="win-best">100000 FT</strong></div>
+      <button id="win-button" class="main-button">DIVE AGAIN</button>
+    </section>
+  </main>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
