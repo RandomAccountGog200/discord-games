@@ -952,5 +952,14 @@
     "model": "openai/gpt-5.6-luna",
     "createdAt": "2026-08-05T19:58:49.544Z",
     "updatedAt": "2026-08-05T19:58:49.544Z"
+  },
+  {
+    "slug": "glora",
+    "title": "glora 😱",
+    "description": "glora 😱",
+    "creator": "cheese5332",
+    "model": "openai/gpt-5.6-luna",
+    "createdAt": "2026-08-05T20:04:00.123Z",
+    "updatedAt": "2026-08-05T20:04:00.123Z"
   }
 ]
