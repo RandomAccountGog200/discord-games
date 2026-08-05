@@ -925,5 +925,14 @@
     "model": "openai/gpt-5.6-luna",
     "createdAt": "2026-08-05T19:48:35.604Z",
     "updatedAt": "2026-08-05T19:48:35.604Z"
+  },
+  {
+    "slug": "100-000-feet-deep-cookie-shark-ice-cream",
+    "title": "100,000 Feet Deep - Cookie Shark & Ice Cream Octopus",
+    "description": "100000 feet in the deep with the cookie shark and ice cream octupus",
+    "creator": "kaipie16",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-08-05T19:48:55.486Z",
+    "updatedAt": "2026-08-05T19:48:55.486Z"
   }
 ]
