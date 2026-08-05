@@ -1060,5 +1060,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-08-05T21:22:11.035Z",
     "updatedAt": "2026-08-05T21:22:11.035Z"
+  },
+  {
+    "slug": "captain-jack-sparrow-pirate-adventure",
+    "title": "Captain Jack Sparrow - Pirate Adventure",
+    "description": "jack sparrow",
+    "creator": "mushroomqueen0731_76229",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-08-05T21:24:15.588Z",
+    "updatedAt": "2026-08-05T21:24:15.588Z"
   }
 ]
