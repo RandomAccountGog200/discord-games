@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Dewey vs Brick vs Sheldon</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="game-shell">
+    <canvas id="gameCanvas" width="960" height="600" aria-label="Dewey vs Brick vs Sheldon game"></canvas>
+
+    <section id="menu-screen" class="screen visible">
+      <div class="panel title-panel">
+        <div class="eyebrow">THE GREAT LIBRARY RUMBLE</div>
+        <h1><span>DEWEY</span><br>vs BRICK<br><em>vs SHELDON</em></h1>
+        <p class="tagline">Collect the books. Smash the shelves. Outsmart Sheldon.</p>
+        <button id="start-btn" class="primary">START READING</button>
+        <p class="best-line">BEST SCORE <strong id="menu-best">0</strong></p>
+        <div class="controls-copy">
+          <b>WASD / ARROWS</b> move &nbsp; <b>SPACE</b> dash &nbsp; <b>P</b> pause<br>
+          Click the arena or use the touch buttons to dash toward your pointer.
+        </div>
+      </div>
+    </section>
+
+    <section id="pause-screen" class="screen">
+      <div class="panel compact-panel">
+        <div class="eyebrow">BOOKMARKED</div>
+        <h2>PAUSED</h2>
+        <button id="resume-btn" class="primary">RESUME</button>
+        <button id="pause-restart-btn" class="secondary">RESTART RUN</button>
+        <button id="pause-menu-btn" class="secondary">MAIN MENU</button>
+      </div>
+    </section>
+
+    <section id="upgrade-screen" class="screen">
+      <div class="panel upgrade-panel">
+        <div class="eyebrow">SECTION COMPLETE</div>
+        <h2>CHOOSE YOUR NEXT EDITION</h2>
+        <p class="upgrade-sub">One upgrade. Then the library gets meaner.</p>
+        <div id="upgrade-options" class="upgrade-options">
+          <button class="upgrade-card" data-upgrade="0"></button>
+          <button class="upgrade-card" data-upgrade="1"></button>
+          <button class="upgrade-card" data-upgrade="2"></button>
+        </div>
+      </div>
+    </section>
+
+    <section id="over-screen" class="screen">
+      <div class="panel compact-panel">
+        <div class="eyebrow">THE STACKS HAVE WON</div>
+        <h2>RUN OVER</h2>
+        <p id="over-summary" class="result-text"></p>
+        <button id="over-restart-btn" class="primary">TRY AGAIN</button>
+        <button id="over-menu-btn" class="secondary">MAIN MENU</button>
+      </div>
+    </section>
+
+    <section id="win-screen" class="screen">
+      <div class="panel compact-panel victory-panel">
+        <div class="eyebrow">MASTER OF THE STACKS</div>
+        <h2>DEWEY WINS!</h2>
+        <p id="win-summary" class="result-text"></p>
+        <button id="win-restart-btn" class="primary">PLAY AGAIN</button>
+        <button id="win-menu-btn" class="secondary">MAIN MENU</button>
+      </div>
+    </section>
+
+    <button id="pause-btn" class="pause-button" aria-label="Pause game">Ⅱ</button>
+
+    <div id="touch-controls" aria-hidden="true">
+      <div id="joystick"><div id="joystick-knob"></div></div>
+      <button id="touch-action">DASH</button>
+    </div>
+  </main>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
