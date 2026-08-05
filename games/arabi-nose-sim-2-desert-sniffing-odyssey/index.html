@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Arabi Nose Sim 2 — Desert Sniffing Odyssey</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game"></canvas>
+
+  <div id="hud" class="hidden">
+    <div id="hudTop">
+      <div class="hud-box">SCORE <span id="hudScore">0</span></div>
+      <div class="hud-box">WAVE <span id="hudWave">1</span></div>
+      <div class="hud-box">BEST <span id="hudBest">0</span></div>
+    </div>
+    <div id="hudBars">
+      <div class="bar-label">SNIFF POWER</div>
+      <div class="bar"><div id="barSniff"></div></div>
+      <div class="bar-label">INTEGRITY</div>
+      <div class="bar"><div id="barHp"></div></div>
+    </div>
+    <button id="btnPause" class="mini-btn">II</button>
+  </div>
+
+  <div id="menu" class="overlay">
+    <h1 class="title">ARABI<br>NOSE SIM 2</h1>
+    <div class="subtitle">— Desert Sniffing Odyssey —</div>
+    <div class="nose-art">👃</div>
+    <p class="blurb">You are the legendary Nose of the Dunes. Inhale drifting spice motes to score, dodge sneeze-inducing pollen and sandstorm debris. Survive the waves, upgrade your nostrils.</p>
+    <div id="menuBest" class="best-line">BEST SCORE: 0</div>
+    <button id="btnStart" class="big-btn">START SNIFFING</button>
+    <div class="controls-hint">
+      <b>Desktop:</b> WASD / Arrows to move · <b>SPACE / Click</b> to SNIFF (suck in motes) · P to pause<br>
+      <b>Mobile:</b> Left thumbstick to move · hold SNIFF button
+    </div>
+  </div>
+
+  <div id="upgradeMenu" class="overlay hidden">
+    <h2 class="title2">WAVE CLEARED!</h2>
+    <p class="blurb">The bazaar rewards your nostrils. Choose one upgrade:</p>
+    <div id="upgradeCards"></div>
+  </div>
+
+  <div id="pauseMenu" class="overlay hidden">
+    <h2 class="title2">PAUSED</h2>
+    <button id="btnResume" class="big-btn">RESUME</button>
+    <button id="btnQuit" class="big-btn small">QUIT TO MENU</button>
+  </div>
+
+  <div id="gameOver" class="overlay hidden">
+    <h2 class="title2">THE NOSE HAS FALLEN</h2>
+    <div id="finalScore" class="final-score">0</div>
+    <div id="finalBest" class="best-line"></div>
+    <div id="finalWave" class="best-line"></div>
+    <button id="btnRetry" class="big-btn">SNIFF AGAIN</button>
+    <button id="btnMenu" class="big-btn small">MENU</button>
+  </div>
+
+  <div id="touchUI" class="hidden">
+    <div id="stick"><div id="stickKnob"></div></div>
+    <button id="btnSniff">SNIFF</button>
+  </div>
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>
