@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>EWEIUWEUH — Neon Shepherd</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main id="game-shell">
+    <canvas id="game" width="1000" height="650"></canvas>
+    <div id="hud" class="hud hidden">
+      <div class="hud-left">
+        <div class="brand">EWEIUWEUH</div>
+        <div class="wave-label">WAVE <b id="wave-number">1</b></div>
+      </div>
+      <div class="health-wrap">
+        <div class="health-caption">CORE INTEGRITY <span id="health-text">100 / 100</span></div>
+        <div class="health-bar"><i id="health-fill"></i></div>
+      </div>
+      <div class="score-wrap">
+        <span>SCORE</span><b id="score">0</b>
+      </div>
+      <button id="pause-button" class="icon-button">Ⅱ</button>
+    </div>
+
+    <section id="menu" class="screen">
+      <div class="logo-mark">✦</div>
+      <p class="eyebrow">A SIGNAL FROM THE DEEP</p>
+      <h1>EWEIUWEUH</h1>
+      <p class="subtitle">NEON SHEPHERD</p>
+      <p class="intro">Guide the living star through six hostile waves.<br />Gather echoes. Choose your evolution. Become the signal.</p>
+      <button id="start-button" class="primary-button">BEGIN TRANSMISSION</button>
+      <div class="best-line">BEST SIGNAL <b id="menu-best">0</b></div>
+      <div class="controls-hint">WASD / ARROWS to move · MOUSE to aim · HOLD CLICK / SPACE to fire</div>
+    </section>
+
+    <section id="pause" class="screen hidden">
+      <p class="eyebrow">SIGNAL SUSPENDED</p>
+      <h2>PAUSED</h2>
+      <button id="resume-button" class="primary-button">RESUME</button>
+      <button id="pause-menu-button" class="secondary-button">RETURN TO MENU</button>
+    </section>
+
+    <section id="upgrade" class="screen hidden">
+      <p class="eyebrow">WAVE CLEARED</p>
+      <h2>CHOOSE AN EVOLUTION</h2>
+      <div id="upgrade-cards" class="upgrade-cards"></div>
+      <p class="select-hint">Click a card or press 1, 2, or 3</p>
+    </section>
+
+    <section id="gameover" class="screen hidden">
+      <p class="eyebrow">SIGNAL LOST</p>
+      <h2>THE DARKNESS REMEMBERS</h2>
+      <div class="result"><span>SCORE</span><b id="final-score">0</b></div>
+      <div class="result best-result"><span>BEST</span><b id="final-best">0</b></div>
+      <button id="retry-button" class="primary-button">RETRY SIGNAL</button>
+      <button id="gameover-menu-button" class="secondary-button">MENU</button>
+    </section>
+
+    <section id="win" class="screen hidden">
+      <p class="eyebrow">TRANSMISSION COMPLETE</p>
+      <h2>YOU ARE THE EWEIUWEUH</h2>
+      <p class="win-copy">Six waves dissolved. The void has learned your name.</p>
+      <div class="result"><span>SCORE</span><b id="win-score">0</b></div>
+      <div class="result best-result"><span>BEST</span><b id="win-best">0</b></div>
+      <button id="win-retry-button" class="primary-button">SEND ANOTHER SIGNAL</button>
+      <button id="win-menu-button" class="secondary-button">MENU</button>
+    </section>
+  </main>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
