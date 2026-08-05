@@ -844,5 +844,14 @@
     "model": "deepseek/deepseek-v4-flash-0731",
     "createdAt": "2026-08-05T05:39:09.675Z",
     "updatedAt": "2026-08-05T05:39:09.675Z"
+  },
+  {
+    "slug": "sushi-restaurant-bad-things-happen",
+    "title": "Sushi Restaurant: Bad Things Happen",
+    "description": "sushi resturant but then the bad things happen'",
+    "creator": "kaipie16",
+    "model": "deepseek/deepseek-v4-flash-0731",
+    "createdAt": "2026-08-05T19:16:23.673Z",
+    "updatedAt": "2026-08-05T19:16:23.673Z"
   }
 ]
