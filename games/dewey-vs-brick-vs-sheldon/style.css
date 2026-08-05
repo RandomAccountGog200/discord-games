@@ -1,0 +1,61 @@
+@import url('data:text/css,');
+:root {
+  color-scheme: dark;
+  --ink: #eaf7ff;
+  --muted: #8aa7bb;
+  --cyan: #4de5ff;
+  --blue: #3978ff;
+  --pink: #ff5c9b;
+  --panel: rgba(9, 18, 43, .94);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: #050916; font-family: Arial, Helvetica, sans-serif; color: var(--ink); }
+body { display: grid; place-items: center; overflow: hidden; }
+#game-shell { width: min(100vw, 1100px); height: min(100vh, 700px); position: relative; display: grid; place-items: center; }
+canvas { width: 100%; height: auto; max-height: 100%; aspect-ratio: 16 / 10; border: 1px solid #244169; border-radius: 18px; box-shadow: 0 0 55px rgba(31, 107, 255, .22), inset 0 0 40px #050916; background: #08112a; touch-action: none; }
+.screen { position: absolute; inset: 0; display: none; place-items: center; padding: 18px; background: rgba(3, 7, 20, .48); border-radius: 18px; }
+.screen.visible { display: grid; }
+.panel { width: min(720px, 94%); padding: 34px 40px; text-align: center; border: 1px solid rgba(98, 203, 255, .34); border-radius: 22px; background: linear-gradient(145deg, rgba(14, 29, 65, .97), rgba(7, 13, 35, .96)); box-shadow: 0 20px 80px rgba(0, 0, 0, .5), 0 0 35px rgba(52, 153, 255, .14); animation: panel-in .35s ease-out; }
+.title-panel { max-width: 610px; }
+.compact-panel { width: min(400px, 92%); padding: 32px; }
+.upgrade-panel { max-width: 900px; }
+.eyebrow { color: var(--cyan); font-size: 11px; font-weight: 800; letter-spacing: .24em; margin-bottom: 10px; }
+h1, h2 { margin: 0; line-height: .91; letter-spacing: .04em; text-shadow: 0 0 22px rgba(77, 229, 255, .24); }
+h1 { font-size: clamp(42px, 8vw, 76px); }
+h1 span { color: var(--cyan); } h1 em { color: var(--pink); font-style: normal; }
+h2 { font-size: clamp(32px, 5vw, 48px); color: #fff; }
+.tagline { color: #b3c9dc; margin: 22px 0 25px; font-size: 15px; }
+.best-line { color: var(--muted); font-size: 12px; letter-spacing: .17em; margin: 20px 0 0; }
+.best-line strong { color: #fff; font-size: 18px; margin-left: 8px; }
+.controls-copy { border-top: 1px solid #263b62; margin-top: 20px; padding-top: 15px; color: #7694ad; font-size: 11px; line-height: 1.8; }
+.controls-copy b { color: #d6efff; }
+button { font: inherit; color: var(--ink); cursor: pointer; border: 0; }
+.primary, .secondary { display: block; width: 100%; border-radius: 10px; padding: 14px 18px; margin-top: 11px; font-size: 13px; font-weight: 800; letter-spacing: .12em; transition: transform .15s, filter .15s, background .15s; }
+.primary { background: linear-gradient(100deg, #2374ff, #14cce8); box-shadow: 0 7px 22px rgba(29, 156, 255, .3); }
+.secondary { background: #172846; color: #a9c2d7; }
+.primary:hover, .secondary:hover, .upgrade-card:hover { transform: translateY(-2px); filter: brightness(1.18); }
+.result-text { color: #b4ccdd; line-height: 1.6; margin: 18px 0; }
+.upgrade-sub { margin: 10px 0 22px; color: var(--muted); }
+.upgrade-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 13px; }
+.upgrade-card { min-height: 160px; padding: 18px 13px; border: 1px solid #2a4e78; border-radius: 14px; background: linear-gradient(145deg, #102748, #0b1733); text-align: left; transition: transform .15s, filter .15s; }
+.upgrade-card .card-icon { display: block; color: var(--cyan); font-size: 30px; margin-bottom: 12px; }
+.upgrade-card strong { display: block; color: white; font-size: 15px; margin-bottom: 10px; }
+.upgrade-card small { display: block; color: #87a6ba; line-height: 1.45; font-size: 12px; }
+.pause-button { display: none; position: absolute; right: 20px; top: 18px; width: 38px; height: 35px; border-radius: 9px; background: rgba(10, 26, 53, .85); color: #b8dbed; border: 1px solid #31577f; font-size: 19px; z-index: 4; }
+#touch-controls { display: none; position: absolute; inset: auto 20px 18px; height: 126px; pointer-events: none; }
+#joystick { width: 112px; height: 112px; border-radius: 50%; border: 2px solid rgba(109, 200, 235, .38); background: rgba(22, 57, 90, .42); pointer-events: auto; position: absolute; left: 0; bottom: 0; }
+#joystick-knob { width: 46px; height: 46px; position: absolute; left: 31px; top: 31px; border-radius: 50%; background: rgba(77, 229, 255, .65); box-shadow: 0 0 18px #4de5ff; }
+#touch-action { pointer-events: auto; position: absolute; right: 0; bottom: 11px; width: 94px; height: 94px; border-radius: 50%; background: rgba(255, 92, 155, .78); border: 3px solid rgba(255, 220, 236, .65); box-shadow: 0 0 24px rgba(255, 92, 155, .5); font-size: 12px; font-weight: 900; }
+@keyframes panel-in { from { opacity: 0; transform: translateY(12px) scale(.98); } to { opacity: 1; transform: none; } }
+@media (pointer: coarse), (max-width: 700px) {
+  body { align-items: start; padding-top: 8px; }
+  #game-shell { width: 100vw; height: auto; }
+  canvas { border-radius: 12px; width: 100vw; }
+  #touch-controls { display: block; }
+  .upgrade-options { grid-template-columns: 1fr; gap: 8px; }
+  .upgrade-card { min-height: 88px; padding: 12px 15px 12px 58px; position: relative; }
+  .upgrade-card .card-icon { position: absolute; left: 16px; top: 22px; }
+  .panel { padding: 25px 21px; }
+  .title-panel { margin-bottom: 12px; }
+  .controls-copy { display: none; }
+}
