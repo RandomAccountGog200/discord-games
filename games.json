@@ -835,5 +835,14 @@
     "model": "moonshotai/kimi-k3",
     "createdAt": "2026-08-05T05:34:23.643Z",
     "updatedAt": "2026-08-05T05:34:23.643Z"
+  },
+  {
+    "slug": "arabi-nose-sim",
+    "title": "Arabi Nose Sim",
+    "description": "arabi nose sim",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-flash-0731",
+    "createdAt": "2026-08-05T05:39:09.675Z",
+    "updatedAt": "2026-08-05T05:39:09.675Z"
   }
 ]
