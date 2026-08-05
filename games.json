@@ -792,15 +792,6 @@
     "updatedAt": "2026-08-04T23:59:05.035Z"
   },
   {
-    "slug": "zz-race-1",
-    "title": "Race Test 1",
-    "description": "concurrency test",
-    "creator": "verify",
-    "model": "test",
-    "createdAt": "2026-08-05T04:15:13.782Z",
-    "updatedAt": "2026-08-05T04:15:13.782Z"
-  },
-  {
     "slug": "zz-race-2",
     "title": "Race Test 2",
     "description": "concurrency test",
