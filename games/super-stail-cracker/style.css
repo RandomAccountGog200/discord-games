@@ -1,12 +1,5 @@
-@import url('data:text/css,');
 :root {
-  --ink: #241b31;
-  --cream: #fff4d2;
-  --gold: #ffc857;
-  --orange: #ef8354;
-  --pink: #ef476f;
-  --blue: #4cc9f0;
-  --panel: rgba(27, 20, 47, .91);
+  --ink: #241b31; --cream: #fff4d2; --gold: #ffc857; --orange: #ef8354; --pink: #ef476f; --blue: #4cc9f0; --panel: rgba(27, 20, 47, .91);
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #17142d; font-family: Arial, Helvetica, sans-serif; color: var(--cream); }
@@ -32,7 +25,8 @@ button { font: inherit; color: inherit; cursor: pointer; border: 0; touch-action
 .text-button:hover { color: white; }
 .menu-info { margin-top: 37px; color: #a899b8; font-size: 11px; letter-spacing: .16em; }
 .menu-info strong { color: var(--gold); font-size: 16px; margin-left: 7px; }
-.controls-copy { font-size: 10px; letter-spacing: .06em; opacity: .8; }
+.controls-copy { font-size: 10px; letter-spacing: .05em; opacity: .8; line-height: 1.45; }
+.mobile-copy { color: var(--blue); }
 .panel-screen { background: rgba(13, 11, 29, .67); backdrop-filter: blur(6px); }
 .panel, .upgrade-panel { background: var(--panel); border: 1px solid rgba(255, 200, 87, .35); border-radius: 16px; padding: 38px; box-shadow: 0 20px 80px rgba(0,0,0,.4); }
 .panel { width: min(390px, calc(100% - 34px)); }
@@ -52,19 +46,35 @@ button { font: inherit; color: inherit; cursor: pointer; border: 0; touch-action
 .result-stats strong { color: var(--gold); font-size: 25px; }
 .hud { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: flex-start; justify-content: space-between; padding: 18px 23px; pointer-events: none; text-shadow: 0 2px 3px rgba(0,0,0,.4); }
 .brand-small { color: var(--orange); letter-spacing: .14em; font-weight: bold; font-size: 11px; }
+.brand-small span { color: var(--blue); font-size: 9px; }
 .stat-row { display: flex; gap: 10px; align-items: baseline; margin-top: 8px; font-size: 10px; letter-spacing: .12em; color: #b9abbe; }
 .stat-row strong { color: var(--cream); font-size: 17px; margin-right: 9px; }
-.hud-center { width: min(280px, 32vw); margin-top: 4px; }
+.hud-center { width: min(310px, 32vw); margin-top: 4px; }
 .health-label { display: flex; justify-content: space-between; font-size: 10px; letter-spacing: .1em; color: #d9cbd7; margin-bottom: 6px; }
 .health-label strong { color: var(--gold); }
 .health-bar { height: 9px; background: rgba(0,0,0,.45); border-radius: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,.15); }
 .health-bar i { display: block; width: 100%; height: 100%; background: linear-gradient(90deg, var(--pink), var(--gold)); transition: width .2s; }
 .hud-right { display: flex; align-items: center; gap: 15px; pointer-events: auto; }
-#dash-status { color: var(--blue); font-size: 10px; letter-spacing: .1em; font-weight: bold; }
+#dash-status { color: var(--blue); font-size: 10px; letter-spacing: .08em; font-weight: bold; }
 .icon-button { width: 36px; height: 32px; border-radius: 6px; background: rgba(31, 23, 49, .8); border: 1px solid rgba(255,255,255,.25); color: var(--gold); font-weight: bold; font-size: 16px; }
 .touch-controls { position: absolute; inset: 0; pointer-events: none; }
-.joystick { position: absolute; left: 22px; bottom: 24px; width: 112px; height: 112px; border-radius: 50%; background: rgba(255,255,255,.08); border: 2px solid rgba(255,255,255,.18); pointer-events: auto; }
-#joystick-knob { position: absolute; left: 31px; top: 31px; width: 46px; height: 46px; border-radius: 50%; background: rgba(255,200,87,.72); box-shadow: 0 0 16px rgba(255,200,87,.3); }
-.dash-touch { pointer-events: auto; position: absolute; right: 25px; bottom: 40px; width: 76px; height: 76px; border-radius: 50%; background: rgba(76,201,240,.2); border: 2px solid rgba(76,201,240,.65); color: var(--blue); font-size: 11px; font-weight: bold; }
-@media (max-width: 650px) { .hud { padding: 12px; } .brand-small { font-size: 8px; } .hud-center { position: absolute; left: 50%; transform: translateX(-50%); top: 61px; width: 45vw; } .hud-right { gap: 7px; } #dash-status { display: none; } .upgrade-cards { grid-template-columns: 1fr; gap: 8px; } .upgrade-card { min-height: 0; padding: 12px; display: grid; grid-template-columns: 36px 1fr; column-gap: 10px; align-items: center; } .upgrade-card .upgrade-icon { grid-row: span 2; } .upgrade-card h3 { margin: 0 0 3px; } .upgrade-card p { font-size: 11px; } .upgrade-panel { padding: 22px 14px; } }
+.joystick { position: absolute; left: 22px; bottom: 24px; width: 112px; height: 112px; border-radius: 50%; background: rgba(255,255,255,.08); border: 2px solid rgba(255,255,255,.18); pointer-events: auto; display: grid; place-items: center; }
+.joystick b { position: absolute; top: 8px; color: rgba(255,255,255,.45); font-size: 9px; letter-spacing: .1em; }
+#joystick-knob, #joystick-knob-two { position: absolute; left: 31px; top: 31px; width: 46px; height: 46px; border-radius: 50%; background: rgba(255,200,87,.72); box-shadow: 0 0 16px rgba(255,200,87,.3); }
+#joystick-knob-two { background: rgba(76,201,240,.72); box-shadow: 0 0 16px rgba(76,201,240,.3); }
+.joystick-two { left: 158px; }
+.fire-touch, .dash-touch { pointer-events: auto; position: absolute; border-radius: 50%; font-size: 10px; font-weight: bold; }
+.fire-touch { right: 116px; bottom: 27px; width: 72px; height: 72px; background: rgba(255,200,87,.2); border: 2px solid rgba(255,200,87,.7); color: var(--gold); }
+.dash-touch { right: 25px; bottom: 27px; width: 76px; height: 76px; background: rgba(239,71,111,.2); border: 2px solid rgba(239,71,111,.65); color: var(--pink); }
+.fire-touch-two { right: 116px; bottom: 112px; background: rgba(76,201,240,.2); border-color: rgba(76,201,240,.7); color: var(--blue); }
+.dash-touch-two { right: 25px; bottom: 112px; background: rgba(155,93,229,.2); border-color: rgba(155,93,229,.7); color: #c095ff; }
+@media (max-width: 650px) {
+  .hud { padding: 12px; } .brand-small { font-size: 8px; } .brand-small span { font-size: 7px; } .hud-center { position: absolute; left: 50%; transform: translateX(-50%); top: 61px; width: 45vw; } .hud-right { gap: 7px; } #dash-status { display: none; }
+  .upgrade-cards { grid-template-columns: 1fr; gap: 8px; } .upgrade-card { min-height: 0; padding: 12px; display: grid; grid-template-columns: 36px 1fr; column-gap: 10px; align-items: center; } .upgrade-card .upgrade-icon { grid-row: span 2; } .upgrade-card h3 { margin: 0 0 3px; } .upgrade-card p { font-size: 11px; } .upgrade-panel { padding: 22px 14px; }
+  .menu-info { margin-top: 25px; } .controls-copy { font-size: 8px; }
+}
+@media (max-width: 430px) {
+  .joystick { left: 12px; width: 92px; height: 92px; } .joystick-two { left: 115px; } #joystick-knob, #joystick-knob-two { left: 24px; top: 24px; width: 40px; height: 40px; }
+  .fire-touch { right: 93px; width: 62px; height: 62px; } .dash-touch { right: 18px; width: 66px; height: 66px; } .fire-touch-two { right: 93px; bottom: 101px; } .dash-touch-two { right: 18px; bottom: 101px; }
+}
 @media (pointer: fine) { .touch-controls { display: none !important; } }
