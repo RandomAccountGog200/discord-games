@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Destroy Milo's Girlfriends 8</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- Touch buttons -->
+<button id="btn-dash" class="touch-btn">DASH</button>
+<button id="btn-pause" class="touch-btn">II</button>
+
+<!-- Menu -->
+<div id="overlay-menu" class="overlay">
+  <div class="panel">
+    <h1 class="title">DESTROY<br>MILO'S<br>GIRLFRIENDS <span class="num">8</span></h1>
+    <p class="tagline">They all found out about each other. Survive 8 waves of heartbreak.</p>
+    <div class="best">BEST SCORE: <span id="menu-best">0</span></div>
+    <button id="btn-start" class="btn big">💔 START</button>
+    <div class="controls-info">
+      <b>Desktop:</b> WASD move · Mouse aim · Click shoot · Space dash · Esc pause<br>
+      <b>Mobile:</b> Left stick move · Right stick aim &amp; fire · DASH button
+    </div>
+  </div>
+</div>
+
+<!-- Pause -->
+<div id="overlay-pause" class="overlay hidden">
+  <div class="panel">
+    <h2>PAUSED</h2>
+    <button id="btn-resume" class="btn">RESUME</button>
+    <button id="btn-restart-p" class="btn">RESTART</button>
+    <button id="btn-menu-p" class="btn dim">MAIN MENU</button>
+  </div>
+</div>
+
+<!-- Game Over -->
+<div id="overlay-over" class="overlay hidden">
+  <div class="panel">
+    <h2 id="over-title">GAME OVER</h2>
+    <p id="over-flavor" class="tagline"></p>
+    <div class="score-line">SCORE: <span id="over-score">0</span></div>
+    <div class="score-line best">BEST: <span id="over-best">0</span> <span id="new-best" class="hidden">★ NEW BEST!</span></div>
+    <button id="btn-restart" class="btn big">TRY AGAIN</button>
+    <button id="btn-menu-o" class="btn dim">MAIN MENU</button>
+  </div>
+</div>
+
+<!-- Upgrade -->
+<div id="overlay-upgrade" class="overlay hidden">
+  <div class="panel wide">
+    <h2>WAVE CLEARED!</h2>
+    <p class="tagline">Choose a breakup gift:</p>
+    <div id="upgrade-cards" class="cards"></div>
+  </div>
+</div>
+
+<script type="module" src="main.js"></script>
+</body>
+</html>
