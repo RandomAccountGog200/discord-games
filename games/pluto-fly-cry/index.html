@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Pluto Fly & Cry</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main id="game-shell">
+    <canvas id="game-canvas" aria-label="Pluto Fly and Cry game"></canvas>
+
+    <section id="hud" class="hud hidden">
+      <div class="hud-left">
+        <div class="stat"><span class="label">SCORE</span><strong id="score-value">0</strong></div>
+        <div class="stat"><span class="label">BEST</span><strong id="best-value">0</strong></div>
+        <div class="stat"><span class="label">SECTOR</span><strong id="stage-value">1 / 5</strong></div>
+      </div>
+      <div class="hud-center">
+        <span class="cry-label">CRYOMETER</span>
+        <div class="meter"><div id="meter-fill"></div></div>
+        <span id="combo-value" class="combo">COMBO x1</span>
+      </div>
+      <div class="hud-right">
+        <button id="cry-button" class="action-button cry-button" disabled>CRY <span>C</span></button>
+        <button id="pause-button" class="icon-button" aria-label="Pause">Ⅱ</button>
+      </div>
+      <button id="thrust-button" class="touch-button">FLY</button>
+    </section>
+
+    <section id="title-screen" class="screen active">
+      <div class="title-card">
+        <div class="planet-mark"><span></span></div>
+        <p class="eyebrow">A TINY PLANET. A VERY BIG FEELING.</p>
+        <h1>PLUTO<br><em>FLY &amp; CRY</em></h1>
+        <p class="subtitle">Drift through the dark, gather starlight,<br />and let the universe know how you feel.</p>
+        <button id="start-button" class="primary-button">BEGIN THE JOURNEY</button>
+        <div class="best-line">BEST JOURNEY <strong id="menu-best">0</strong></div>
+        <p class="controls-line"><b>SPACE / HOLD</b> Fly &nbsp;·&nbsp; <b>C</b> Cry &nbsp;·&nbsp; <b>ESC</b> Pause</p>
+      </div>
+    </section>
+
+    <section id="pause-screen" class="screen hidden">
+      <div class="panel compact-panel">
+        <p class="eyebrow">THE STARS CAN WAIT</p>
+        <h2>PAUSED</h2>
+        <p class="panel-copy">Pluto is taking a small cosmic breath.</p>
+        <button id="resume-button" class="primary-button">RESUME FLIGHT</button>
+        <button id="pause-menu-button" class="secondary-button">RETURN TO TITLE</button>
+      </div>
+    </section>
+
+    <section id="upgrade-screen" class="screen hidden">
+      <div class="panel upgrade-panel">
+        <p class="eyebrow" id="upgrade-eyebrow">SECTOR CLEARED</p>
+        <h2>CHOOSE YOUR<br /><em>EVOLUTION</em></h2>
+        <p class="panel-copy">Every feeling leaves Pluto stronger. Pick one gift for the next sector.</p>
+        <div id="upgrade-options" class="upgrade-options"></div>
+        <p class="key-hint">Press <b>1</b>, <b>2</b>, or <b>3</b> to choose</p>
+      </div>
+    </section>
+
+    <section id="gameover-screen" class="screen hidden">
+      <div class="panel result-panel">
+        <div id="result-orbit" class="result-orbit">✦</div>
+        <p class="eyebrow" id="result-eyebrow">THE DARK GOT HEAVY</p>
+        <h2 id="result-title">JOURNEY ENDED</h2>
+        <div class="result-score"><span>SCORE</span><strong id="final-score">0</strong></div>
+        <div class="result-best">BEST <strong id="final-best">0</strong></div>
+        <button id="retry-button" class="primary-button">TRY AGAIN</button>
+        <button id="result-menu-button" class="secondary-button">RETURN TO TITLE</button>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
