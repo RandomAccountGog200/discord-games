@@ -961,5 +961,14 @@
     "model": "openai/gpt-5.6-luna",
     "createdAt": "2026-08-05T20:04:00.123Z",
     "updatedAt": "2026-08-05T20:04:00.123Z"
+  },
+  {
+    "slug": "105-number-merge-puzzle",
+    "title": "105 - Number Merge Puzzle",
+    "description": "105 give me feedback",
+    "creator": "cheese5332",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-08-05T20:05:08.258Z",
+    "updatedAt": "2026-08-05T20:05:08.258Z"
   }
 ]
