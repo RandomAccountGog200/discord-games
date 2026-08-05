@@ -1,0 +1,1447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Turkey Hunt - Kill the Turkey Before It Grows!</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a0a00;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            touch-action: manipulation;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            font-family: 'Georgia', 'Times New Roman', serif;
+        }
+        canvas {
+            display: block;
+            max-width: 100vw;
+            max-height: 100vh;
+            cursor: crosshair;
+            border-radius: 4px;
+            box-shadow: 0 0 40px rgba(255, 140, 0, 0.3), 0 0 80px rgba(139, 69, 19, 0.2);
+            image-rendering: auto;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+
+            const VW = 800;
+            const VH = 600;
+            const KNIFE_SPEED = 650;
+            const KNIFE_COOLDOWN = 0.38;
+            const PLAYER_SPEED = 280;
+            const TURKEY_WANDER_SPEED = 100;
+            const TURKEY_SEEK_SPEED = 160;
+            const TURKEY_FLEE_SPEED = 240;
+            const TURKEY_FLEE_DURATION = 1.3;
+            const WORM_SPAWN_INTERVAL_BASE = 2.8;
+            const MAX_WORMS_BASE = 5;
+            const TURKEY_BASE_HP = 55;
+            const KNIFE_DAMAGE = 28;
+            const TURKEY_SCALE_PER_WORM = 0.13;
+            const TURKEY_MAX_SCALE = 3.4;
+            const PLAYER_Y = 490;
+            const PLAYER_MIN_X = 40;
+            const PLAYER_MAX_X = 760;
+            const TURKEY_MIN_Y = 60;
+            const TURKEY_MAX_Y = 370;
+            const TURKEY_MIN_X = 60;
+            const TURKEY_MAX_X = 740;
+
+            let scale = 1;
+            let offsetX = 0;
+            let offsetY = 0;
+            let canvasWidth = VW;
+            let canvasHeight = VH;
+
+            function resize() {
+                const w = window.innerWidth;
+                const h = window.innerHeight;
+                const aspect = VW / VH;
+                if (w / h > aspect) {
+                    canvasHeight = Math.min(h, VH * 1.5);
+                    canvasWidth = canvasHeight * aspect;
+                } else {
+                    canvasWidth = Math.min(w, VW * 1.5);
+                    canvasHeight = canvasWidth / aspect;
+                }
+                canvas.style.width = canvasWidth + 'px';
+                canvas.style.height = canvasHeight + 'px';
+                canvas.width = VW;
+                canvas.height = VH;
+                scale = Math.min(canvasWidth / VW, canvasHeight / VH);
+                offsetX = (canvasWidth - VW * scale) / 2;
+                offsetY = (canvasHeight - VH * scale) / 2;
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            // ─── AUDIO ENGINE ────────────────────────────
+            class AudioEngine {
+                constructor() {
+                    this.ctx = null;
+                    this.initialized = false;
+                    this.musicGain = null;
+                    this.musicOscillators = [];
+                    this.musicTimeout = null;
+                }
+                ensure() {
+                    if (!this.initialized) {
+                        try {
+                            this.ctx = new(window.AudioContext || window.webkitAudioContext)();
+                            this.initialized = true;
+                        } catch (e) {
+                            return false;
+                        }
+                    }
+                    if (this.ctx.state === 'suspended') {
+                        this.ctx.resume();
+                    }
+                    return true;
+                }
+                playTone(freq, duration, type = 'sine', vol = 0.15, rampDown = true) {
+                    if (!this.ensure()) return;
+                    const t = this.ctx.currentTime;
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, t);
+                    gain.gain.setValueAtTime(vol, t);
+                    if (rampDown) {
+                        gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    }
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start(t);
+                    osc.stop(t + duration);
+                }
+                playNoise(duration, vol = 0.08, filterFreq = 2000) {
+                    if (!this.ensure()) return;
+                    const t = this.ctx.currentTime;
+                    const bufferSize = Math.floor(this.ctx.sampleRate * duration);
+                    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                    const data = buffer.getChannelData(0);
+                    for (let i = 0; i < bufferSize; i++) {
+                        data[i] = (Math.random() * 2 - 1);
+                    }
+                    const source = this.ctx.createBufferSource();
+                    source.buffer = buffer;
+                    const filter = this.ctx.createBiquadFilter();
+                    filter.type = 'bandpass';
+                    filter.frequency.setValueAtTime(filterFreq, t);
+                    filter.Q.setValueAtTime(2, t);
+                    const gain = this.ctx.createGain();
+                    gain.gain.setValueAtTime(vol, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+                    source.connect(filter);
+                    filter.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    source.start(t);
+                    source.stop(t + duration);
+                }
+                whoosh() {
+                    if (!this.ensure()) return;
+                    const t = this.ctx.currentTime;
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(600, t);
+                    osc.frequency.exponentialRampToValueAtTime(200, t + 0.15);
+                    gain.gain.setValueAtTime(0.06, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start(t);
+                    osc.stop(t + 0.18);
+                    this.playNoise(0.1, 0.03, 3000);
+                }
+                impact() {
+                    if (!this.ensure()) return;
+                    const t = this.ctx.currentTime;
+                    this.playTone(80, 0.12, 'triangle', 0.2, true);
+                    this.playTone(50, 0.18, 'sine', 0.25, true);
+                    this.playNoise(0.08, 0.06, 800);
+                }
+                gobble() {
+                    if (!this.ensure()) return;
+                    const t = this.ctx.currentTime;
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(300, t);
+                    osc.frequency.setValueAtTime(350, t + 0.04);
+                    osc.frequency.setValueAtTime(280, t + 0.08);
+                    osc.frequency.setValueAtTime(320, t + 0.12);
+                    osc.frequency.setValueAtTime(260, t + 0.16);
+                    gain.gain.setValueAtTime(0.08, t);
+                    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start(t);
+                    osc.stop(t + 0.22);
+                }
+                slurp() {
+                    if (!this.ensure()) return;
+                    const t = this.ctx.currentTime;
+                    this.playTone(500, 0.08, 'sine', 0.06, true);
+                    this.playTone(700, 0.06, 'sine', 0.05, true);
+                    this.playNoise(0.06, 0.03, 1500);
+                }
+                waveComplete() {
+                    if (!this.ensure()) return;
+                    const notes = [523, 659, 784, 1047];
+                    notes.forEach((freq, i) => {
+                        setTimeout(() => {
+                            this.playTone(freq, 0.2, 'triangle', 0.1, true);
+                        }, i * 100);
+                    });
+                }
+                gameOver() {
+                    if (!this.ensure()) return;
+                    const notes = [400, 350, 300, 200, 150];
+                    notes.forEach((freq, i) => {
+                        setTimeout(() => {
+                            this.playTone(freq, 0.25, 'sawtooth', 0.1, true);
+                        }, i * 120);
+                    });
+                }
+                clickSound() {
+                    this.playTone(800, 0.04, 'square', 0.04, true);
+                }
+                startMusic() {
+                    if (!this.ensure() || this.musicTimeout) return;
+                    this.musicGain = this.ctx.createGain();
+                    this.musicGain.gain.setValueAtTime(0.025, this.ctx.currentTime);
+                    this.musicGain.connect(this.ctx.destination);
+                    this.playMusicLoop();
+                }
+                playMusicLoop() {
+                    if (!this.initialized || !this.musicGain) return;
+                    const notes = [262, 330, 392, 330, 294, 330, 262, 220, 262, 294, 330, 392, 440, 392, 330, 294];
+                    const noteLen = 0.35;
+                    const totalLen = notes.length * noteLen;
+                    const playNote = (index) => {
+                        if (!this.musicGain || !this.initialized) return;
+                        const t = this.ctx.currentTime;
+                        const osc = this.ctx.createOscillator();
+                        const g = this.ctx.createGain();
+                        osc.type = 'triangle';
+                        osc.frequency.setValueAtTime(notes[index], t);
+                        g.gain.setValueAtTime(0.06, t);
+                        g.gain.exponentialRampToValueAtTime(0.001, t + noteLen * 0.7);
+                        osc.connect(g);
+                        g.connect(this.musicGain);
+                        osc.start(t);
+                        osc.stop(t + noteLen * 0.75);
+                        this.musicOscillators.push(osc);
+                        if (this.musicOscillators.length > 30) {
+                            this.musicOscillators.shift();
+                        }
+                    };
+                    const schedule = () => {
+                        if (!this.musicGain) return;
+                        for (let i = 0; i < notes.length; i++) {
+                            const delay = i * noteLen * 1000;
+                            this.musicTimeout = setTimeout(() => playNote(i), delay);
+                        }
+                        this.musicTimeout = setTimeout(() => {
+                            if (this.musicGain) schedule();
+                        }, totalLen * 1000);
+                    };
+                    schedule();
+                }
+                stopMusic() {
+                    if (this.musicTimeout) {
+                        clearTimeout(this.musicTimeout);
+                        this.musicTimeout = null;
+                    }
+                    this.musicOscillators.forEach(o => {
+                        try { o.stop(); } catch (e) {}
+                    });
+                    this.musicOscillators = [];
+                    if (this.musicGain) {
+                        this.musicGain.gain.setValueAtTime(0, this.ctx ? this.ctx.currentTime : 0);
+                        this.musicGain = null;
+                    }
+                }
+            }
+            const audio = new AudioEngine();
+
+            // ─── PARTICLE SYSTEM ────────────────────────
+            class Particle {
+                constructor(x, y, vx, vy, life, color, size = 3) {
+                    this.x = x;
+                    this.y = y;
+                    this.vx = vx;
+                    this.vy = vy;
+                    this.life = life;
+                    this.maxLife = life;
+                    this.color = color;
+                    this.size = size;
+                    this.alive = true;
+                }
+                update(dt) {
+                    this.x += this.vx * dt;
+                    this.y += this.vy * dt;
+                    this.vy += 200 * dt;
+                    this.life -= dt;
+                    if (this.life <= 0) this.alive = false;
+                }
+                draw(ctx) {
+                    const alpha = Math.max(0, this.life / this.maxLife);
+                    const s = this.size * (0.5 + 0.5 * alpha);
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = this.color;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, s, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+                }
+            }
+            class ParticleSystem {
+                constructor() { this.particles = []; }
+                emit(x, y, count, color, spread = 150, life = 0.6, size = 3) {
+                    for (let i = 0; i < count; i++) {
+                        const angle = Math.random() * Math.PI * 2;
+                        const speed = Math.random() * spread;
+                        const vx = Math.cos(angle) * speed;
+                        const vy = Math.sin(angle) * speed - Math.random() * 100;
+                        this.particles.push(new Particle(x, y, vx, vy, life + Math.random() * 0.3, color, size + Math
+                            .random() * 3));
+                    }
+                }
+                update(dt) {
+                    for (let i = this.particles.length - 1; i >= 0; i--) {
+                        this.particles[i].update(dt);
+                        if (!this.particles[i].alive) this.particles.splice(i, 1);
+                    }
+                }
+                draw(ctx) {
+                    for (const p of this.particles) p.draw(ctx);
+                }
+                clear() { this.particles = []; }
+            }
+
+            // ─── PLAYER ──────────────────────────────────
+            class Player {
+                constructor() {
+                    this.x = VW / 2;
+                    this.y = PLAYER_Y;
+                    this.width = 28;
+                    this.height = 40;
+                    this.knifeCooldown = 0;
+                    this.aimX = VW / 2;
+                    this.aimY = 200;
+                    this.isAiming = false;
+                    this.hasKnife = true;
+                }
+                update(dt) {
+                    if (this.knifeCooldown > 0) {
+                        this.knifeCooldown -= dt;
+                        if (this.knifeCooldown <= 0) {
+                            this.hasKnife = true;
+                            this.knifeCooldown = 0;
+                        }
+                    }
+                    this.x = Math.max(PLAYER_MIN_X, Math.min(PLAYER_MAX_X, this.x));
+                }
+                moveLeft(dt) { this.x -= PLAYER_SPEED * dt; }
+                moveRight(dt) { this.x += PLAYER_SPEED * dt; }
+                canThrow() { return this.hasKnife && this.knifeCooldown <= 0; }
+                throwKnife() {
+                    if (!this.canThrow()) return null;
+                    this.hasKnife = false;
+                    this.knifeCooldown = KNIFE_COOLDOWN;
+                    const dx = this.aimX - this.x;
+                    const dy = this.aimY - this.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < 1) return null;
+                    const vx = (dx / dist) * KNIFE_SPEED;
+                    const vy = (dy / dist) * KNIFE_SPEED;
+                    audio.whoosh();
+                    return new Knife(this.x, this.y - 8, vx, vy);
+                }
+                draw(ctx) {
+                    ctx.save();
+                    ctx.translate(this.x, this.y);
+                    // Body
+                    ctx.fillStyle = '#4A7C5C';
+                    ctx.fillRect(-10, -16, 20, 28);
+                    // Shirt detail
+                    ctx.fillStyle = '#5D9B6F';
+                    ctx.fillRect(-9, -14, 18, 24);
+                    // Belt
+                    ctx.fillStyle = '#3D2B1F';
+                    ctx.fillRect(-11, 8, 22, 4);
+                    // Head
+                    ctx.fillStyle = '#F4C59E';
+                    ctx.beginPath();
+                    ctx.arc(0, -20, 11, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Hat
+                    ctx.fillStyle = '#5C3A1E';
+                    ctx.fillRect(-14, -32, 28, 6);
+                    ctx.fillRect(-8, -40, 16, 10);
+                    // Eyes
+                    ctx.fillStyle = '#1a1a1a';
+                    ctx.beginPath();
+                    ctx.arc(-4, -21, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(4, -21, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Arm with knife
+                    if (this.hasKnife) {
+                        ctx.save();
+                        const ang = Math.atan2(this.aimY - this.y, this.aimX - this.x);
+                        ctx.rotate(ang);
+                        ctx.fillStyle = '#F4C59E';
+                        ctx.fillRect(6, -3, 18, 6);
+                        // Knife in hand
+                        ctx.fillStyle = '#C0C0C0';
+                        ctx.fillRect(20, -2, 16, 3);
+                        ctx.fillStyle = '#808080';
+                        ctx.fillRect(34, -3, 4, 5);
+                        ctx.fillStyle = '#5C3A1E';
+                        ctx.fillRect(16, -2, 6, 3);
+                        ctx.restore();
+                    } else {
+                        ctx.fillStyle = '#F4C59E';
+                        ctx.fillRect(6, -4, 14, 6);
+                    }
+                    // Legs
+                    ctx.fillStyle = '#3D2B1F';
+                    ctx.fillRect(-7, 10, 6, 12);
+                    ctx.fillRect(1, 10, 6, 12);
+                    // Boots
+                    ctx.fillStyle = '#2A1A0A';
+                    ctx.fillRect(-9, 20, 10, 4);
+                    ctx.fillRect(-1, 20, 10, 4);
+                    ctx.restore();
+                }
+            }
+
+            // ─── KNIFE ───────────────────────────────────
+            class Knife {
+                constructor(x, y, vx, vy) {
+                    this.x = x;
+                    this.y = y;
+                    this.vx = vx;
+                    this.vy = vy;
+                    this.alive = true;
+                    this.rotation = Math.atan2(vy, vx);
+                    this.spinSpeed = 20;
+                    this.trail = [];
+                }
+                update(dt) {
+                    this.trail.push({ x: this.x, y: this.y, life: 0.08 });
+                    this.x += this.vx * dt;
+                    this.y += this.vy * dt;
+                    this.rotation += this.spinSpeed * dt;
+                    for (let i = this.trail.length - 1; i >= 0; i--) {
+                        this.trail[i].life -= dt;
+                        if (this.trail[i].life <= 0) this.trail.splice(i, 1);
+                    }
+                    if (this.x < -50 || this.x > VW + 50 || this.y < -50 || this.y > VH + 50) {
+                        this.alive = false;
+                    }
+                }
+                draw(ctx) {
+                    for (const t of this.trail) {
+                        const alpha = t.life / 0.08;
+                        ctx.globalAlpha = alpha * 0.5;
+                        ctx.fillStyle = '#FFD700';
+                        ctx.beginPath();
+                        ctx.arc(t.x, t.y, 2, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.globalAlpha = 1;
+                    ctx.save();
+                    ctx.translate(this.x, this.y);
+                    ctx.rotate(this.rotation);
+                    ctx.fillStyle = '#C0C0C0';
+                    ctx.fillRect(-14, -1.5, 20, 3);
+                    ctx.fillStyle = '#E8E8E8';
+                    ctx.fillRect(-14, -0.5, 20, 1);
+                    ctx.fillStyle = '#808080';
+                    ctx.beginPath();
+                    ctx.moveTo(-16, -2);
+                    ctx.lineTo(-20, 0);
+                    ctx.lineTo(-16, 2);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.fillStyle = '#5C3A1E';
+                    ctx.fillRect(4, -3, 10, 5);
+                    ctx.fillStyle = '#8B6914';
+                    ctx.fillRect(6, -2, 6, 3);
+                    ctx.fillStyle = '#FFD700';
+                    ctx.fillRect(2, -3, 3, 1);
+                    ctx.fillRect(2, -3, 1, 5);
+                    ctx.restore();
+                }
+                getBounds() {
+                    return { x: this.x, y: this.y, radius: 10 };
+                }
+            }
+
+            // ─── WORM ────────────────────────────────────
+            class Worm {
+                constructor(x, y) {
+                    this.x = x;
+                    this.y = y;
+                    this.baseX = x;
+                    this.baseY = y;
+                    this.wiggleTime = Math.random() * Math.PI * 2;
+                    this.wiggleSpeed = 3 + Math.random() * 4;
+                    this.wiggleAmp = 6 + Math.random() * 8;
+                    this.alive = true;
+                    this.radius = 8;
+                }
+                update(dt) {
+                    this.wiggleTime += this.wiggleSpeed * dt;
+                    this.x = this.baseX + Math.cos(this.wiggleTime) * this.wiggleAmp;
+                    this.y = this.baseY + Math.sin(this.wiggleTime * 1.3) * this.wiggleAmp * 0.6;
+                }
+                draw(ctx) {
+                    ctx.save();
+                    ctx.translate(this.x, this.y);
+                    ctx.fillStyle = '#FF6B8A';
+                    for (let i = 0; i < 5; i++) {
+                        const sx = (i - 2) * 5;
+                        const sy = Math.sin(this.wiggleTime + i * 0.7) * 3;
+                        ctx.beginPath();
+                        ctx.arc(sx, sy, 4.5, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.fillStyle = '#FF8FBF';
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#1a1a1a';
+                    ctx.beginPath();
+                    ctx.arc(-7, 0, 1.2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(7, 0, 1.2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+                getBounds() { return { x: this.x, y: this.y, radius: this.radius }; }
+            }
+
+            // ─── TURKEY ──────────────────────────────────
+            class Turkey {
+                constructor(baseScale = 1.0) {
+                    this.x = VW / 2 + (Math.random() - 0.5) * 300;
+                    this.y = 180 + Math.random() * 150;
+                    this.baseScale = baseScale;
+                    this.scale = baseScale;
+                    this.wormsEaten = 0;
+                    this.maxHP = Math.floor(TURKEY_BASE_HP * baseScale);
+                    this.hp = this.maxHP;
+                    this.state = 'WANDERING';
+                    this.vx = (Math.random() - 0.5) * TURKEY_WANDER_SPEED;
+                    this.vy = (Math.random() - 0.5) * TURKEY_WANDER_SPEED * 0.5;
+                    this.wanderTarget = { x: this.x, y: this.y };
+                    this.wanderTimer = 0;
+                    this.fleeTimer = 0;
+                    this.eatTimer = 0;
+                    this.alive = true;
+                    this.hitFlash = 0;
+                    this.gobbleTimer = 2 + Math.random() * 4;
+                }
+                update(dt, worms, playerX, playerY) {
+                    if (!this.alive) return;
+                    if (this.hitFlash > 0) this.hitFlash -= dt;
+                    this.gobbleTimer -= dt;
+                    if (this.gobbleTimer <= 0) {
+                        this.gobbleTimer = 3 + Math.random() * 5;
+                        audio.gobble();
+                    }
+                    if (this.state === 'FLEEING') {
+                        this.fleeTimer -= dt;
+                        if (this.fleeTimer <= 0) {
+                            this.state = 'WANDERING';
+                            this.wanderTimer = 0;
+                        } else {
+                            const dx = this.x - playerX;
+                            const dy = this.y - playerY;
+                            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                            const speed = TURKEY_FLEE_SPEED;
+                            this.vx += (dx / dist) * speed * 3 * dt;
+                            this.vy += (dy / dist) * speed * 3 * dt;
+                        }
+                    } else if (this.state === 'EATING') {
+                        this.eatTimer -= dt;
+                        if (this.eatTimer <= 0) this.state = 'WANDERING';
+                        this.vx *= 0.9;
+                        this.vy *= 0.9;
+                    } else {
+                        let nearestWorm = null;
+                        let nearestDist = 200;
+                        for (const w of worms) {
+                            if (!w.alive) continue;
+                            const dx = w.x - this.x;
+                            const dy = w.y - this.y;
+                            const dist = Math.sqrt(dx * dx + dy * dy);
+                            if (dist < nearestDist) {
+                                nearestDist = dist;
+                                nearestWorm = w;
+                            }
+                        }
+                        if (nearestWorm) {
+                            this.state = 'SEEKING';
+                            const dx = nearestWorm.x - this.x;
+                            const dy = nearestWorm.y - this.y;
+                            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                            const speed = TURKEY_SEEK_SPEED;
+                            this.vx += (dx / dist) * speed * 2 * dt;
+                            this.vy += (dy / dist) * speed * 2 * dt;
+                            if (dist < 18 * this.scale) {
+                                nearestWorm.alive = false;
+                                this.eatWorm();
+                            }
+                        } else {
+                            this.state = 'WANDERING';
+                            this.wanderTimer -= dt;
+                            if (this.wanderTimer <= 0) {
+                                this.wanderTarget = {
+                                    x: TURKEY_MIN_X + Math.random() * (TURKEY_MAX_X - TURKEY_MIN_X),
+                                    y: TURKEY_MIN_Y + Math.random() * (TURKEY_MAX_Y - TURKEY_MIN_Y)
+                                };
+                                this.wanderTimer = 1.5 + Math.random() * 2;
+                            }
+                            const dx = this.wanderTarget.x - this.x;
+                            const dy = this.wanderTarget.y - this.y;
+                            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                            const speed = TURKEY_WANDER_SPEED;
+                            if (dist > 20) {
+                                this.vx += (dx / dist) * speed * 1.5 * dt;
+                                this.vy += (dy / dist) * speed * 1.5 * dt;
+                            }
+                        }
+                    }
+                    const friction = 3;
+                    this.vx -= this.vx * friction * dt;
+                    this.vy -= this.vy * friction * dt;
+                    const maxSpeed = this.state === 'FLEEING' ? TURKEY_FLEE_SPEED :
+                        this.state === 'SEEKING' ? TURKEY_SEEK_SPEED : TURKEY_WANDER_SPEED;
+                    const spd = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+                    if (spd > maxSpeed) {
+                        this.vx = (this.vx / spd) * maxSpeed;
+                        this.vy = (this.vy / spd) * maxSpeed;
+                    }
+                    this.x += this.vx * dt;
+                    this.y += this.vy * dt;
+                    this.x = Math.max(TURKEY_MIN_X, Math.min(TURKEY_MAX_X, this.x));
+                    this.y = Math.max(TURKEY_MIN_Y, Math.min(TURKEY_MAX_Y, this.y));
+                    const bodyRadius = 22 * this.scale;
+                    for (const w of worms) {
+                        if (!w.alive) continue;
+                        const dx = w.x - this.x;
+                        const dy = w.y - this.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist < bodyRadius + w.radius) {
+                            w.alive = false;
+                            this.eatWorm();
+                        }
+                    }
+                }
+                eatWorm() {
+                    this.wormsEaten++;
+                    const newScale = this.baseScale + this.wormsEaten * TURKEY_SCALE_PER_WORM;
+                    const oldMaxHP = this.maxHP;
+                    this.scale = Math.min(newScale, TURKEY_MAX_SCALE);
+                    this.maxHP = Math.floor(TURKEY_BASE_HP * this.scale);
+                    const hpRatio = this.hp / oldMaxHP;
+                    this.hp = Math.min(this.maxHP, Math.floor(this.maxHP * hpRatio) + Math.floor(KNIFE_DAMAGE * 0.5));
+                    this.state = 'EATING';
+                    this.eatTimer = 0.3;
+                    audio.slurp();
+                }
+                takeDamage(particles) {
+                    this.hp -= KNIFE_DAMAGE;
+                    this.hitFlash = 0.12;
+                    this.state = 'FLEEING';
+                    this.fleeTimer = TURKEY_FLEE_DURATION;
+                    audio.impact();
+                    const bx = 22 * this.scale;
+                    particles.emit(this.x, this.y, 12, '#8B4513', 180, 0.5, 4);
+                    particles.emit(this.x, this.y, 8, '#A0522D', 140, 0.4, 3);
+                    particles.emit(this.x + bx * 0.6, this.y - bx * 0.3, 5, '#FF6B6B', 100, 0.3, 2);
+                    if (this.hp <= 0) {
+                        this.alive = false;
+                        this.hp = 0;
+                    }
+                    return this.hp <= 0;
+                }
+                draw(ctx) {
+                    const s = this.scale;
+                    const x = this.x;
+                    const y = this.y;
+                    const flashColor = this.hitFlash > 0 && Math.floor(this.hitFlash * 60) % 2 === 0;
+                    ctx.save();
+                    ctx.translate(x, y);
+                    // Shadow
+                    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                    ctx.beginPath();
+                    ctx.ellipse(0, 28 * s, 20 * s, 6 * s, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Tail feathers
+                    const tailColors = ['#5C2E1A', '#6B3A2A', '#4A2010', '#7B4A3A', '#3D1A0A', '#8B5A3A'];
+                    for (let i = -4; i <= 4; i++) {
+                        const angle = Math.PI + i * 0.28;
+                        const fx = Math.cos(angle) * 20 * s;
+                        const fy = Math.sin(angle) * 16 * s;
+                        ctx.fillStyle = tailColors[Math.abs(i) % tailColors.length];
+                        ctx.beginPath();
+                        ctx.ellipse(fx - 8 * s, fy, 10 * s, 5 * s, angle, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.strokeStyle = '#3D1A0A';
+                        ctx.lineWidth = 1;
+                        ctx.stroke();
+                    }
+                    // Body
+                    const bodyColor = flashColor ? '#FFFFFF' : '#6B3A2A';
+                    ctx.fillStyle = bodyColor;
+                    ctx.beginPath();
+                    ctx.ellipse(0, 4 * s, 22 * s, 18 * s, -0.1, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#4A2010';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    // Wing
+                    ctx.fillStyle = flashColor ? '#EEE' : '#5C2E1A';
+                    ctx.beginPath();
+                    ctx.ellipse(-5 * s, 2 * s, 14 * s, 9 * s, -0.3, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#3D1A0A';
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+                    // Neck
+                    ctx.fillStyle = flashColor ? '#FFF' : '#7B4A3A';
+                    ctx.beginPath();
+                    ctx.ellipse(14 * s, -8 * s, 7 * s, 10 * s, 0.2, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Head
+                    ctx.fillStyle = flashColor ? '#FFF' : '#8B5540';
+                    ctx.beginPath();
+                    ctx.arc(18 * s, -16 * s, 10 * s, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Beak
+                    ctx.fillStyle = '#FF8C00';
+                    ctx.beginPath();
+                    ctx.moveTo(26 * s, -18 * s);
+                    ctx.lineTo(36 * s, -15 * s);
+                    ctx.lineTo(26 * s, -12 * s);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.strokeStyle = '#CC6600';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                    // Wattle
+                    ctx.fillStyle = '#CC0000';
+                    ctx.beginPath();
+                    ctx.ellipse(22 * s, -8 * s, 3.5 * s, 7 * s, 0.3, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Eye
+                    ctx.fillStyle = 'white';
+                    ctx.beginPath();
+                    ctx.arc(20 * s, -19 * s, 4 * s, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#111';
+                    ctx.beginPath();
+                    ctx.arc(21 * s, -19 * s, 2 * s, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = 'white';
+                    ctx.beginPath();
+                    ctx.arc(21.5 * s, -20 * s, 0.8 * s, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Legs
+                    ctx.strokeStyle = '#FF8C00';
+                    ctx.lineWidth = 2.5 * s;
+                    ctx.lineCap = 'round';
+                    ctx.beginPath();
+                    ctx.moveTo(-6 * s, 20 * s);
+                    ctx.lineTo(-7 * s, 32 * s);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(6 * s, 20 * s);
+                    ctx.lineTo(5 * s, 32 * s);
+                    ctx.stroke();
+                    // Feet
+                    ctx.fillStyle = '#FF8C00';
+                    ctx.beginPath();
+                    ctx.arc(-7 * s, 33 * s, 4 * s, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(5 * s, 33 * s, 4 * s, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+                getBounds() {
+                    return { x: this.x, y: this.y + 4 * this.scale, radius: 22 * this.scale };
+                }
+            }
+
+            // ─── GAME STATE ──────────────────────────────
+            const STATE = { TITLE: 'title', PLAYING: 'playing', PAUSED: 'paused', WAVE_COMPLETE: 'waveComplete',
+                GAME_OVER: 'gameOver' };
+
+            class Game {
+                constructor() {
+                    this.state = STATE.TITLE;
+                    this.player = new Player();
+                    this.turkey = null;
+                    this.knives = [];
+                    this.worms = [];
+                    this.particles = new ParticleSystem();
+                    this.wave = 1;
+                    this.score = 0;
+                    this.highScore = 0;
+                    this.wormSpawnTimer = 0;
+                    this.waveTimer = 0;
+                    this.waveCompleteTimer = 0;
+                    this.screenShake = 0;
+                    this.screenShakeX = 0;
+                    this.screenShakeY = 0;
+                    this.knivesThrown = 0;
+                    this.knivesHit = 0;
+                    this.loadHighScore();
+                    this.keys = {};
+                    this.mouseX = VW / 2;
+                    this.mouseY = 200;
+                    this.mouseDown = false;
+                    this.touchAim = null;
+                    this.touchLeft = false;
+                    this.touchRight = false;
+                    this.setupInput();
+                }
+                loadHighScore() {
+                    try {
+                        const saved = localStorage.getItem('turkeyHuntHighScore');
+                        if (saved) this.highScore = parseInt(saved, 10) || 0;
+                    } catch (e) { this.highScore = 0; }
+                }
+                saveHighScore() {
+                    if (this.score > this.highScore) {
+                        this.highScore = this.score;
+                        try { localStorage.setItem('turkeyHuntHighScore', this.highScore.toString()); } catch (e) {}
+                    }
+                }
+                setupInput() {
+                    window.addEventListener('keydown', e => {
+                        this.keys[e.key] = true;
+                        if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
+                            if (this.state === STATE.PLAYING) {
+                                this.state = STATE.PAUSED;
+                                audio.clickSound();
+                            } else if (this.state === STATE.PAUSED) {
+                                this.state = STATE.PLAYING;
+                                audio.clickSound();
+                            }
+                        }
+                        if (e.key === ' ' || e.key === 'Spacebar') {
+                            e.preventDefault();
+                            if (this.state === STATE.TITLE) this.startGame();
+                            else if (this.state === STATE.GAME_OVER) this.resetGame();
+                            else if (this.state === STATE.WAVE_COMPLETE) this.nextWave();
+                        }
+                    });
+                    window.addEventListener('keyup', e => { this.keys[e.key] = false; });
+                    canvas.addEventListener('mousemove', e => {
+                        const rect = canvas.getBoundingClientRect();
+                        this.mouseX = (e.clientX - rect.left) / scale;
+                        this.mouseY = (e.clientY - rect.top) / scale;
+                    });
+                    canvas.addEventListener('mousedown', e => {
+                        e.preventDefault();
+                        this.mouseDown = true;
+                        audio.ensure();
+                        if (this.state === STATE.TITLE) { this.startGame(); return; }
+                        if (this.state === STATE.GAME_OVER) { this.resetGame(); return; }
+                        if (this.state === STATE.WAVE_COMPLETE) { this.nextWave(); return; }
+                        if (this.state === STATE.PAUSED) { this.state = STATE.PLAYING;
+                            audio.clickSound(); return; }
+                        this.attemptThrow();
+                    });
+                    canvas.addEventListener('mouseup', () => { this.mouseDown = false; });
+                    canvas.addEventListener('mouseleave', () => { this.mouseDown = false; });
+                    canvas.addEventListener('touchstart', e => {
+                        e.preventDefault();
+                        audio.ensure();
+                        const rect = canvas.getBoundingClientRect();
+                        for (const touch of e.changedTouches) {
+                            const tx = (touch.clientX - rect.left) / scale;
+                            const ty = (touch.clientY - rect.top) / scale;
+                            if (ty > 520 && tx < 150) this.touchLeft = true;
+                            else if (ty > 520 && tx > VW - 150) this.touchRight = true;
+                            else {
+                                this.touchAim = { x: tx, y: ty, id: touch.identifier };
+                                this.mouseX = tx;
+                                this.mouseY = ty;
+                            }
+                        }
+                        if (this.state === STATE.TITLE) { this.startGame(); return; }
+                        if (this.state === STATE.GAME_OVER) { this.resetGame(); return; }
+                        if (this.state === STATE.WAVE_COMPLETE) { this.nextWave(); return; }
+                        if (this.state === STATE.PAUSED) { this.state = STATE.PLAYING;
+                            audio.clickSound(); return; }
+                        if (this.touchAim && this.state === STATE.PLAYING) this.attemptThrow();
+                    }, { passive: false });
+                    canvas.addEventListener('touchmove', e => {
+                        e.preventDefault();
+                        const rect = canvas.getBoundingClientRect();
+                        this.touchLeft = false;
+                        this.touchRight = false;
+                        for (const touch of e.touches) {
+                            const tx = (touch.clientX - rect.left) / scale;
+                            const ty = (touch.clientY - rect.top) / scale;
+                            if (ty > 520 && tx < 150) this.touchLeft = true;
+                            else if (ty > 520 && tx > VW - 150) this.touchRight = true;
+                            if (this.touchAim && touch.identifier === this.touchAim.id) {
+                                this.touchAim.x = tx;
+                                this.touchAim.y = ty;
+                                this.mouseX = tx;
+                                this.mouseY = ty;
+                            }
+                        }
+                    }, { passive: false });
+                    canvas.addEventListener('touchend', e => {
+                        e.preventDefault();
+                        this.touchLeft = false;
+                        this.touchRight = false;
+                        for (const touch of e.changedTouches) {
+                            if (this.touchAim && touch.identifier === this.touchAim.id) {
+                                this.touchAim = null;
+                            }
+                        }
+                        for (const touch of e.touches) {
+                            const rect = canvas.getBoundingClientRect();
+                            const tx = (touch.clientX - rect.left) / scale;
+                            const ty = (touch.clientY - rect.top) / scale;
+                            if (ty > 520 && tx < 150) this.touchLeft = true;
+                            if (ty > 520 && tx > VW - 150) this.touchRight = true;
+                        }
+                    }, { passive: false });
+                    canvas.addEventListener('touchcancel', () => {
+                        this.touchLeft = false;
+                        this.touchRight = false;
+                        this.touchAim = null;
+                    });
+                }
+                startGame() {
+                    this.state = STATE.PLAYING;
+                    this.wave = 1;
+                    this.score = 0;
+                    this.knivesThrown = 0;
+                    this.knivesHit = 0;
+                    this.player = new Player();
+                    this.knives = [];
+                    this.worms = [];
+                    this.particles.clear();
+                    this.screenShake = 0;
+                    this.waveTimer = 0;
+                    this.spawnTurkey();
+                    audio.startMusic();
+                }
+                resetGame() {
+                    this.saveHighScore();
+                    this.startGame();
+                }
+                spawnTurkey() {
+                    const baseScale = 0.85 + (this.wave - 1) * 0.2;
+                    this.turkey = new Turkey(Math.min(baseScale, 2.0));
+                    this.worms = [];
+                    this.wormSpawnTimer = 0;
+                    this.waveTimer = 0;
+                    this.knives = [];
+                    this.particles.clear();
+                    this.screenShake = 0;
+                    this.player.knifeCooldown = 0;
+                    this.player.hasKnife = true;
+                }
+                nextWave() {
+                    this.wave++;
+                    this.spawnTurkey();
+                    this.state = STATE.PLAYING;
+                    audio.startMusic();
+                }
+                attemptThrow() {
+                    if (this.state !== STATE.PLAYING) return;
+                    if (!this.player.canThrow()) return;
+                    this.player.aimX = this.mouseX;
+                    this.player.aimY = this.mouseY;
+                    const knife = this.player.throwKnife();
+                    if (knife) {
+                        this.knives.push(knife);
+                        this.knivesThrown++;
+                    }
+                }
+                getWormSpawnInterval() {
+                    return Math.max(0.8, WORM_SPAWN_INTERVAL_BASE - (this.wave - 1) * 0.25);
+                }
+                getMaxWorms() {
+                    return Math.min(12, MAX_WORMS_BASE + Math.floor((this.wave - 1) * 1.2));
+                }
+                spawnWorm() {
+                    const margin = 40;
+                    let wx, wy;
+                    let attempts = 0;
+                    do {
+                        wx = margin + Math.random() * (VW - margin * 2);
+                        wy = TURKEY_MIN_Y + Math.random() * (TURKEY_MAX_Y - TURKEY_MIN_Y);
+                        attempts++;
+                    } while (attempts < 20 && this.turkey && this.turkey.alive &&
+                        Math.sqrt((wx - this.turkey.x) ** 2 + (wy - this.turkey.y) ** 2) < 60);
+                    this.worms.push(new Worm(wx, wy));
+                }
+                update(dt) {
+                    this.particles.update(dt);
+                    if (this.screenShake > 0) {
+                        this.screenShake -= dt;
+                        this.screenShakeX = (Math.random() - 0.5) * this.screenShake * 20;
+                        this.screenShakeY = (Math.random() - 0.5) * this.screenShake * 20;
+                    } else {
+                        this.screenShakeX = 0;
+                        this.screenShakeY = 0;
+                    }
+                    if (this.state !== STATE.PLAYING && this.state !== STATE.WAVE_COMPLETE) return;
+                    if (this.state === STATE.WAVE_COMPLETE) {
+                        this.waveCompleteTimer -= dt;
+                        if (this.waveCompleteTimer <= 0) this.nextWave();
+                        return;
+                    }
+                    this.waveTimer += dt;
+                    // Player movement
+                    if (this.keys['a'] || this.keys['A'] || this.keys['ArrowLeft'] || this.touchLeft) {
+                        this.player.moveLeft(dt);
+                    }
+                    if (this.keys['d'] || this.keys['D'] || this.keys['ArrowRight'] || this.touchRight) {
+                        this.player.moveRight(dt);
+                    }
+                    this.player.update(dt);
+                    this.player.aimX = this.mouseX;
+                    this.player.aimY = this.mouseY;
+                    // Worm spawning
+                    this.wormSpawnTimer -= dt;
+                    if (this.wormSpawnTimer <= 0 && this.worms.filter(w => w.alive).length < this.getMaxWorms()) {
+                        this.spawnWorm();
+                        this.wormSpawnTimer = this.getWormSpawnInterval() + (Math.random() - 0.5) * 1.2;
+                    }
+                    // Update worms
+                    for (const w of this.worms) w.update(dt);
+                    this.worms = this.worms.filter(w => w.alive);
+                    // Update turkey
+                    if (this.turkey && this.turkey.alive) {
+                        this.turkey.update(dt, this.worms, this.player.x, this.player.y);
+                        if (this.turkey.scale >= TURKEY_MAX_SCALE) {
+                            this.turkey.alive = false;
+                            this.endGame('turkeyTooBig');
+                            return;
+                        }
+                    }
+                    // Update knives
+                    for (const k of this.knives) k.update(dt);
+                    // Knife-turkey collision
+                    if (this.turkey && this.turkey.alive) {
+                        const tb = this.turkey.getBounds();
+                        for (const k of this.knives) {
+                            if (!k.alive) continue;
+                            const kb = k.getBounds();
+                            const dx = k.x - tb.x;
+                            const dy = k.y - tb.y;
+                            const dist = Math.sqrt(dx * dx + dy * dy);
+                            if (dist < tb.radius + kb.radius) {
+                                k.alive = false;
+                                this.knivesHit++;
+                                const died = this.turkey.takeDamage(this.particles);
+                                this.screenShake = Math.max(this.screenShake, 0.2);
+                                this.particles.emit(k.x, k.y, 6, '#FFD700', 80, 0.25, 2);
+                                if (died) {
+                                    this.onTurkeyKilled();
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    this.knives = this.knives.filter(k => k.alive);
+                    // Quick kill bonus decay
+                    if (this.turkey && this.turkey.alive && this.waveTimer > 20) {
+                        // Turkey has been alive a while
+                    }
+                }
+                onTurkeyKilled() {
+                    this.particles.emit(this.turkey.x, this.turkey.y, 40, '#8B4513', 250, 0.8, 5);
+                    this.particles.emit(this.turkey.x, this.turkey.y, 30, '#A0522D', 200, 0.7, 4);
+                    this.particles.emit(this.turkey.x, this.turkey.y, 20, '#FF6B6B', 180, 0.5, 3);
+                    this.particles.emit(this.turkey.x, this.turkey.y, 25, '#FFD700', 150, 0.6, 2);
+                    this.screenShake = 0.5;
+                    const quickBonus = Math.max(0, Math.floor(50 - this.waveTimer * 3));
+                    const wormBonus = this.worms.filter(w => w.alive).length * 10;
+                    const waveBonus = 100 * this.wave;
+                    this.score += waveBonus + quickBonus + wormBonus;
+                    this.turkey.alive = false;
+                    this.state = STATE.WAVE_COMPLETE;
+                    this.waveCompleteTimer = 2.0;
+                    audio.waveComplete();
+                    audio.stopMusic();
+                    this.knives = [];
+                }
+                endGame(reason) {
+                    this.state = STATE.GAME_OVER;
+                    this.saveHighScore();
+                    audio.gameOver();
+                    audio.stopMusic();
+                    this.particles.emit(this.turkey ? this.turkey.x : VW / 2, this.turkey ? this.turkey.y : VH / 2,
+                        50, '#FF4444', 300, 1.2, 6);
+                    this.screenShake = 0.6;
+                }
+                drawBackground(ctx) {
+                    const grad = ctx.createLinearGradient(0, 0, 0, VH);
+                    grad.addColorStop(0, '#87CEEB');
+                    grad.addColorStop(0.45, '#B8E4F0');
+                    grad.addColorStop(0.55, '#7CB342');
+                    grad.addColorStop(0.75, '#5A8F3C');
+                    grad.addColorStop(1, '#4A7030');
+                    ctx.fillStyle = grad;
+                    ctx.fillRect(0, 0, VW, VH);
+                    // Clouds
+                    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                    const drawCloud = (cx, cy, s) => {
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, 25 * s, 0, Math.PI * 2);
+                        ctx.arc(cx + 30 * s, cy - 10 * s, 20 * s, 0, Math.PI * 2);
+                        ctx.arc(cx + 50 * s, cy, 22 * s, 0, Math.PI * 2);
+                        ctx.arc(cx + 25 * s, cy + 5 * s, 18 * s, 0, Math.PI * 2);
+                        ctx.fill();
+                    };
+                    drawCloud(100, 70, 1);
+                    drawCloud(350, 40, 0.8);
+                    drawCloud(600, 90, 1.1);
+                    drawCloud(720, 50, 0.6);
+                    // Hills
+                    ctx.fillStyle = '#6B9B40';
+                    ctx.beginPath();
+                    ctx.moveTo(0, 350);
+                    ctx.quadraticCurveTo(200, 280, 400, 340);
+                    ctx.quadraticCurveTo(600, 390, 800, 330);
+                    ctx.lineTo(800, 450);
+                    ctx.lineTo(0, 450);
+                    ctx.fill();
+                    // Grass texture
+                    ctx.strokeStyle = '#4A7A2E';
+                    ctx.lineWidth = 1;
+                    for (let i = 0; i < 40; i++) {
+                        const gx = i * 22 + 5;
+                        const gy = 430 + Math.sin(i * 0.7) * 15;
+                        ctx.beginPath();
+                        ctx.moveTo(gx, gy);
+                        ctx.lineTo(gx + 2, gy - 8);
+                        ctx.moveTo(gx + 6, gy + 2);
+                        ctx.lineTo(gx + 8, gy - 6);
+                        ctx.stroke();
+                    }
+                    // Fence posts
+                    ctx.fillStyle = '#8B6914';
+                    for (let i = 0; i < 7; i++) {
+                        const fx = 40 + i * 120;
+                        ctx.fillRect(fx, 380, 8, 60);
+                        ctx.fillRect(fx - 2, 385, 12, 5);
+                    }
+                    ctx.fillRect(40, 400, 720, 4);
+                    ctx.fillRect(40, 420, 720, 4);
+                    // Ground
+                    ctx.fillStyle = '#5A8F3C';
+                    ctx.fillRect(0, 430, VW, 170);
+                }
+                drawUI(ctx) {
+                    // Wave indicator
+                    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                    ctx.fillRect(VW - 130, 8, 122, 50);
+                    ctx.strokeStyle = '#FFD700';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(VW - 130, 8, 122, 50);
+                    ctx.fillStyle = '#FFD700';
+                    ctx.font = 'bold 15px Georgia';
+                    ctx.textAlign = 'right';
+                    ctx.fillText('WAVE ' + this.wave, VW - 16, 30);
+                    ctx.fillText('SCORE: ' + this.score, VW - 16, 50);
+                    // Health bar above turkey
+                    if (this.turkey && this.turkey.alive) {
+                        const tb = this.turkey.getBounds();
+                        const barW = 70;
+                        const barH = 8;
+                        const barX = tb.x - barW / 2;
+                        const barY = tb.y - tb.radius - 16;
+                        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                        ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+                        ctx.fillStyle = '#333';
+                        ctx.fillRect(barX, barY, barW, barH);
+                        const hpRatio = this.turkey.hp / this.turkey.maxHP;
+                        const hpColor = hpRatio > 0.5 ? '#4CAF50' : hpRatio > 0.25 ? '#FF9800' : '#F44336';
+                        ctx.fillStyle = hpColor;
+                        ctx.fillRect(barX, barY, barW * hpRatio, barH);
+                        ctx.fillStyle = '#FFF';
+                        ctx.font = 'bold 8px Georgia';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(Math.ceil(this.turkey.hp) + '/' + this.turkey.maxHP, tb.x, barY + barH - 1);
+                    }
+                    // Cooldown indicator
+                    if (!this.player.canThrow() && this.state === STATE.PLAYING) {
+                        const cdRatio = this.player.knifeCooldown / KNIFE_COOLDOWN;
+                        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                        ctx.fillRect(this.player.x - 16, this.player.y - 50, 32, 6);
+                        ctx.fillStyle = '#FF9800';
+                        ctx.fillRect(this.player.x - 16, this.player.y - 50, 32 * (1 - cdRatio), 6);
+                    }
+                    // Aim line
+                    if ((this.state === STATE.PLAYING || this.state === STATE.WAVE_COMPLETE) && this.player.hasKnife) {
+                        const dx = this.mouseX - this.player.x;
+                        const dy = this.mouseY - this.player.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist > 10 && this.mouseY < PLAYER_Y - 10) {
+                            ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+                            ctx.lineWidth = 1;
+                            ctx.setLineDash([6, 8]);
+                            ctx.beginPath();
+                            ctx.moveTo(this.player.x, this.player.y - 8);
+                            const extDist = 600;
+                            const ex = this.player.x + (dx / dist) * extDist;
+                            const ey = this.player.y - 8 + (dy / dist) * extDist;
+                            ctx.lineTo(ex, ey);
+                            ctx.stroke();
+                            ctx.setLineDash([]);
+                            // Small target dot
+                            ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                            ctx.beginPath();
+                            ctx.arc(this.mouseX, this.mouseY, 4, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                    }
+                    // Mobile movement buttons
+                    if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+                        ctx.fillStyle = 'rgba(255,255,255,0.25)';
+                        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                        ctx.lineWidth = 2;
+                        // Left button
+                        ctx.beginPath();
+                        ctx.roundRect(20, 530, 90, 50, 12);
+                        ctx.fill();
+                        ctx.stroke();
+                        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+                        ctx.font = 'bold 22px Georgia';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('◀', 65, 563);
+                        // Right button
+                        ctx.fillStyle = 'rgba(255,255,255,0.25)';
+                        ctx.beginPath();
+                        ctx.roundRect(VW - 110, 530, 90, 50, 12);
+                        ctx.fill();
+                        ctx.stroke();
+                        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+                        ctx.fillText('▶', VW - 65, 563);
+                    }
+                }
+                drawTitleScreen(ctx) {
+                    this.drawBackground(ctx);
+                    // Darken
+                    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                    ctx.fillRect(0, 0, VW, VH);
+                    // Title
+                    ctx.fillStyle = '#FFD700';
+                    ctx.font = 'bold 48px Georgia';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🦃 TURKEY HUNT 🔪', VW / 2, 140);
+                    ctx.strokeStyle = '#8B4513';
+                    ctx.lineWidth = 3;
+                    ctx.strokeText('🦃 TURKEY HUNT 🔪', VW / 2, 140);
+                    // Subtitle
+                    ctx.fillStyle = '#FFF';
+                    ctx.font = '18px Georgia';
+                    ctx.fillText('Kill the turkey before it eats worms and grows!', VW / 2, 185);
+                    // Instructions
+                    ctx.fillStyle = '#EEE';
+                    ctx.font = '15px Georgia';
+                    const instY = 240;
+                    ctx.fillText('🎯 Click / Tap to throw knives at the turkey', VW / 2, instY);
+                    ctx.fillText('🏃 A/D or Arrow Keys to move (mobile: bottom buttons)', VW / 2, instY + 28);
+                    ctx.fillText('🪱 Turkey eats worms and gets BIGGER & TOUGHER', VW / 2, instY + 56);
+                    ctx.fillText('💀 If the turkey grows too large — GAME OVER!', VW / 2, instY + 84);
+                    // Start button
+                    const btnX = VW / 2 - 100;
+                    const btnY = 370;
+                    const pulse = Math.sin(Date.now() / 600) * 3;
+                    ctx.fillStyle = '#FF6B35';
+                    ctx.beginPath();
+                    ctx.roundRect(btnX - 2, btnY - 2, 204, 54, 14);
+                    ctx.fill();
+                    ctx.fillStyle = '#FF8C42';
+                    ctx.beginPath();
+                    ctx.roundRect(btnX, btnY + pulse, 200, 50, 12);
+                    ctx.fill();
+                    ctx.fillStyle = '#FFF';
+                    ctx.font = 'bold 22px Georgia';
+                    ctx.fillText('HUNT THE TURKEY!', VW / 2, btnY + 32 + pulse);
+                    // High score
+                    ctx.fillStyle = '#FFD700';
+                    ctx.font = 'bold 16px Georgia';
+                    ctx.fillText('🏆 HIGH SCORE: ' + this.highScore, VW / 2, 470);
+                    ctx.fillStyle = '#CCC';
+                    ctx.font = '13px Georgia';
+                    ctx.fillText('Press SPACE or click to start', VW / 2, 510);
+                }
+                drawPauseScreen(ctx) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                    ctx.fillRect(0, 0, VW, VH);
+                    ctx.fillStyle = '#FFD700';
+                    ctx.font = 'bold 40px Georgia';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('⏸ PAUSED', VW / 2, VH / 2 - 20);
+                    ctx.fillStyle = '#FFF';
+                    ctx.font = '18px Georgia';
+                    ctx.fillText('Press P or ESC to resume', VW / 2, VH / 2 + 30);
+                }
+                drawGameOverScreen(ctx) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                    ctx.fillRect(0, 0, VW, VH);
+                    ctx.fillStyle = '#FF4444';
+                    ctx.font = 'bold 44px Georgia';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('GAME OVER', VW / 2, 160);
+                    ctx.strokeStyle = '#8B0000';
+                    ctx.lineWidth = 3;
+                    ctx.strokeText('GAME OVER', VW / 2, 160);
+                    ctx.fillStyle = '#FFF';
+                    ctx.font = '20px Georgia';
+                    ctx.fillText('The turkey grew too powerful!', VW / 2, 210);
+                    ctx.fillText('Final Score: ' + this.score, VW / 2, 250);
+                    ctx.fillText('Wave Reached: ' + this.wave, VW / 2, 280);
+                    if (this.score >= this.highScore && this.score > 0) {
+                        ctx.fillStyle = '#FFD700';
+                        ctx.font = 'bold 22px Georgia';
+                        ctx.fillText('🏆 NEW HIGH SCORE! 🏆', VW / 2, 325);
+                    }
+                    ctx.fillStyle = '#FFD700';
+                    ctx.font = 'bold 16px Georgia';
+                    ctx.fillText('HIGH SCORE: ' + this.highScore, VW / 2, 365);
+                    const btnX = VW / 2 - 90;
+                    const btnY = 410;
+                    ctx.fillStyle = '#FF6B35';
+                    ctx.beginPath();
+                    ctx.roundRect(btnX, btnY, 180, 48, 12);
+                    ctx.fill();
+                    ctx.fillStyle = '#FFF';
+                    ctx.font = 'bold 20px Georgia';
+                    ctx.fillText('PLAY AGAIN', VW / 2, btnY + 32);
+                    ctx.fillStyle = '#CCC';
+                    ctx.font = '13px Georgia';
+                    ctx.fillText('Click or press SPACE to retry', VW / 2, 490);
+                }
+                drawWaveCompleteScreen(ctx) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                    ctx.fillRect(0, 0, VW, VH);
+                    ctx.fillStyle = '#FFD700';
+                    ctx.font = 'bold 38px Georgia';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🎉 WAVE ' + this.wave + ' COMPLETE! 🎉', VW / 2, 220);
+                    ctx.fillStyle = '#FFF';
+                    ctx.font = '20px Georgia';
+                    ctx.fillText('Score: ' + this.score, VW / 2, 270);
+                    ctx.fillText('Next wave in ' + Math.ceil(this.waveCompleteTimer) + '...', VW / 2, 310);
+                    ctx.fillStyle = '#CCC';
+                    ctx.font = '14px Georgia';
+                    ctx.fillText('Click to skip', VW / 2, 350);
+                }
+                render() {
+                    ctx.clearRect(0, 0, VW, VH);
+                    ctx.save();
+                    if (this.screenShake > 0.01) {
+                        ctx.translate(this.screenShakeX, this.screenShakeY);
+                    }
+                    if (this.state === STATE.TITLE) {
+                        this.drawTitleScreen(ctx);
+                        ctx.restore();
+                        return;
+                    }
+                    this.drawBackground(ctx);
+                    // Draw worms
+                    for (const w of this.worms) {
+                        if (w.alive) w.draw(ctx);
+                    }
+                    // Draw turkey
+                    if (this.turkey && this.turkey.alive) {
+                        this.turkey.draw(ctx);
+                    }
+                    // Draw knives
+                    for (const k of this.knives) {
+                        if (k.alive) k.draw(ctx);
+                    }
+                    // Draw particles
+                    this.particles.draw(ctx);
+                    // Draw player
+                    this.player.draw(ctx);
+                    // Draw UI
+                    this.drawUI(ctx);
+                    ctx.restore();
+                    // Overlay screens (no shake)
+                    if (this.state === STATE.PAUSED) this.drawPauseScreen(ctx);
+                    if (this.state === STATE.GAME_OVER) this.drawGameOverScreen(ctx);
+                    if (this.state === STATE.WAVE_COMPLETE) this.drawWaveCompleteScreen(ctx);
+                }
+            }
+
+            // ─── MAIN LOOP ───────────────────────────────
+            const game = new Game();
+            let lastTime = performance.now();
+
+            function gameLoop(timestamp) {
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt > 0.15) dt = 0.15;
+                if (dt <= 0) dt = 0.016;
+                lastTime = timestamp;
+                game.update(dt);
+                game.render();
+                requestAnimationFrame(gameLoop);
+            }
+            requestAnimationFrame(gameLoop);
+
+            // ─── POLYFILL roundRect ──────────────────────
+            if (!ctx.roundRect) {
+                ctx.roundRect = function(x, y, w, h, r) {
+                    if (typeof r === 'number') r = { tl: r, tr: r, br: r, bl: r };
+                    ctx.beginPath();
+                    ctx.moveTo(x + r.tl, y);
+                    ctx.lineTo(x + w - r.tr, y);
+                    ctx.quadraticCurveTo(x + w, y, x + w, y + r.tr);
+                    ctx.lineTo(x + w, y + h - r.br);
+                    ctx.quadraticCurveTo(x + w, y + h, x + w - r.br, y + h);
+                    ctx.lineTo(x + r.bl, y + h);
+                    ctx.quadraticCurveTo(x, y + h, x, y + h - r.bl);
+                    ctx.lineTo(x, y + r.tl);
+                    ctx.quadraticCurveTo(x, y, x + r.tl, y);
+                    ctx.closePath();
+                };
+            }
+        })();
+    </script>
+</body>
+</html>
