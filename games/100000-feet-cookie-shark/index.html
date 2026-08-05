@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>100000 Feet: Cookie Shark</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="game-shell">
+    <canvas id="game-canvas" aria-label="100000 Feet underwater game"></canvas>
+
+    <div id="hud" class="hud hidden">
+      <div class="hud-depth"><span class="eyebrow">DEPTH</span><strong id="depth-value">0</strong><small>FT</small></div>
+      <div class="hud-zone"><span id="zone-value">COOKIE REEF</span><div class="progress"><i id="depth-progress"></i></div></div>
+      <div class="hud-right"><span>❤ <b id="health-value">3</b></span><span>✦ <b id="score-value">0</b></span></div>
+      <button id="pause-button" class="icon-button" aria-label="Pause">Ⅱ</button>
+    </div>
+
+    <div id="touch-controls" class="touch-controls hidden">
+      <button data-control="left" aria-label="Move left">◀</button>
+      <button data-control="boost" aria-label="Boost">✦</button>
+      <button data-control="fire" aria-label="Fire">●</button>
+      <button data-control="right" aria-label="Move right">▶</button>
+    </div>
+
+    <section id="menu-screen" class="screen menu-screen">
+      <div class="brand-mark">✦</div>
+      <p class="eyebrow">THE LAST SCOOP BELOW</p>
+      <h1>100000 <em>FEET</em></h1>
+      <h2>IN THE DEEP</h2>
+      <p class="subtitle">with the <b>COOKIE SHARK</b> &amp; ice cream</p>
+      <button id="start-button" class="primary-button">DIVE IN <span>↓</span></button>
+      <div class="best-card"><span>BEST DIVE</span><strong id="menu-best-depth">0 FT</strong><small id="menu-best-score">0 points</small></div>
+      <p class="controls-hint">A / D or ◀ / ▶ to steer · SPACE to scoop-shoot · SHIFT to boost</p>
+    </section>
+
+    <section id="pause-screen" class="screen modal hidden">
+      <p class="eyebrow">THE OCEAN CAN WAIT</p>
+      <h2>PAUSED</h2>
+      <button id="resume-button" class="primary-button">RESUME</button>
+      <button id="quit-button" class="secondary-button">QUIT DIVE</button>
+    </section>
+
+    <section id="upgrade-screen" class="screen modal upgrade-modal hidden">
+      <p class="eyebrow">ZONE CLEARED</p>
+      <h2 id="upgrade-title">CHOOSE YOUR SCOOP</h2>
+      <p class="modal-copy">The deeper water gets stranger. Pick one permanent upgrade.</p>
+      <div id="upgrade-cards" class="upgrade-cards"></div>
+    </section>
+
+    <section id="gameover-screen" class="screen modal hidden">
+      <p id="result-eyebrow" class="eyebrow">THE DEEP WON</p>
+      <h2 id="result-title">SCOOP MELTED</h2>
+      <p id="result-copy" class="modal-copy">The pressure got to your cone.</p>
+      <div class="result-stats"><span>DEPTH<strong id="result-depth">0 FT</strong></span><span>SCORE<strong id="result-score">0</strong></span><span>SHARKS<strong id="result-kills">0</strong></span></div>
+      <button id="restart-button" class="primary-button">DIVE AGAIN</button>
+      <button id="menu-button" class="secondary-button">MAIN MENU</button>
+    </section>
+  </main>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
