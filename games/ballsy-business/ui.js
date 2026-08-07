@@ -1,0 +1,12 @@
+export class UI {
+  constructor() {
+    this.el={hud:document.getElementById('hud'),title:document.getElementById('titleScreen'),pause:document.getElementById('pauseScreen'),upgrade:document.getElementById('upgradeScreen'),end:document.getElementById('endScreen'),touch:document.getElementById('touchControls'),menuBest:document.getElementById('menuBest'),score:document.getElementById('score'),wave:document.getElementById('wave'),quota:document.getElementById('quota'),health:document.getElementById('health'),timer:document.getElementById('timer'),choices:document.getElementById('upgradeChoices'),endTitle:document.getElementById('endTitle'),endMessage:document.getElementById('endMessage'),endScore:document.getElementById('endScore'),endBest:document.getElementById('endBest')};
+  }
+  hideScreens(){[this.el.title,this.el.pause,this.el.upgrade,this.el.end].forEach(x=>x.classList.remove('visible'));}
+  menu(best){this.hideScreens();this.el.title.classList.add('visible');this.el.hud.classList.add('hidden');this.el.touch.classList.add('hidden');this.el.menuBest.textContent=best.toLocaleString();}
+  playing(){this.hideScreens();this.el.hud.classList.remove('hidden');this.el.touch.classList.remove('hidden');}
+  paused(){this.el.pause.classList.add('visible');this.el.touch.classList.add('hidden');}
+  showUpgrade(options,choose){this.el.upgrade.classList.add('visible');this.el.touch.classList.add('hidden');this.el.choices.innerHTML='';options.forEach(o=>{const b=document.createElement('button');b.className='upgrade-choice';b.innerHTML=`<span class="upgrade-icon">${o.icon}</span><strong>${o.title}</strong><span>${o.body}</span>`;b.onclick=()=>choose(o.id);this.el.choices.appendChild(b);});}
+  end(win,score,best){this.hideScreens();this.el.end.classList.add('visible');this.el.touch.classList.add('hidden');this.el.endTitle.textContent=win?'EMPIRE COMPLETE':'BUSINESS OVER';this.el.endMessage.textContent=win?'Six markets conquered. That was extremely ballsy.':'The auditors got you this time. Your next pitch starts now.';this.el.endScore.textContent=score.toLocaleString();this.el.endBest.textContent=best.toLocaleString();}
+  update(g){this.el.score.textContent=Math.floor(g.score).toLocaleString();this.el.wave.textContent=`${g.wave} / 6`;this.el.quota.textContent=`${g.totalDeals-g.deals.length} / ${g.totalDeals}`;this.el.health.textContent='●'.repeat(g.player.health)+'○'.repeat(Math.max(0,g.player.maxHealth-g.player.health));this.el.timer.textContent=Math.ceil(g.time);}
+}
