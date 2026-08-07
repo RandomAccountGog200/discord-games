@@ -4,5 +4,8 @@
   },
   "___tmp___": {
     "cleanup": 1
+  },
+  "___probe___": {
+    "probeUser": 4
   }
 }
