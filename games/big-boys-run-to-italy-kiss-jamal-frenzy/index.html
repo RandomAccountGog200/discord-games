@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Big Boys Run to Italy: Kiss Jamal Frenzy</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main id="gameShell">
+    <canvas id="gameCanvas" width="960" height="540" aria-label="Big Boys Run to Italy game"></canvas>
+
+    <section id="hud" class="hud hidden">
+      <div class="hud-pill"><span class="mini-label">LEVEL</span><strong id="levelValue">1</strong></div>
+      <div class="hud-pill"><span class="mini-label">STAMPS</span><strong id="stampValue">0/3</strong></div>
+      <div class="hud-pill score-pill"><span class="mini-label">SCORE</span><strong id="scoreValue">0</strong></div>
+      <div class="hud-pill health-pill"><span class="mini-label">HEARTS</span><strong id="healthValue">♥♥♥</strong></div>
+      <button id="pauseBtn" class="icon-button" aria-label="Pause game">Ⅱ</button>
+    </section>
+
+    <div id="touchControls" class="touch-controls hidden">
+      <div id="joystick" class="joystick" aria-label="Movement joystick"><div id="joystickKnob"></div></div>
+      <button id="dashTouch" class="dash-touch">DASH<br><small>SPACE</small></button>
+    </div>
+
+    <div id="uiLayer">
+      <section id="menuScreen" class="screen active">
+        <div class="eyebrow">A SUN-DRENCHED ARCADE ADVENTURE</div>
+        <h1>BIG BOYS<br><span>RUN TO ITALY</span></h1>
+        <div class="kiss-badge">✦ KISS JAMAL FRENZY ✦</div>
+        <p class="intro">Grab every passport stamp, dodge the chaos, and make it across six piazzas to give Jamal the biggest kiss in Italy.</p>
+        <button id="startBtn" class="primary-button">START THE FRENZY <span>→</span></button>
+        <div class="best-line">BEST RUN <strong id="menuBest">0</strong></div>
+        <div class="controls-line"><b>WASD / ARROWS</b> move &nbsp; <b>SPACE / SHIFT</b> dash &nbsp; <b>MOUSE</b> hold to steer</div>
+      </section>
+
+      <section id="pauseScreen" class="screen">
+        <div class="eyebrow">PIAZZA PAUSED</div>
+        <h2>TAKE A BREATH</h2>
+        <p>Your passport is safe. The scooters are waiting.</p>
+        <button id="resumeBtn" class="primary-button">RESUME RUN <span>→</span></button>
+        <button id="pauseMenuBtn" class="text-button">Return to menu</button>
+      </section>
+
+      <section id="upgradeScreen" class="screen upgrade-screen">
+        <div class="eyebrow">PIAZZA CLEARED</div>
+        <h2>CHOOSE YOUR<br><span>FRENZY BOOST</span></h2>
+        <p>Jamal is one piazza closer. Pick one upgrade before you run on.</p>
+        <div id="upgradeChoices" class="upgrade-choices"></div>
+      </section>
+
+      <section id="endScreen" class="screen">
+        <div id="endEyebrow" class="eyebrow">THE RUN IS OVER</div>
+        <h2 id="endTitle">SCOOTERED OUT</h2>
+        <p id="endSummary">The piazza got the better of you.</p>
+        <div class="result-card">
+          <span>FINAL SCORE</span><strong id="endScore">0</strong>
+          <small id="endBest">BEST RUN: 0</small>
+        </div>
+        <button id="restartBtn" class="primary-button">RUN IT BACK <span>↻</span></button>
+        <button id="endMenuBtn" class="text-button">Return to menu</button>
+      </section>
+    </div>
+  </main>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
