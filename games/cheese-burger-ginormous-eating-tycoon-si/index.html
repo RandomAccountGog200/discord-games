@@ -1,0 +1,1506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Cheese Burger Ginormous - Eating Tycoon Simulator</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #1a0a00;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+        canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="c"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('c');
+            const ctx = canvas.getContext('2d');
+
+            // ============ VIRTUAL RESOLUTION ============
+            const VW = 800;
+            const VH = 600;
+            let scale = 1;
+            let offsetX = 0;
+            let offsetY = 0;
+
+            function resize() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                const sx = canvas.width / VW;
+                const sy = canvas.height / VH;
+                scale = Math.min(sx, sy);
+                offsetX = (canvas.width - VW * scale) / 2;
+                offsetY = (canvas.height - VH * scale) / 2;
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            function getVirtualPos(e) {
+                const rect = canvas.getBoundingClientRect();
+                const cx = (e.clientX - rect.left) * (canvas.width / rect.width);
+                const cy = (e.clientY - rect.top) * (canvas.height / rect.height);
+                return {
+                    x: (cx - offsetX) / scale,
+                    y: (cy - offsetY) / scale
+                };
+            }
+
+            // ============ AUDIO MANAGER ============
+            class AudioManager {
+                constructor() {
+                    this.ctx = null;
+                    this.initialized = false;
+                    this.musicGain = null;
+                    this.musicOscs = [];
+                    this.musicPlaying = false;
+                    this.masterGain = null;
+                }
+                init() {
+                    if (this.initialized) return;
+                    try {
+                        this.ctx = new(window.AudioContext || window.webkitAudioContext)();
+                        this.masterGain = this.ctx.createGain();
+                        this.masterGain.gain.value = 0.35;
+                        this.masterGain.connect(this.ctx.destination);
+                        this.musicGain = this.ctx.createGain();
+                        this.musicGain.gain.value = 0.08;
+                        this.musicGain.connect(this.masterGain);
+                        this.initialized = true;
+                    } catch (e) {
+                        this.initialized = false;
+                    }
+                }
+                playChomp() {
+                    if (!this.initialized) return;
+                    const t = this.ctx.currentTime;
+                    const g = this.ctx.createGain();
+                    g.gain.setValueAtTime(0.25, t);
+                    g.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+                    g.connect(this.masterGain);
+                    const buf = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.15, this.ctx.sampleRate);
+                    const d = buf.getChannelData(0);
+                    for (let i = 0; i < d.length; i++) {
+                        d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (this.ctx.sampleRate * 0.03));
+                    }
+                    const n = this.ctx.createBufferSource();
+                    n.buffer = buf;
+                    const bp = this.ctx.createBiquadFilter();
+                    bp.type = 'bandpass';
+                    bp.frequency.value = 800;
+                    bp.Q.value = 0.8;
+                    n.connect(bp);
+                    bp.connect(g);
+                    n.start(t);
+                    const osc = this.ctx.createOscillator();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(120, t);
+                    osc.frequency.exponentialRampToValueAtTime(40, t + 0.12);
+                    const og = this.ctx.createGain();
+                    og.gain.setValueAtTime(0.2, t);
+                    og.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+                    osc.connect(og);
+                    og.connect(this.masterGain);
+                    osc.start(t);
+                    osc.stop(t + 0.15);
+                }
+                playUpgrade() {
+                    if (!this.initialized) return;
+                    const t = this.ctx.currentTime;
+                    const osc = this.ctx.createOscillator();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(440, t);
+                    osc.frequency.setValueAtTime(660, t + 0.08);
+                    osc.frequency.setValueAtTime(880, t + 0.16);
+                    const g = this.ctx.createGain();
+                    g.gain.setValueAtTime(0.2, t);
+                    g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+                    osc.connect(g);
+                    g.connect(this.masterGain);
+                    osc.start(t);
+                    osc.stop(t + 0.35);
+                }
+                playGolden() {
+                    if (!this.initialized) return;
+                    const t = this.ctx.currentTime;
+                    [600, 800, 1000, 1200].forEach((f, i) => {
+                        const osc = this.ctx.createOscillator();
+                        osc.type = 'sine';
+                        osc.frequency.value = f;
+                        const g = this.ctx.createGain();
+                        g.gain.setValueAtTime(0.12, t + i * 0.06);
+                        g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.06 + 0.2);
+                        osc.connect(g);
+                        g.connect(this.masterGain);
+                        osc.start(t + i * 0.06);
+                        osc.stop(t + i * 0.06 + 0.25);
+                    });
+                }
+                playPrestige() {
+                    if (!this.initialized) return;
+                    const t = this.ctx.currentTime;
+                    [262, 330, 392, 523, 659, 784].forEach((f, i) => {
+                        const osc = this.ctx.createOscillator();
+                        osc.type = 'triangle';
+                        osc.frequency.value = f;
+                        const g = this.ctx.createGain();
+                        g.gain.setValueAtTime(0.18, t + i * 0.1);
+                        g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.1 + 0.5);
+                        osc.connect(g);
+                        g.connect(this.masterGain);
+                        osc.start(t + i * 0.1);
+                        osc.stop(t + i * 0.1 + 0.55);
+                    });
+                }
+                playClick() {
+                    if (!this.initialized) return;
+                    const t = this.ctx.currentTime;
+                    const osc = this.ctx.createOscillator();
+                    osc.type = 'sine';
+                    osc.frequency.value = 800;
+                    const g = this.ctx.createGain();
+                    g.gain.setValueAtTime(0.08, t);
+                    g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+                    osc.connect(g);
+                    g.connect(this.masterGain);
+                    osc.start(t);
+                    osc.stop(t + 0.06);
+                }
+                startMusic() {
+                    if (!this.initialized || this.musicPlaying) return;
+                    this.musicPlaying = true;
+                    const notes = [130.81, 146.83, 164.81, 174.61, 196, 220, 246.94, 261.63];
+                    let noteIdx = 0;
+                    const playNote = () => {
+                        if (!this.musicPlaying) return;
+                        const osc = this.ctx.createOscillator();
+                        osc.type = 'triangle';
+                        osc.frequency.value = notes[noteIdx % notes.length];
+                        const g = this.ctx.createGain();
+                        g.gain.setValueAtTime(0.06, this.ctx.currentTime);
+                        g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.7);
+                        osc.connect(g);
+                        g.connect(this.musicGain);
+                        osc.start();
+                        osc.stop(this.ctx.currentTime + 0.75);
+                        noteIdx++;
+                        this._musicTimeout = setTimeout(playNote, 450 + Math.random() * 200);
+                    };
+                    playNote();
+                }
+                stopMusic() {
+                    this.musicPlaying = false;
+                    if (this._musicTimeout) clearTimeout(this._musicTimeout);
+                }
+            }
+
+            // ============ PARTICLE SYSTEM ============
+            class Particle {
+                constructor(x, y, vx, vy, color, life, size = 3) {
+                    this.x = x;
+                    this.y = y;
+                    this.vx = vx;
+                    this.vy = vy;
+                    this.color = color;
+                    this.life = life;
+                    this.maxLife = life;
+                    this.size = size;
+                    this.alive = true;
+                }
+                update(dt) {
+                    this.x += this.vx * dt;
+                    this.y += this.vy * dt;
+                    this.vy += 200 * dt;
+                    this.life -= dt;
+                    if (this.life <= 0) this.alive = false;
+                }
+                draw(ctx) {
+                    const alpha = Math.max(0, this.life / this.maxLife);
+                    const s = this.size * (0.5 + 0.5 * alpha);
+                    ctx.fillStyle = this.color.replace('1)', `${alpha})`).replace('rgb',
+                        'rgba');
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, s, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            class ParticleSystem {
+                constructor() { this.particles = []; }
+                emit(x, y, count, color, lifeRange = [0.3, 0.8], speedRange = [60, 200], sizeRange = [2,
+                    6
+                ]) {
+                    for (let i = 0; i < count; i++) {
+                        const angle = Math.random() * Math.PI * 2;
+                        const speed = speedRange[0] + Math.random() * (speedRange[1] - speedRange[0]);
+                        const life = lifeRange[0] + Math.random() * (lifeRange[1] - lifeRange[0]);
+                        const size = sizeRange[0] + Math.random() * (sizeRange[1] - sizeRange[0]);
+                        this.particles.push(new Particle(x, y, Math.cos(angle) * speed, Math.sin(angle) *
+                            speed - 80, color, life, size));
+                    }
+                }
+                update(dt) {
+                    for (const p of this.particles) p.update(dt);
+                    this.particles = this.particles.filter(p => p.alive);
+                }
+                draw(ctx) {
+                    for (const p of this.particles) p.draw(ctx);
+                }
+            }
+
+            // ============ GAME CONFIG ============
+            const SIZE_TIERS = [
+                { name: 'Tiny', min: 0, scale: 0.35, color: '#f5c6a0' },
+                { name: 'Small', min: 150, scale: 0.55, color: '#f0b890' },
+                { name: 'Medium', min: 600, scale: 0.8, color: '#eba280' },
+                { name: 'Large', min: 2500, scale: 1.1, color: '#e58d6d' },
+                { name: 'Huge', min: 12000, scale: 1.5, color: '#e07858' },
+                { name: 'Massive', min: 60000, scale: 2.0, color: '#db6343' },
+                { name: 'GINORMOUS', min: 300000, scale: 2.7, color: '#d44e2e' },
+            ];
+
+            const UPGRADE_DEFS = [{
+                id: 'clickPower',
+                name: 'Bite Power',
+                desc: 'More bites per chomp',
+                baseCost: 12,
+                costMult: 1.55,
+                effectPerLevel: 1,
+                maxLevel: 30,
+                icon: '🦷'
+            }, {
+                id: 'autoChewers',
+                name: 'Auto Chewers',
+                desc: 'Auto-bites per second',
+                baseCost: 30,
+                costMult: 1.45,
+                effectPerLevel: 0.6,
+                maxLevel: 60,
+                icon: '🤖'
+            }, {
+                id: 'burgerQuality',
+                name: 'Burger Quality',
+                desc: 'Multiplies all bites',
+                baseCost: 150,
+                costMult: 2.3,
+                effectPerLevel: 0.5,
+                maxLevel: 15,
+                icon: '⭐'
+            }, {
+                id: 'restaurant',
+                name: 'Restaurant Empire',
+                desc: 'Massive auto-bite boost',
+                baseCost: 800,
+                costMult: 1.9,
+                effectPerLevel: 5,
+                maxLevel: 20,
+                icon: '🏪'
+            }, {
+                id: 'goldenGrill',
+                name: 'Golden Grill',
+                desc: 'Chance of golden burger',
+                baseCost: 2000,
+                costMult: 2.8,
+                effectPerLevel: 0.04,
+                maxLevel: 15,
+                icon: '✨'
+            }, {
+                id: 'sauceMagic',
+                name: 'Sauce Magic',
+                desc: '30s of 2x boost (90s cooldown)',
+                baseCost: 350,
+                costMult: 1.0,
+                effectPerLevel: 0,
+                maxLevel: 1,
+                icon: '🔥',
+                isOneTime: true
+            }, ];
+
+            // ============ GAME CLASS ============
+            class Game {
+                constructor() {
+                    this.audio = new AudioManager();
+                    this.particles = new ParticleSystem();
+                    this.state = 'MENU'; // MENU | PLAYING | PRESTIGE
+                    this.bites = 0;
+                    this.totalBitesEaten = 0;
+                    this.goldenBuns = 0;
+                    this.permanentMultiplier = 1.0;
+                    this.upgradeLevels = {};
+                    this.sauceActive = false;
+                    this.sauceTimer = 0;
+                    this.sauceCooldownRemaining = 0;
+                    this.displayedScale = 0.35;
+                    this.currentTierIndex = 0;
+                    this.goldenBurger = null;
+                    this.goldenSpawnTimer = 0;
+                    this.goldenSpawnInterval = 18;
+                    this.prestigeThreshold = 1000000;
+                    this.prestigeAnimation = 0;
+                    this.burgerSquish = 0;
+                    this.characterBounce = 0;
+                    this.bgHue = 210;
+                    this.lastTime = 0;
+                    this.saveTimer = 0;
+                    this.hoveredUpgrade = -1;
+                    this.floatingTexts = [];
+                    this.shakeAmount = 0;
+
+                    UPGRADE_DEFS.forEach(d => { this.upgradeLevels[d.id] = 0; });
+                    this.load();
+                    this.setupInput();
+                    this.lastTime = performance.now();
+                    this.gameLoop(this.lastTime);
+                }
+
+                setupInput() {
+                    canvas.addEventListener('pointerdown', (e) => {
+                        const pos = getVirtualPos(e);
+                        this.handlePointerDown(pos);
+                        if (this.audio.ctx && this.audio.ctx.state === 'suspended') {
+                            this.audio.ctx.resume();
+                        }
+                        if (!this.audio.initialized) this.audio.init();
+                    });
+                    canvas.addEventListener('pointermove', (e) => {
+                        const pos = getVirtualPos(e);
+                        this.handlePointerMove(pos);
+                    });
+                    canvas.addEventListener('pointerup', () => {
+                        this.hoveredUpgrade = -1;
+                    });
+                    document.addEventListener('keydown', (e) => {
+                        if (e.code === 'Space' && this.state === 'PLAYING') {
+                            e.preventDefault();
+                            this.doChomp();
+                        }
+                        if (e.code === 'KeyP' && this.state === 'PLAYING' && this
+                            .totalBitesEaten >= this.prestigeThreshold) {
+                            this.startPrestige();
+                        }
+                    });
+                }
+
+                handlePointerDown(pos) {
+                    if (this.state === 'MENU') {
+                        if (pos.x > 250 && pos.x < 550 && pos.y > 340 && pos.y < 420) {
+                            this.startGame();
+                        }
+                        return;
+                    }
+                    if (this.state === 'PRESTIGE') {
+                        if (pos.x > 250 && pos.x < 550 && pos.y > 370 && pos.y < 440) {
+                            this.confirmPrestige();
+                        }
+                        return;
+                    }
+                    if (this.state === 'PLAYING') {
+                        // Check golden burger click
+                        if (this.goldenBurger && this.goldenBurger.active) {
+                            const gb = this.goldenBurger;
+                            const dx = pos.x - gb.x;
+                            const dy = pos.y - gb.y;
+                            if (Math.sqrt(dx * dx + dy * dy) < gb.radius + 15) {
+                                this.clickGoldenBurger();
+                                return;
+                            }
+                        }
+                        // Check upgrade clicks
+                        const upgradeCards = this.getUpgradeCardRects();
+                        for (let i = 0; i < upgradeCards.length; i++) {
+                            const r = upgradeCards[i];
+                            if (pos.x >= r.x && pos.x <= r.x + r.w && pos.y >= r.y && pos.y <= r.y + r
+                                .h) {
+                                this.buyUpgrade(i);
+                                return;
+                            }
+                        }
+                        // Check burger button click
+                        const burgerCX = VW / 2;
+                        const burgerCY = 420;
+                        const burgerR = 65;
+                        const dxb = pos.x - burgerCX;
+                        const dyb = pos.y - burgerCY;
+                        if (Math.sqrt(dxb * dxb + dyb * dyb) < burgerR + 20) {
+                            this.doChomp();
+                            return;
+                        }
+                        // Check prestige button if visible
+                        if (this.totalBitesEaten >= this.prestigeThreshold) {
+                            const px = VW / 2 - 80;
+                            const py = 500;
+                            if (pos.x >= px && pos.x <= px + 160 && pos.y >= py && pos.y <= py + 45) {
+                                this.startPrestige();
+                                return;
+                            }
+                        }
+                    }
+                }
+
+                handlePointerMove(pos) {
+                    if (this.state !== 'PLAYING') { this.hoveredUpgrade = -1; return; }
+                    const upgradeCards = this.getUpgradeCardRects();
+                    let found = -1;
+                    for (let i = 0; i < upgradeCards.length; i++) {
+                        const r = upgradeCards[i];
+                        if (pos.x >= r.x && pos.x <= r.x + r.w && pos.y >= r.y && pos.y <= r.y + r.h) {
+                            found = i;
+                            break;
+                        }
+                    }
+                    if (found !== this.hoveredUpgrade) {
+                        this.hoveredUpgrade = found;
+                        if (found >= 0) this.audio.playClick();
+                    }
+                }
+
+                getUpgradeCardRects() {
+                    const cards = [];
+                    const startX = 570;
+                    const cardW = 200;
+                    const cardH = 72;
+                    const gap = 6;
+                    const startY = 55;
+                    for (let i = 0; i < UPGRADE_DEFS.length; i++) {
+                        cards.push({
+                            x: startX,
+                            y: startY + i * (cardH + gap),
+                            w: cardW,
+                            h: cardH
+                        });
+                    }
+                    return cards;
+                }
+
+                startGame() {
+                    if (this.totalBitesEaten === 0) {
+                        this.bites = 0;
+                        this.totalBitesEaten = 0;
+                        this.goldenBuns = 0;
+                        this.permanentMultiplier = 1.0;
+                        UPGRADE_DEFS.forEach(d => { this.upgradeLevels[d.id] = 0; });
+                        this.sauceActive = false;
+                        this.sauceTimer = 0;
+                        this.sauceCooldownRemaining = 0;
+                        this.goldenBurger = null;
+                        this.goldenSpawnTimer = 0;
+                    }
+                    this.state = 'PLAYING';
+                    this.currentTierIndex = 0;
+                    this.displayedScale = 0.35;
+                    this.audio.init();
+                    this.audio.startMusic();
+                    this.save();
+                }
+
+                doChomp() {
+                    if (this.state !== 'PLAYING') return;
+                    let clickBites = 1 + this.upgradeLevels['clickPower'] * UPGRADE_DEFS.find(d => d
+                        .id === 'clickPower').effectPerLevel;
+                    let qualityMult = 1 + this.upgradeLevels['burgerQuality'] * UPGRADE_DEFS.find(d => d
+                        .id === 'burgerQuality').effectPerLevel;
+                    if (this.sauceActive) qualityMult *= 2;
+                    qualityMult *= this.permanentMultiplier;
+                    const totalBites = Math.floor(clickBites * qualityMult);
+                    this.bites += totalBites;
+                    this.totalBitesEaten += totalBites;
+                    this.burgerSquish = 1.0;
+                    this.characterBounce = 1.0;
+                    this.shakeAmount = Math.max(this.shakeAmount, 3);
+                    this.particles.emit(VW / 2, 420, 8 + Math.floor(totalBites / 3), 'rgb(255,180,60)',
+                        [0.3, 0.7], [40, 180], [2, 7]);
+                    this.particles.emit(VW / 2, 420, 5, 'rgb(255,220,100)', [0.25, 0.5], [30, 120], [1,
+                    4]);
+                    this.floatingTexts.push({
+                        x: VW / 2 + (Math.random() - 0.5) * 60,
+                        y: 390,
+                        text: '+' + totalBites,
+                        life: 0.9,
+                        maxLife: 0.9,
+                        vy: -90
+                    });
+                    this.audio.playChomp();
+                    this.checkSizeTier();
+                    this.save();
+                }
+
+                clickGoldenBurger() {
+                    if (!this.goldenBurger || !this.goldenBurger.active) return;
+                    const bonus = Math.floor((50 + this.totalBitesEaten * 0.02) * this.permanentMultiplier *
+                        (this.sauceActive ? 2 : 1));
+                    this.bites += bonus;
+                    this.totalBitesEaten += bonus;
+                    this.goldenBurger.active = false;
+                    this.shakeAmount = Math.max(this.shakeAmount, 8);
+                    this.particles.emit(this.goldenBurger.x, this.goldenBurger.y, 30,
+                        'rgb(255,215,0)', [0.4, 1.0], [60, 250], [3, 10]);
+                    this.particles.emit(this.goldenBurger.x, this.goldenBurger.y, 20,
+                        'rgb(255,255,200)', [0.3, 0.7], [40, 150], [2, 6]);
+                    this.floatingTexts.push({
+                        x: this.goldenBurger.x,
+                        y: this.goldenBurger.y - 20,
+                        text: 'GOLDEN +' + bonus,
+                        life: 1.5,
+                        maxLife: 1.5,
+                        vy: -120,
+                        golden: true
+                    });
+                    this.audio.playGolden();
+                    this.checkSizeTier();
+                    this.save();
+                }
+
+                buyUpgrade(index) {
+                    const def = UPGRADE_DEFS[index];
+                    const lvl = this.upgradeLevels[def.id];
+                    if (lvl >= def.maxLevel) return;
+                    const cost = Math.floor(def.baseCost * Math.pow(def.costMult, lvl));
+                    if (this.bites < cost) return;
+                    this.bites -= cost;
+                    this.upgradeLevels[def.id]++;
+                    if (def.id === 'sauceMagic') {
+                        this.sauceActive = true;
+                        this.sauceTimer = 30;
+                        this.sauceCooldownRemaining = 90;
+                    }
+                    this.particles.emit(VW / 2, 300, 15, 'rgb(100,255,180)', [0.4, 0.9], [50, 200], [3,
+                    8]);
+                    this.audio.playUpgrade();
+                    this.save();
+                }
+
+                startPrestige() {
+                    if (this.totalBitesEaten < this.prestigeThreshold) return;
+                    this.state = 'PRESTIGE';
+                    this.prestigeAnimation = 0;
+                    const bunsEarned = Math.floor(this.totalBitesEaten / 100000);
+                    this._pendingBuns = Math.max(1, bunsEarned);
+                    this.audio.playPrestige();
+                }
+
+                confirmPrestige() {
+                    this.goldenBuns += this._pendingBuns;
+                    this.permanentMultiplier = 1 + this.goldenBuns * 0.1;
+                    this.bites = 0;
+                    this.totalBitesEaten = 0;
+                    UPGRADE_DEFS.forEach(d => { this.upgradeLevels[d.id] = 0; });
+                    this.sauceActive = false;
+                    this.sauceTimer = 0;
+                    this.sauceCooldownRemaining = 0;
+                    this.goldenBurger = null;
+                    this.goldenSpawnTimer = 0;
+                    this.displayedScale = 0.35;
+                    this.currentTierIndex = 0;
+                    this.state = 'PLAYING';
+                    this.particles.emit(VW / 2, VH / 2, 80, 'rgb(255,215,0)', [0.5, 1.5], [80, 350], [3,
+                        12
+                    ]);
+                    this.particles.emit(VW / 2, VH / 2, 50, 'rgb(255,255,255)', [0.3, 0.9], [60, 250], [
+                        2, 7
+                    ]);
+                    this.shakeAmount = 15;
+                    this._pendingBuns = 0;
+                    this.save();
+                }
+
+                checkSizeTier() {
+                    for (let i = SIZE_TIERS.length - 1; i >= 0; i--) {
+                        if (this.totalBitesEaten >= SIZE_TIERS[i].min) {
+                            if (i !== this.currentTierIndex) {
+                                this.currentTierIndex = i;
+                                this.particles.emit(VW / 2, 250, 25, 'rgb(255,255,150)', [0.5, 1.2], [70,
+                                    280
+                                ], [4, 10]);
+                                this.shakeAmount = Math.max(this.shakeAmount, 6);
+                                this.floatingTexts.push({
+                                    x: VW / 2,
+                                    y: 200,
+                                    text: SIZE_TIERS[i].name + '!',
+                                    life: 2.0,
+                                    maxLife: 2.0,
+                                    vy: -60,
+                                    big: true
+                                });
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                update(dt) {
+                    if (this.state !== 'PLAYING' && this.state !== 'PRESTIGE') return;
+                    const cappedDt = Math.min(dt, 0.2);
+
+                    // Update particles
+                    this.particles.update(cappedDt);
+
+                    // Update floating texts
+                    for (const ft of this.floatingTexts) {
+                        ft.y += ft.vy * cappedDt;
+                        ft.life -= cappedDt;
+                    }
+                    this.floatingTexts = this.floatingTexts.filter(ft => ft.life > 0);
+
+                    // Update squish/bounce
+                    this.burgerSquish = Math.max(0, this.burgerSquish - cappedDt * 5);
+                    this.characterBounce = Math.max(0, this.characterBounce - cappedDt * 4);
+                    this.shakeAmount = Math.max(0, this.shakeAmount - cappedDt * 25);
+
+                    // Update displayed scale
+                    const targetScale = SIZE_TIERS[this.currentTierIndex].scale;
+                    this.displayedScale += (targetScale - this.displayedScale) * Math.min(cappedDt * 3, 1);
+
+                    if (this.state === 'PLAYING') {
+                        // Auto chewers
+                        const autoLevel = this.upgradeLevels['autoChewers'];
+                        const autoPerSec = autoLevel * UPGRADE_DEFS.find(d => d.id === 'autoChewers')
+                            .effectPerLevel;
+                        const restaurantLevel = this.upgradeLevels['restaurant'];
+                        const restPerSec = restaurantLevel * UPGRADE_DEFS.find(d => d.id === 'restaurant')
+                            .effectPerLevel;
+                        let totalAutoPerSec = autoPerSec + restPerSec;
+                        let qualityMult = 1 + this.upgradeLevels['burgerQuality'] * UPGRADE_DEFS.find(d => d
+                            .id === 'burgerQuality').effectPerLevel;
+                        if (this.sauceActive) qualityMult *= 2;
+                        qualityMult *= this.permanentMultiplier;
+                        const autoBites = Math.floor(totalAutoPerSec * qualityMult * cappedDt);
+                        if (autoBites > 0) {
+                            this.bites += autoBites;
+                            this.totalBitesEaten += autoBites;
+                            if (Math.random() < 0.3) {
+                                this.particles.emit(VW / 2 + (Math.random() - 0.5) * 100, 350 + Math.random() *
+                                    80, 1, 'rgb(255,200,100)', [0.3, 0.5], [20, 60], [1, 3]);
+                            }
+                            this.checkSizeTier();
+                        }
+
+                        // Sauce timer
+                        if (this.sauceActive) {
+                            this.sauceTimer -= cappedDt;
+                            if (this.sauceTimer <= 0) {
+                                this.sauceActive = false;
+                                this.sauceTimer = 0;
+                                this.sauceCooldownRemaining = 90;
+                            }
+                        }
+                        if (!this.sauceActive && this.sauceCooldownRemaining > 0 && this.upgradeLevels[
+                                'sauceMagic'
+                            ] > 0) {
+                            this.sauceCooldownRemaining -= cappedDt;
+                            if (this.sauceCooldownRemaining <= 0) {
+                                this.sauceCooldownRemaining = 0;
+                                this.upgradeLevels['sauceMagic'] = 0;
+                            }
+                        }
+
+                        // Golden burger spawning
+                        const goldenChance = this.upgradeLevels['goldenGrill'] * UPGRADE_DEFS.find(d => d
+                            .id === 'goldenGrill').effectPerLevel;
+                        this.goldenSpawnTimer -= cappedDt * (1 + goldenChance * 3);
+                        if (this.goldenSpawnTimer <= 0 && (!this.goldenBurger || !this.goldenBurger.active)) {
+                            this.spawnGoldenBurger();
+                            this.goldenSpawnTimer = this.goldenSpawnInterval / (1 + goldenChance);
+                        }
+
+                        // Update golden burger
+                        if (this.goldenBurger && this.goldenBurger.active) {
+                            this.goldenBurger.x -= this.goldenBurger.speed * cappedDt;
+                            this.goldenBurger.bobPhase += cappedDt * 3;
+                            if (this.goldenBurger.x < -60) {
+                                this.goldenBurger.active = false;
+                            }
+                        }
+
+                        // Auto-save
+                        this.saveTimer += cappedDt;
+                        if (this.saveTimer > 15) {
+                            this.saveTimer = 0;
+                            this.save();
+                        }
+                    }
+                }
+
+                spawnGoldenBurger() {
+                    this.goldenBurger = {
+                        x: VW + 40,
+                        y: 120 + Math.random() * 180,
+                        radius: 28,
+                        speed: 70 + Math.random() * 60,
+                        active: true,
+                        bobPhase: Math.random() * Math.PI * 2,
+                        glowPhase: 0,
+                    };
+                }
+
+                render() {
+                    ctx.clearRect(0, 0, VW, VH);
+                    const shakeX = (Math.random() - 0.5) * this.shakeAmount;
+                    const shakeY = (Math.random() - 0.5) * this.shakeAmount;
+
+                    ctx.save();
+                    ctx.translate(shakeX, shakeY);
+
+                    if (this.state === 'MENU') {
+                        this.drawMenu();
+                    } else if (this.state === 'PRESTIGE') {
+                        this.drawGameScene();
+                        this.drawPrestigeOverlay();
+                    } else {
+                        this.drawGameScene();
+                        if (this.totalBitesEaten >= this.prestigeThreshold) {
+                            this.drawPrestigeButton();
+                        }
+                    }
+
+                    ctx.restore();
+
+                    // Draw particles on top (no shake)
+                    this.particles.draw(ctx);
+
+                    // Draw floating texts (no shake)
+                    for (const ft of this.floatingTexts) {
+                        const alpha = Math.max(0, ft.life / ft.maxLife);
+                        const scale2 = ft.big ? 1.4 : 1;
+                        ctx.save();
+                        ctx.globalAlpha = alpha;
+                        ctx.fillStyle = ft.golden ? '#ffd700' : '#ffffff';
+                        ctx.font = `bold ${Math.floor(16*scale2)}px 'Segoe UI', system-ui, sans-serif`;
+                        ctx.textAlign = 'center';
+                        ctx.fillText(ft.text, ft.x, ft.y);
+                        ctx.fillStyle = ft.golden ? '#b8860b' : '#333333';
+                        ctx.fillText(ft.text, ft.x + 1, ft.y + 1);
+                        ctx.restore();
+                    }
+                }
+
+                drawGameScene() {
+                    this.drawBackground();
+                    this.drawCharacter();
+                    this.drawBurgerButton();
+                    this.drawGoldenBurgerFloating();
+                    this.drawStats();
+                    this.drawUpgrades();
+                }
+
+                drawBackground() {
+                    const hueShift = Math.min(40, this.totalBitesEaten / 25000);
+                    const hue = 200 + hueShift;
+                    const grad = ctx.createLinearGradient(0, 0, 0, VH);
+                    grad.addColorStop(0, `hsl(${hue},60%,25%)`);
+                    grad.addColorStop(0.5, `hsl(${hue-10},50%,35%)`);
+                    grad.addColorStop(1, `hsl(${hue-20},40%,18%)`);
+                    ctx.fillStyle = grad;
+                    ctx.fillRect(0, 0, VW, VH);
+
+                    // Ground
+                    const groundGrad = ctx.createLinearGradient(0, 440, 0, VH);
+                    groundGrad.addColorStop(0, '#5a3a1a');
+                    groundGrad.addColorStop(0.3, '#4a2a0a');
+                    groundGrad.addColorStop(1, '#2a1505');
+                    ctx.fillStyle = groundGrad;
+                    ctx.fillRect(0, 440, VW, VH - 440);
+
+                    // Grass line
+                    ctx.strokeStyle = '#7cbf3f';
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.moveTo(0, 442);
+                    for (let x = 0; x < VW; x += 12) {
+                        ctx.lineTo(x + 6, 436 + Math.sin(x * 0.1 + performance.now() * 0.001) * 4);
+                    }
+                    ctx.stroke();
+
+                    // Stars/clouds based on tier
+                    if (this.currentTierIndex >= 4) {
+                        for (let i = 0; i < 8; i++) {
+                            const sx = (i * 97 + 40) % VW;
+                            const sy = 20 + (i * 37) % 100;
+                            ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                            ctx.beginPath();
+                            ctx.arc(sx, sy, 1.5, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                    }
+                }
+
+                drawCharacter() {
+                    const tier = SIZE_TIERS[this.currentTierIndex];
+                    const sc = this.displayedScale;
+                    const cx = VW / 2;
+                    const cy = 290;
+                    const bounceOffset = Math.sin(this.characterBounce * Math.PI) * 25 * sc;
+
+                    ctx.save();
+                    ctx.translate(cx, cy - bounceOffset);
+                    ctx.scale(sc, sc);
+
+                    // Shadow
+                    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                    ctx.beginPath();
+                    ctx.ellipse(0, 55, 40, 10, 0, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Body
+                    const bodyGrad = ctx.createRadialGradient(-8, -20, 10, 0, 0, 55);
+                    bodyGrad.addColorStop(0, tier.color);
+                    bodyGrad.addColorStop(0.7, tier.color.replace('f', 'd').replace('b', '9').replace('e',
+                        'c'));
+                    bodyGrad.addColorStop(1, '#c07050');
+                    ctx.fillStyle = bodyGrad;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 50, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+
+                    // Belly highlight
+                    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+                    ctx.beginPath();
+                    ctx.arc(-5, -10, 30, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Face
+                    const faceY = -8;
+                    // Eyes
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(-14, faceY - 8, 11, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.arc(14, faceY - 8, 11, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#1a1a1a';
+                    ctx.beginPath();
+                    ctx.arc(-12, faceY - 6, 5.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.arc(16, faceY - 6, 5.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Eye shine
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(-10, faceY - 9, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.arc(18, faceY - 9, 2, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Mouth
+                    const mouthWidth = 8 + this.currentTierIndex * 3;
+                    ctx.strokeStyle = '#5a3020';
+                    ctx.lineWidth = 2.5;
+                    ctx.beginPath();
+                    if (this.currentTierIndex >= 5) {
+                        ctx.arc(0, faceY + 8, mouthWidth, 0, Math.PI);
+                    } else if (this.currentTierIndex >= 3) {
+                        ctx.arc(0, faceY + 4, mouthWidth, 0.1, Math.PI - 0.1);
+                    } else {
+                        ctx.arc(0, faceY + 2, mouthWidth, 0.2, Math.PI - 0.2);
+                    }
+                    ctx.stroke();
+
+                    // Cheeks
+                    ctx.fillStyle = 'rgba(255,150,150,0.35)';
+                    ctx.beginPath();
+                    ctx.arc(-22, faceY + 2, 7, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.arc(22, faceY + 2, 7, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Arms
+                    ctx.fillStyle = tier.color;
+                    ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+                    ctx.lineWidth = 2;
+                    // Left arm
+                    ctx.beginPath();
+                    ctx.ellipse(-40, 5, 15, 8, -0.3, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
+                    // Right arm
+                    ctx.beginPath();
+                    ctx.ellipse(40, 5, 15, 8, 0.3, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // Legs
+                    ctx.fillStyle = '#5a3825';
+                    ctx.beginPath();
+                    ctx.ellipse(-15, 48, 14, 10, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.ellipse(15, 48, 14, 10, 0, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Crown for ginormous
+                    if (this.currentTierIndex >= 6) {
+                        ctx.fillStyle = '#ffd700';
+                        ctx.beginPath();
+                        ctx.moveTo(-20, -50);
+                        ctx.lineTo(-22, -65);
+                        ctx.lineTo(-10, -55);
+                        ctx.lineTo(0, -70);
+                        ctx.lineTo(10, -55);
+                        ctx.lineTo(22, -65);
+                        ctx.lineTo(20, -50);
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.strokeStyle = '#b8860b';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                        // Jewels
+                        ctx.fillStyle = '#ff3333';
+                        ctx.beginPath();
+                        ctx.arc(0, -58, 4, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = '#3399ff';
+                        ctx.beginPath();
+                        ctx.arc(-12, -54, 3, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+
+                    ctx.restore();
+                }
+
+                drawBurgerButton() {
+                    const cx = VW / 2;
+                    const cy = 420;
+                    const squishX = 1 + this.burgerSquish * 0.25;
+                    const squishY = 1 - this.burgerSquish * 0.2;
+                    const pulse = 1 + Math.sin(performance.now() * 0.004) * 0.03;
+
+                    ctx.save();
+                    ctx.translate(cx, cy);
+                    ctx.scale(squishX * pulse, squishY * pulse);
+
+                    // Glow
+                    const glowGrad = ctx.createRadialGradient(0, 0, 30, 0, 0, 80);
+                    glowGrad.addColorStop(0, 'rgba(255,180,60,0.3)');
+                    glowGrad.addColorStop(1, 'rgba(255,180,60,0)');
+                    ctx.fillStyle = glowGrad;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 80, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Bottom bun
+                    ctx.fillStyle = '#d4943a';
+                    ctx.beginPath();
+                    ctx.arc(0, 6, 48, Math.PI, 0);
+                    ctx.fill();
+                    ctx.fillStyle = '#c07828';
+                    ctx.fillRect(-48, 0, 96, 8);
+                    ctx.fillStyle = '#d4943a';
+                    ctx.beginPath();
+                    ctx.arc(0, 6, 48, 0, Math.PI, true);
+                    ctx.fill();
+
+                    // Patty
+                    ctx.fillStyle = '#5a3020';
+                    ctx.fillRect(-44, -6, 88, 14);
+                    ctx.fillStyle = '#4a2010';
+                    ctx.fillRect(-44, -6, 88, 4);
+
+                    // Cheese
+                    ctx.fillStyle = '#ffcc33';
+                    ctx.beginPath();
+                    ctx.moveTo(-42, -8);
+                    ctx.lineTo(-30, -18);
+                    ctx.lineTo(-15, -6);
+                    ctx.lineTo(5, -20);
+                    ctx.lineTo(22, -8);
+                    ctx.lineTo(38, -17);
+                    ctx.lineTo(42, -8);
+                    ctx.lineTo(42, -2);
+                    ctx.lineTo(-42, -2);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // Lettuce
+                    ctx.fillStyle = '#5cb840';
+                    ctx.beginPath();
+                    for (let i = 0; i < 8; i++) {
+                        const lx = -40 + i * 11;
+                        ctx.arc(lx, -14, 11, Math.PI * 1.2, Math.PI * 1.8);
+                    }
+                    ctx.fill();
+
+                    // Tomato
+                    ctx.fillStyle = '#e84040';
+                    ctx.beginPath();
+                    ctx.arc(-18, -16, 9, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.arc(18, -16, 9, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#ff6666';
+                    ctx.beginPath();
+                    ctx.arc(-18, -16, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.arc(18, -16, 4, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Top bun
+                    const topBunGrad = ctx.createRadialGradient(0, -22, 8, 0, -14, 50);
+                    topBunGrad.addColorStop(0, '#f0c878');
+                    topBunGrad.addColorStop(0.7, '#d4943a');
+                    topBunGrad.addColorStop(1, '#b07028');
+                    ctx.fillStyle = topBunGrad;
+                    ctx.beginPath();
+                    ctx.arc(0, -14, 48, Math.PI, 0);
+                    ctx.fill();
+                    ctx.fillStyle = '#e8b860';
+                    ctx.fillRect(-48, -22, 96, 30);
+                    ctx.fillStyle = topBunGrad;
+                    ctx.beginPath();
+                    ctx.arc(0, -14, 48, 0, Math.PI, true);
+                    ctx.fill();
+
+                    // Sesame seeds
+                    ctx.fillStyle = '#faf5e8';
+                    const seedPositions = [
+                        [-20, -28],
+                        [5, -32],
+                        [25, -25],
+                        [-30, -20],
+                        [15, -22],
+                        [-8, -34],
+                        [22, -30],
+                        [-25, -26],
+                        [0, -36],
+                        [30, -20]
+                    ];
+                    seedPositions.forEach(([sx, sy]) => {
+                        ctx.beginPath();
+                        ctx.ellipse(sx, sy, 3.5, 2, 0.3, 0, Math.PI * 2);
+                        ctx.fill();
+                    });
+
+                    ctx.restore();
+
+                    // Click hint
+                    const hintAlpha = 0.5 + Math.sin(performance.now() * 0.003) * 0.3;
+                    ctx.fillStyle = `rgba(255,255,255,${hintAlpha})`;
+                    ctx.font = 'bold 12px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('TAP TO CHOMP!', cx, cy + 72);
+                }
+
+                drawGoldenBurgerFloating() {
+                    if (!this.goldenBurger || !this.goldenBurger.active) return;
+                    const gb = this.goldenBurger;
+                    const bobY = Math.sin(gb.bobPhase) * 12;
+                    const glowAlpha = 0.5 + Math.sin(performance.now() * 0.008) * 0.3;
+
+                    ctx.save();
+                    ctx.translate(gb.x, gb.y + bobY);
+
+                    // Golden glow
+                    const glowGrad = ctx.createRadialGradient(0, 0, gb.radius * 0.5, 0, 0, gb.radius * 1.8);
+                    glowGrad.addColorStop(0, `rgba(255,215,0,${glowAlpha})`);
+                    glowGrad.addColorStop(1, 'rgba(255,215,0,0)');
+                    ctx.fillStyle = glowGrad;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, gb.radius * 1.8, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Golden burger
+                    const r = gb.radius;
+                    ctx.fillStyle = '#ffd700';
+                    ctx.beginPath();
+                    ctx.arc(0, 2, r, Math.PI, 0);
+                    ctx.fill();
+                    ctx.fillStyle = '#daa520';
+                    ctx.fillRect(-r, -2, r * 2, 6);
+                    ctx.fillStyle = '#ffd700';
+                    ctx.beginPath();
+                    ctx.arc(0, -2, r, 0, Math.PI, true);
+                    ctx.fill();
+                    ctx.fillStyle = '#ffec80';
+                    ctx.beginPath();
+                    ctx.arc(0, -8, r * 0.7, Math.PI, 0);
+                    ctx.fill();
+                    ctx.fillStyle = '#daa520';
+                    ctx.fillRect(-r * 0.7, -10, r * 1.4, r * 0.5);
+                    ctx.fillStyle = '#ffec80';
+                    ctx.beginPath();
+                    ctx.arc(0, -8, r * 0.7, 0, Math.PI, true);
+                    ctx.fill();
+                    // Sparkles
+                    for (let i = 0; i < 5; i++) {
+                        const sx = (Math.sin(performance.now() * 0.01 + i * 1.3) * r * 1.2);
+                        const sy = (Math.cos(performance.now() * 0.013 + i * 1.7) * r * 1.2);
+                        ctx.fillStyle = '#fff';
+                        ctx.beginPath();
+                        ctx.arc(sx, sy, 2, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+
+                    ctx.restore();
+                }
+
+                drawStats() {
+                    // Top bar background
+                    const barGrad = ctx.createLinearGradient(0, 0, 0, 48);
+                    barGrad.addColorStop(0, 'rgba(0,0,0,0.6)');
+                    barGrad.addColorStop(1, 'rgba(0,0,0,0.3)');
+                    ctx.fillStyle = barGrad;
+                    ctx.fillRect(0, 0, VW, 50);
+
+                    const tier = SIZE_TIERS[this.currentTierIndex];
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 15px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'left';
+                    ctx.fillText(`🍔 Bites: ${Math.floor(this.bites).toLocaleString()}`, 15, 22);
+                    ctx.fillText(`📏 Size: ${tier.name}`, 15, 42);
+
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`Total Eaten: ${Math.floor(this.totalBitesEaten).toLocaleString()}`, VW / 2,
+                        30);
+
+                    ctx.textAlign = 'right';
+                    ctx.fillText(`🥇 Golden Buns: ${this.goldenBuns}`, VW - 15, 22);
+                    ctx.fillText(`🔥 Multiplier: ${(this.permanentMultiplier*(this.sauceActive?2:1)).toFixed(2)}x`,
+                        VW - 15, 42);
+
+                    // Sauce indicator
+                    if (this.sauceActive) {
+                        ctx.fillStyle = '#ff6644';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(`🔥 SAUCE MAGIC: ${this.sauceTimer.toFixed(1)}s`, VW / 2, 48);
+                    } else if (this.sauceCooldownRemaining > 0) {
+                        ctx.fillStyle = '#888888';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(`Sauce cooldown: ${Math.ceil(this.sauceCooldownRemaining)}s`, VW / 2, 48);
+                    }
+
+                    // Progress bar
+                    const nextTierIdx = Math.min(this.currentTierIndex + 1, SIZE_TIERS.length - 1);
+                    const nextTier = SIZE_TIERS[nextTierIdx];
+                    const prevTier = SIZE_TIERS[this.currentTierIndex];
+                    const progress = nextTier.min > prevTier.min ?
+                        Math.min(1, (this.totalBitesEaten - prevTier.min) / (nextTier.min - prevTier.min)) :
+                        1;
+                    const barX = VW / 2 - 100;
+                    const barY = 54;
+                    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                    ctx.fillRect(barX, barY, 200, 10);
+                    const progGrad = ctx.createLinearGradient(barX, 0, barX + 200, 0);
+                    progGrad.addColorStop(0, '#ff8800');
+                    progGrad.addColorStop(1, '#ffcc00');
+                    ctx.fillStyle = progGrad;
+                    ctx.fillRect(barX, barY, 200 * progress, 10);
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '9px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(`Next: ${nextTier.name}`, VW / 2, barY + 20);
+                }
+
+                drawUpgrades() {
+                    const cards = this.getUpgradeCardRects();
+                    for (let i = 0; i < UPGRADE_DEFS.length; i++) {
+                        const def = UPGRADE_DEFS[i];
+                        const r = cards[i];
+                        const lvl = this.upgradeLevels[def.id];
+                        const cost = Math.floor(def.baseCost * Math.pow(def.costMult, lvl));
+                        const canAfford = this.bites >= cost && lvl < def.maxLevel;
+                        const isHovered = this.hoveredUpgrade === i;
+                        const maxedOut = lvl >= def.maxLevel;
+
+                        // Card background
+                        const cardAlpha = isHovered ? 0.85 : 0.65;
+                        let cardColor;
+                        if (maxedOut) cardColor = `rgba(60,60,60,${cardAlpha})`;
+                        else if (canAfford) cardColor = `rgba(40,100,60,${cardAlpha})`;
+                        else cardColor = `rgba(50,40,30,${cardAlpha})`;
+
+                        ctx.fillStyle = cardColor;
+                        ctx.strokeStyle = isHovered ? '#ffcc00' : (canAfford ? '#88ff88' : '#666666');
+                        ctx.lineWidth = isHovered ? 3 : 1.5;
+                        ctx.beginPath();
+                        ctx.roundRect(r.x, r.y, r.w, r.h, 8);
+                        ctx.fill();
+                        ctx.stroke();
+
+                        // Icon
+                        ctx.fillStyle = '#fff';
+                        ctx.font = '18px "Segoe UI", system-ui, sans-serif';
+                        ctx.textAlign = 'left';
+                        ctx.fillText(def.icon, r.x + 8, r.y + 22);
+
+                        // Name
+                        ctx.fillStyle = '#ffffff';
+                        ctx.font = 'bold 11px "Segoe UI", system-ui, sans-serif';
+                        ctx.fillText(def.name, r.x + 32, r.y + 16);
+
+                        // Level
+                        ctx.fillStyle = '#cccccc';
+                        ctx.font = '9px "Segoe UI", system-ui, sans-serif';
+                        ctx.fillText(`Lv ${lvl}/${def.maxLevel}`, r.x + 32, r.y + 30);
+
+                        // Effect
+                        const effectText = def.id === 'burgerQuality' ?
+                            `+${(def.effectPerLevel*100).toFixed(0)}% mult` :
+                            def.id === 'goldenGrill' ?
+                            `+${(def.effectPerLevel*100).toFixed(0)}% chance` :
+                            def.id === 'sauceMagic' ?
+                            '2x boost 30s' :
+                            `+${def.effectPerLevel} bps`;
+                        ctx.fillStyle = '#aaaaaa';
+                        ctx.fillText(effectText, r.x + 100, r.y + 30);
+
+                        // Cost
+                        if (!maxedOut) {
+                            ctx.fillStyle = canAfford ? '#ffff88' : '#ff8888';
+                            ctx.font = 'bold 10px "Segoe UI", system-ui, sans-serif';
+                            ctx.textAlign = 'right';
+                            ctx.fillText(`${cost.toLocaleString()} 🍔`, r.x + r.w - 8, r.y + 48);
+                        } else {
+                            ctx.fillStyle = '#888888';
+                            ctx.font = 'bold 10px "Segoe UI", system-ui, sans-serif';
+                            ctx.textAlign = 'right';
+                            ctx.fillText('MAXED', r.x + r.w - 8, r.y + 48);
+                        }
+                    }
+                }
+
+                drawPrestigeButton() {
+                    const px = VW / 2 - 80;
+                    const py = 500;
+                    const pulse = 1 + Math.sin(performance.now() * 0.006) * 0.06;
+
+                    ctx.save();
+                    ctx.translate(VW / 2, py + 22);
+                    ctx.scale(pulse, pulse);
+
+                    const glowGrad = ctx.createRadialGradient(0, 0, 20, 0, 0, 100);
+                    glowGrad.addColorStop(0, 'rgba(255,215,0,0.6)');
+                    glowGrad.addColorStop(1, 'rgba(255,215,0,0)');
+                    ctx.fillStyle = glowGrad;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 100, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.fillStyle = '#ffd700';
+                    ctx.strokeStyle = '#b8860b';
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.roundRect(-85, -24, 170, 48, 12);
+                    ctx.fill();
+                    ctx.stroke();
+
+                    ctx.fillStyle = '#4a3000';
+                    ctx.font = 'bold 14px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🌟 GO GINORMOUS! 🌟', 0, 6);
+
+                    ctx.restore();
+                }
+
+                drawMenu() {
+                    // Background
+                    const grad = ctx.createLinearGradient(0, 0, 0, VH);
+                    grad.addColorStop(0, '#2a1a30');
+                    grad.addColorStop(0.5, '#1a2540');
+                    grad.addColorStop(1, '#0a1520');
+                    ctx.fillStyle = grad;
+                    ctx.fillRect(0, 0, VW, VH);
+
+                    // Animated floating burgers
+                    for (let i = 0; i < 6; i++) {
+                        const fx = 80 + i * 130;
+                        const fy = 200 + Math.sin(performance.now() * 0.0015 + i * 1.2) * 40;
+                        ctx.fillStyle = '#d4943a';
+                        ctx.beginPath();
+                        ctx.arc(fx, fy, 22, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = '#f0c878';
+                        ctx.beginPath();
+                        ctx.arc(fx, fy - 8, 16, Math.PI, 0);
+                        ctx.fill();
+                        ctx.fillStyle = '#5a3020';
+                        ctx.fillRect(fx - 16, fy - 2, 32, 7);
+                    }
+
+                    // Title
+                    const titleY = 100;
+                    ctx.fillStyle = '#ffd700';
+                    ctx.font = 'bold 38px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🍔 CHEESE BURGER', VW / 2, titleY);
+                    ctx.fillText('GINORMOUS 🍔', VW / 2, titleY + 44);
+
+                    ctx.fillStyle = '#ffaa44';
+                    ctx.font = 'bold 16px "Segoe UI", system-ui, sans-serif';
+                    ctx.fillText('Eating Tycoon Simulator', VW / 2, titleY + 75);
+
+                    // High score
+                    if (this.goldenBuns > 0) {
+                        ctx.fillStyle = '#ffd700';
+                        ctx.font = 'bold 15px "Segoe UI", system-ui, sans-serif';
+                        ctx.fillText(`🥇 Golden Buns: ${this.goldenBuns} | Mult: ${this.permanentMultiplier.toFixed(2)}x`,
+                            VW / 2, titleY + 100);
+                    }
+                    if (this._bestTotal > 0) {
+                        ctx.fillStyle = '#cccccc';
+                        ctx.font = '13px "Segoe UI", system-ui, sans-serif';
+                        ctx.fillText(`Best Run: ${Math.floor(this._bestTotal).toLocaleString()} bites`,
+                            VW / 2, titleY + 120);
+                    }
+
+                    // Start button
+                    const btnX = VW / 2 - 150;
+                    const btnY = 340;
+                    const pulse = 1 + Math.sin(performance.now() * 0.005) * 0.04;
+                    ctx.save();
+                    ctx.translate(VW / 2, btnY + 40);
+                    ctx.scale(pulse, pulse);
+
+                    const btnGrad = ctx.createLinearGradient(0, -40, 0, 40);
+                    btnGrad.addColorStop(0, '#ff8c00');
+                    btnGrad.addColorStop(0.5, '#ff6600');
+                    btnGrad.addColorStop(1, '#cc4400');
+                    ctx.fillStyle = btnGrad;
+                    ctx.strokeStyle = '#ffcc00';
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.roundRect(-150, -40, 300, 80, 16);
+                    ctx.fill();
+                    ctx.stroke();
+
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 22px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🍔 TAP TO START 🍔', 0, 8);
+                    ctx.restore();
+
+                    // Instructions
+                    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                    ctx.font = '12px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('Tap the burger to eat! Buy upgrades to grow GINORMOUS!', VW / 2, 470);
+                    ctx.fillText('Reach 1,000,000 bites to prestige for Golden Buns!', VW / 2, 490);
+                }
+
+                drawPrestigeOverlay() {
+                    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+                    ctx.fillRect(0, 0, VW, VH);
+
+                    const pulse = 1 + Math.sin(performance.now() * 0.006) * 0.05;
+                    ctx.save();
+                    ctx.translate(VW / 2, VH / 2 - 30);
+                    ctx.scale(pulse, pulse);
+
+                    ctx.fillStyle = '#ffd700';
+                    ctx.font = 'bold 32px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🌟 PRESTIGE! 🌟', 0, -40);
+
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 18px "Segoe UI", system-ui, sans-serif';
+                    ctx.fillText(`Earn ${this._pendingBuns} Golden Bun${this._pendingBuns>1?'s':''}!`, 0, 0);
+                    ctx.fillText(`Permanent multiplier will be ${(1+(this.goldenBuns+this._pendingBuns)*0.1).toFixed(2)}x`,
+                        0, 28);
+                    ctx.fillText('Resets all progress but keeps Golden Buns', 0, 56);
+
+                    ctx.fillStyle = '#ff6600';
+                    ctx.strokeStyle = '#ffcc00';
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.roundRect(-100, 75, 200, 55, 14);
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 16px "Segoe UI", system-ui, sans-serif';
+                    ctx.fillText('CONFIRM PRESTIGE', 0, 110);
+
+                    ctx.restore();
+                }
+
+                gameLoop(timestamp) {
+                    const dt = Math.min((timestamp - this.lastTime) / 1000, 0.2);
+                    this.lastTime = timestamp;
+
+                    this.update(dt);
+                    this.render();
+
+                    requestAnimationFrame((t) => this.gameLoop(t));
+                }
+
+                save() {
+                    try {
+                        const data = {
+                            bites: this.bites,
+                            totalBitesEaten: this.totalBitesEaten,
+                            goldenBuns: this.goldenBuns,
+                            permanentMultiplier: this.permanentMultiplier,
+                            upgradeLevels: this.upgradeLevels,
+                            sauceCooldownRemaining: this.sauceCooldownRemaining,
+                            bestTotal: Math.max(this._bestTotal || 0, this.totalBitesEaten),
+                        };
+                        this._bestTotal = data.bestTotal;
+                        localStorage.setItem('burgerTycoon_save', JSON.stringify(data));
+                    } catch (e) {}
+                }
+
+                load() {
+                    try {
+                        const raw = localStorage.getItem('burgerTycoon_save');
+                        if (raw) {
+                            const data = JSON.parse(raw);
+                            this.bites = data.bites || 0;
+                            this.totalBitesEaten = data.totalBitesEaten || 0;
+                            this.goldenBuns = data.goldenBuns || 0;
+                            this.permanentMultiplier = data.permanentMultiplier || 1.0;
+                            if (data.upgradeLevels) {
+                                UPGRADE_DEFS.forEach(d => {
+                                    if (data.upgradeLevels[d.id] !== undefined) {
+                                        this.upgradeLevels[d.id] = data.upgradeLevels[d.id];
+                                    }
+                                });
+                            }
+                            this.sauceCooldownRemaining = data.sauceCooldownRemaining || 0;
+                            this._bestTotal = data.bestTotal || this.totalBitesEaten;
+                            if (this.sauceCooldownRemaining > 0 && this.upgradeLevels['sauceMagic'] >
+                                0) {
+                                this.upgradeLevels['sauceMagic'] = 0;
+                            }
+                            if (this.totalBitesEaten > 0) {
+                                for (let i = SIZE_TIERS.length - 1; i >= 0; i--) {
+                                    if (this.totalBitesEaten >= SIZE_TIERS[i].min) {
+                                        this.currentTierIndex = i;
+                                        this.displayedScale = SIZE_TIERS[i].scale;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e) {}
+                }
+            }
+
+            // ============ START GAME ============
+            const game = new Game();
+        })();
+    </script>
+</body>
+</html>
