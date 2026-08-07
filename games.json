@@ -1150,5 +1150,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-08-07T05:05:09.470Z",
     "updatedAt": "2026-08-07T05:05:09.470Z"
+  },
+  {
+    "slug": "terror-of-pim-the-weird-duck-super-maze",
+    "title": "Terror of Pim: The Weird Duck Super Maze",
+    "description": "terror of pim the wierd duck super maze",
+    "creator": "kaipie16",
+    "model": "openai/gpt-5.6-luna",
+    "createdAt": "2026-08-07T21:16:45.524Z",
+    "updatedAt": "2026-08-07T21:16:45.524Z"
   }
 ]
