@@ -1,0 +1,22 @@
+import { Player, circleHit } from './player.js';
+import { generateWave } from './levels.js';
+import { ParticleSystem } from './particles.js';
+export class Game {
+  constructor(input,audio){this.input=input;this.audio=audio;this.particles=new ParticleSystem();this.player=new Player();this.wave=1;this.score=0;this.combo=0;this.time=45;this.shake=0;this.flash=0;this.totalDeals=0;this.deals=[];this.enemies=[];this.obstacles=[];this.waiting=false;this.callbacks={};this.upgrades=upgradeList;}
+  on(name,fn){this.callbacks[name]=fn;}
+  start(){this.player.reset();this.wave=1;this.score=0;this.combo=0;this.loadWave();}
+  loadWave(){const l=generateWave(this.wave);this.obstacles=l.obstacles;this.deals=l.deals;this.enemies=l.enemies;this.totalDeals=this.deals.length;this.time=l.time;this.waiting=false;this.player.x=500;this.player.y=325;this.player.vx=this.player.vy=0;this.particles.burst(500,325,'#4de9ff',30,250);this.audio.wave();}
+  update(dt){if(this.waiting)return;this.time-=dt;this.shake=Math.max(0,this.shake-dt*3);this.flash=Math.max(0,this.flash-dt*3);if(this.time<=0){this.callbacks.gameOver?.();return;}
+    this.player.update(this.input,dt,this.obstacles);if(this.player.dashPulse){this.audio.dash();this.particles.burst(this.player.x,this.player.y,'#4de9ff',22,270);this.shake=.15;}
+    if(Math.hypot(this.player.vx,this.player.vy)>230)this.particles.trail(this.player.x-this.player.vx*.025,this.player.y-this.player.vy*.025,'#4de9ff');
+    for(const d of this.deals)d.update(dt);for(const e of this.enemies)e.update(dt,this.player,this.obstacles,performance.now()/1000);
+    for(let i=this.deals.length-1;i>=0;i--){const d=this.deals[i];if(circleHit(this.player,d,this.player.pickupRadius)){this.deals.splice(i,1);this.combo++;const mult=this.player.scoreMultiplier*(1+Math.min(2,this.combo*.12));this.score+=Math.round(d.value*mult);this.particles.burst(d.x,d.y,'#ffd166',16,180);this.audio.pickup();}}
+    for(const e of this.enemies){if(circleHit(this.player,e)&&this.player.invuln<=0){this.player.health--;this.combo=0;this.player.invuln=.9;const dx=this.player.x-e.x,dy=this.player.y-e.y,n=Math.hypot(dx,dy)||1;this.player.vx=dx/n*430;this.player.vy=dy/n*430;this.particles.burst(this.player.x,this.player.y,'#ff4f91',25,280);this.audio.hit();this.shake=.35;this.flash=.24;if(this.player.health<=0){this.callbacks.gameOver?.();return;}}}
+    this.particles.update(dt);if(this.deals.length===0){this.waiting=true;this.score+=Math.ceil(this.time)*8*this.wave;this.audio.wave();this.callbacks.waveClear?.(this.wave);}
+  }
+  getUpgradeOptions(){const a=[...this.upgrades];const out=[];while(out.length<3){const i=Math.floor(Math.random()*a.length);out.push(a.splice(i,1)[0]);}return out;}
+  applyUpgrade(id){const p=this.player;switch(id){case'speed':p.maxSpeed+=55;p.accel+=120;break;case'health':p.maxHealth++;p.health=p.maxHealth;break;case'dash':p.dashCooldown=Math.max(1,p.dashCooldown-.65);break;case'magnet':p.pickupRadius+=14;break;case'profit':p.scoreMultiplier+=.3;break;}this.audio.upgrade();}
+  nextWave(){if(this.wave>=6){this.callbacks.win?.();return;}this.wave++;this.loadWave();}
+  draw(ctx,time){ctx.save();let sx=this.shake?((Math.random()-.5)*this.shake*18):0,sy=this.shake?((Math.random()-.5)*this.shake*18):0;ctx.translate(sx,sy);const bg=ctx.createLinearGradient(0,0,1000,650);bg.addColorStop(0,'#091934');bg.addColorStop(1,'#050b1b');ctx.fillStyle=bg;ctx.fillRect(-20,-20,1040,690);ctx.strokeStyle='rgba(77,233,255,.055)';ctx.lineWidth=1;for(let x=20;x<1000;x+=40){ctx.beginPath();ctx.moveTo(x,20);ctx.lineTo(x,630);ctx.stroke();}for(let y=20;y<650;y+=40){ctx.beginPath();ctx.moveTo(20,y);ctx.lineTo(980,y);ctx.stroke();}ctx.strokeStyle='#254a68';ctx.lineWidth=2;ctx.strokeRect(22,22,956,606);for(const o of this.obstacles)o.draw(ctx);for(const d of this.deals)d.draw(ctx,time);for(const e of this.enemies)e.draw(ctx,time);this.particles.draw(ctx);this.player.draw(ctx,time);ctx.restore();if(this.flash){ctx.fillStyle=`rgba(255,88,138,${this.flash*.45})`;ctx.fillRect(0,0,1000,650);}}
+}
+const upgradeList=[{id:'speed',icon:'↯',title:'HUSTLE CULTURE',body:'Increase top speed and acceleration.'},{id:'health',icon:'✚',title:'HEALTH INSURANCE',body:'Gain one max health and fully heal.'},{id:'dash',icon:'➤',title:'AGGRESSIVE PIVOT',body:'Dash cooldown is reduced significantly.'},{id:'magnet',icon:'◎',title:'NETWORKING',body:'Deals are attracted from farther away.'},{id:'profit',icon:'＄',title:'PREMIUM CLIENTS',body:'Every deal is worth 30% more points.'}];
