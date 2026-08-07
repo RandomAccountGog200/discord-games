@@ -1105,5 +1105,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-08-06T03:40:36.725Z",
     "updatedAt": "2026-08-06T03:40:36.725Z"
+  },
+  {
+    "slug": "heuiwe",
+    "title": "HEUIWE",
+    "description": "heuiwe",
+    "creator": "burger778",
+    "model": "deepseek/deepseek-v4-pro",
+    "createdAt": "2026-08-07T04:44:00.494Z",
+    "updatedAt": "2026-08-07T04:44:00.494Z"
   }
 ]
