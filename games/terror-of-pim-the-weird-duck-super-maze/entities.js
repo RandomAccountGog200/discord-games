@@ -1,0 +1,15 @@
+export class Player {
+  constructor(cell){this.spawn={x:cell.x+.5,y:cell.y+.5};this.x=this.spawn.x;this.y=this.spawn.y;this.radius=.24;this.speed=3.25;this.stamina=1;this.quacks=1;this.invuln=0;this.bob=0;}
+  respawn(){this.x=this.spawn.x;this.y=this.spawn.y;this.invuln=1.7;}
+  blocked(maze,x,y){const r=this.radius;for(let yy=Math.floor(y-r);yy<=Math.floor(y+r);yy++)for(let xx=Math.floor(x-r);xx<=Math.floor(x+r);xx++)if(maze.isWall(xx,yy)){const cx=Math.max(xx,Math.min(x,xx+1)),cy=Math.max(yy,Math.min(y,yy+1));if((x-cx)**2+(y-cy)**2<r*r)return true;}return false;}
+  update(dt,maze,axis,sprint){this.invuln=Math.max(0,this.invuln-dt);let boosting=sprint&&axis.moving&&this.stamina>0;let speed=this.speed*(boosting?1.58:1);if(boosting)this.stamina=Math.max(0,this.stamina-dt*.32);else this.stamina=Math.min(1,this.stamina+dt*.2);let nx=this.x+axis.x*speed*dt,ny=this.y+axis.y*speed*dt;if(!this.blocked(maze,nx,this.y))this.x=nx;if(!this.blocked(maze,this.x,ny))this.y=ny;if(axis.moving)this.bob+=dt*12;return boosting;}
+  draw(ctx,L){const s=L.to(this.x,this.y),r=L.t*.28;ctx.save();ctx.globalAlpha=this.invuln>0&&Math.floor(this.invuln*12)%2? .35:1;ctx.translate(s.x,s.y+Math.sin(this.bob)*2);ctx.shadowColor='#71efff';ctx.shadowBlur=20;ctx.fillStyle='#f7d45f';ctx.beginPath();ctx.ellipse(0,2,r*1.05,r*.8,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#ffe786';ctx.beginPath();ctx.arc(0,-r*.48,r*.74,0,Math.PI*2);ctx.fill();ctx.fillStyle='#ff8b38';ctx.beginPath();ctx.moveTo(r*.55,-r*.4);ctx.lineTo(r*1.12,-r*.23);ctx.lineTo(r*.55,-r*.05);ctx.fill();ctx.fillStyle='#221535';ctx.beginPath();ctx.arc(-r*.25,-r*.62,r*.1,0,Math.PI*2);ctx.arc(r*.25,-r*.62,r*.1,0,Math.PI*2);ctx.fill();ctx.restore();}
+}
+export class Pim {
+  constructor(cell,level){this.x=cell.x+.5;this.y=cell.y+.5;this.start={x:this.x,y:this.y};this.speed=1.55+level*.14;this.route=[];this.repath=0;this.stun=0;this.phase=0;}
+  reset(){this.x=this.start.x;this.y=this.start.y;this.stun=1.3;this.route=[];}
+  update(dt,maze,target){this.phase+=dt;this.stun=Math.max(0,this.stun-dt);if(this.stun>0)return;this.repath-=dt;const here={x:Math.floor(this.x),y:Math.floor(this.y)}, goal={x:Math.floor(target.x),y:Math.floor(target.y)};if(this.repath<=0){this.route=maze.path(here,goal);this.repath=.34;}
+    const next=this.route[1]||goal, tx=next.x+.5,ty=next.y+.5,dx=tx-this.x,dy=ty-this.y,d=Math.hypot(dx,dy)||1,step=this.speed*dt;this.x+=dx/d*Math.min(step,d);this.y+=dy/d*Math.min(step,d);
+  }
+  draw(ctx,L){const s=L.to(this.x,this.y),r=L.t*.36;ctx.save();ctx.translate(s.x,s.y+Math.sin(this.phase*4)*3);ctx.shadowColor='#ff398f';ctx.shadowBlur=25;ctx.fillStyle='#e83d91';ctx.beginPath();ctx.ellipse(0,3,r*1.05,r*.85,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#ff69ae';ctx.beginPath();ctx.arc(0,-r*.43,r*.78,0,Math.PI*2);ctx.fill();ctx.fillStyle='#47123e';ctx.beginPath();ctx.arc(-r*.28,-r*.56,r*.13,0,Math.PI*2);ctx.arc(r*.28,-r*.56,r*.13,0,Math.PI*2);ctx.fill();ctx.fillStyle='#ffe66b';ctx.beginPath();ctx.moveTo(-r*.45,-r*.86);ctx.lineTo(-r*.05,-r*1.38);ctx.lineTo(r*.08,-r*.82);ctx.fill();ctx.restore();}
+}
