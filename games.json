@@ -1168,5 +1168,14 @@
     "model": "deepseek/deepseek-v4-pro",
     "createdAt": "2026-08-07T21:16:48.366Z",
     "updatedAt": "2026-08-07T21:16:48.366Z"
+  },
+  {
+    "slug": "big-boys-run-to-italy-kiss-jamal-frenzy",
+    "title": "Big Boys Run to Italy: Kiss Jamal Frenzy",
+    "description": "big boys run to Italy to kiss jamal frenzy",
+    "creator": "cheese5332",
+    "model": "openai/gpt-5.6-luna",
+    "createdAt": "2026-08-07T21:17:08.032Z",
+    "updatedAt": "2026-08-07T21:17:08.032Z"
   }
 ]
