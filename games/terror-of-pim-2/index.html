@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Terror of Pim</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="game-shell">
+    <canvas id="game" width="960" height="540" aria-label="Terror of Pim game"></canvas>
+
+    <section id="menu" class="screen active">
+      <div class="eyebrow">A NIGHTMARE IN SIX ROOMS</div>
+      <h1>TERROR<br><span>OF PIM</span></h1>
+      <p class="tagline">The tiny things under the bed have learned to hunt.</p>
+      <button id="start-button" class="primary">ENTER THE DARK</button>
+      <div class="menu-info">
+        <div><b>BEST SCORE</b><strong id="menu-best">0</strong></div>
+        <div><b>CONTROLS</b><span>WASD / arrows to move<br>Mouse to aim · click to fire<br>Space to dash · P to pause</span></div>
+      </div>
+      <p class="mobile-note">On touch: drag the left stick, tap FIRE, and use DASH.</p>
+    </section>
+
+    <section id="pause" class="screen compact">
+      <div class="eyebrow">THE DARK IS WAITING</div>
+      <h2>PAUSED</h2>
+      <button id="resume-button" class="primary">RESUME</button>
+      <button id="pause-menu-button" class="secondary">ABANDON RUN</button>
+    </section>
+
+    <section id="upgrade" class="screen upgrade-screen">
+      <div class="eyebrow">ROOM CLEARED</div>
+      <h2>CHOOSE YOUR SURVIVAL</h2>
+      <p>One gift. No regrets.</p>
+      <div id="upgrade-cards" class="upgrade-cards"></div>
+    </section>
+
+    <section id="gameover" class="screen compact">
+      <div class="eyebrow">THE PIMS GOT YOU</div>
+      <h2>LIGHTS OUT</h2>
+      <p id="gameover-stats"></p>
+      <button id="retry-button" class="primary">TRY AGAIN</button>
+      <button id="gameover-menu-button" class="secondary">MAIN MENU</button>
+    </section>
+
+    <section id="win" class="screen compact">
+      <div class="eyebrow">THE NIGHTMARE ENDS</div>
+      <h2>YOU TERRIFIED<br>THE TERROR</h2>
+      <p id="win-stats"></p>
+      <button id="win-replay-button" class="primary">PLAY AGAIN</button>
+      <button id="win-menu-button" class="secondary">MAIN MENU</button>
+    </section>
+
+    <div id="hud" aria-hidden="true">
+      <div class="hud-top">
+        <div class="stat-block"><span>ROOM</span><b id="hud-wave">1 / 6</b></div>
+        <div class="stat-block score"><span>SCORE</span><b id="hud-score">0</b></div>
+        <button id="hud-pause" class="pause-button">Ⅱ</button>
+      </div>
+      <div class="health-wrap"><span>VITALITY</span><div class="bar"><i id="health-bar"></i></div></div>
+      <div id="wave-banner"></div>
+    </div>
+
+    <div id="touch-controls" aria-hidden="true">
+      <div id="joystick" class="joystick"><div id="joystick-knob"></div></div>
+      <button id="dash-button" class="touch-button">DASH</button>
+      <button id="fire-button" class="touch-button fire">FIRE</button>
+    </div>
+  </main>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
