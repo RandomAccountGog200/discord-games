@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Ballsy Business</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="app">
+    <canvas id="game" width="1000" height="650"></canvas>
+
+    <header id="hud" class="hud hidden">
+      <div class="brand">BALLSY <span>BUSINESS</span></div>
+      <div class="stat"><small>DEALS</small><strong id="quota">0 / 0</strong></div>
+      <div class="stat"><small>WAVE</small><strong id="wave">1 / 6</strong></div>
+      <div class="stat"><small>SCORE</small><strong id="score">0</strong></div>
+      <div class="stat health-stat"><small>HEALTH</small><strong id="health">●●●</strong></div>
+      <div class="stat timer-stat"><small>TIME</small><strong id="timer">45</strong></div>
+      <button id="pauseButton" class="icon-button" aria-label="Pause">Ⅱ</button>
+    </header>
+
+    <section id="titleScreen" class="screen visible">
+      <div class="title-card">
+        <div class="eyebrow">A HIGH-VELOCITY STARTUP SIMULATOR</div>
+        <h1>BALLSY<br><em>BUSINESS</em></h1>
+        <p class="tagline">Close deals. Dodge audits. Grow your empire.</p>
+        <button id="startButton" class="primary-button">START PITCHING <b>→</b></button>
+        <p class="best-line">BEST SCORE <strong id="menuBest">0</strong></p>
+        <p class="controls-line">WASD / ARROWS to steer · SPACE to dash · Hold mouse to move</p>
+      </div>
+    </section>
+
+    <section id="pauseScreen" class="screen">
+      <div class="modal-card compact">
+        <div class="eyebrow">BOARD MEETING</div>
+        <h2>PAUSED</h2>
+        <button id="resumeButton" class="primary-button">RESUME <b>→</b></button>
+        <button id="pauseMenuButton" class="secondary-button">QUIT TO MENU</button>
+      </div>
+    </section>
+
+    <section id="upgradeScreen" class="screen">
+      <div class="modal-card upgrade-card">
+        <div class="eyebrow">QUARTERLY REVIEW</div>
+        <h2>CHOOSE YOUR EDGE</h2>
+        <p class="modal-copy">The next market is tougher. Pick one strategic advantage.</p>
+        <div id="upgradeChoices" class="upgrade-choices"></div>
+      </div>
+    </section>
+
+    <section id="endScreen" class="screen">
+      <div class="modal-card compact">
+        <div id="endEyebrow" class="eyebrow">THE MARKET HAS SPOKEN</div>
+        <h2 id="endTitle">BUSINESS OVER</h2>
+        <p id="endMessage" class="modal-copy">Your empire made an impression.</p>
+        <div class="result-row"><span>FINAL SCORE</span><strong id="endScore">0</strong></div>
+        <div class="result-row"><span>BEST SCORE</span><strong id="endBest">0</strong></div>
+        <button id="restartButton" class="primary-button">PITCH AGAIN <b>↗</b></button>
+        <button id="endMenuButton" class="secondary-button">MAIN MENU</button>
+      </div>
+    </section>
+
+    <div id="touchControls" class="touch-controls hidden">
+      <div id="joystick" class="joystick"><div id="stick" class="stick"></div></div>
+      <button id="dashButton" class="dash-button">DASH</button>
+    </div>
+  </main>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
