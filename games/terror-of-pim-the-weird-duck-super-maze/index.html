@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Terror of Pim: The Weird Duck Super Maze</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+
+  <div id="hud" class="hud hidden">
+    <div class="hud-pill"><span class="label">MAZE</span><strong id="levelValue">1</strong></div>
+    <div class="hud-pill"><span class="label">SCORE</span><strong id="scoreValue">0</strong></div>
+    <div class="hud-pill wide"><span class="label">SHARDS</span><strong id="shardValue">0 / 3</strong></div>
+    <div class="hud-pill wide stamina"><span class="label">STAMINA</span><div class="bar"><i id="staminaBar"></i></div></div>
+    <div class="hud-pill"><span class="label">HEARTS</span><strong id="heartValue">♥♥♥</strong></div>
+    <button id="pauseButton" class="small-button">Ⅱ</button>
+  </div>
+
+  <div id="touchControls" class="touch-controls hidden">
+    <div class="dpad">
+      <button data-key="up" class="touch-key up">▲</button>
+      <button data-key="left" class="touch-key left">◀</button>
+      <button data-key="down" class="touch-key down">▼</button>
+      <button data-key="right" class="touch-key right">▶</button>
+    </div>
+    <button id="quackButton" class="quack-button">QUACK<br><span id="quackCount">×0</span></button>
+  </div>
+
+  <main id="titlePanel" class="panel title-panel">
+    <div class="eyebrow">AN UNWISELY LARGE NIGHTMARE</div>
+    <h1>TERROR OF <em>PIM</em></h1>
+    <h2>THE WEIRD DUCK<br>SUPER MAZE</h2>
+    <div class="duck-mark">◉ᴥ◉</div>
+    <p>Find the glowing shards. Wake the exit.<br>Do not let Pim hear you panic.</p>
+    <button id="startButton" class="primary-button">ENTER THE MAZE</button>
+    <div class="best-line">BEST RUN <strong id="menuBest">0</strong></div>
+    <div class="controls-line">WASD / ARROWS to move · SHIFT to sprint · SPACE to QUACK · ESC to pause</div>
+  </main>
+
+  <section id="pausePanel" class="panel hidden">
+    <div class="eyebrow">THE MAZE IS HOLDING ITS BREATH</div>
+    <h2>PAUSED</h2>
+    <button id="resumeButton" class="primary-button">RESUME</button>
+    <button id="quitButton" class="secondary-button">ABANDON RUN</button>
+  </section>
+
+  <section id="winPanel" class="panel hidden">
+    <div class="eyebrow">THE EXIT OPENS</div>
+    <h2>MAZE CLEARED</h2>
+    <p id="winText">Pim is furious.</p>
+    <button id="nextButton" class="primary-button">ENTER DEEPER</button>
+    <button id="winMenuButton" class="secondary-button">MAIN MENU</button>
+  </section>
+
+  <section id="gameOverPanel" class="panel hidden">
+    <div class="eyebrow">THE QUACKING HAS STOPPED</div>
+    <h2> PIM FOUND YOU </h2>
+    <p id="gameOverText">The maze remembers your footsteps.</p>
+    <button id="retryButton" class="primary-button">TRY AGAIN</button>
+    <button id="overMenuButton" class="secondary-button">MAIN MENU</button>
+  </section>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
